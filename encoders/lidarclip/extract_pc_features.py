@@ -23,7 +23,6 @@ def create_clean_directory(directory_path):
 DEFAULT_DATA_PATHS = {
     "once": "/proj/nlp4adas/datasets/once",
     "nuscenes": "/mnt/nfs_shared_data/dataset/cch/nuScenes/",
-    # "with_path": "/home/youngwoo.shin/lidarclip/v1.0-mini/"
     "with_path": "/mnt/nfs_shared_data/dataset/cch/nuScenes/"
 }
 
@@ -79,8 +78,7 @@ def main(args):
             lidar_features, _ = model.lidar_encoder(point_clouds)
             for lidar_feat, lidar_path in zip(lidar_features, pc_path):
                 lidar_dict[lidar_path] = lidar_feat.unsqueeze(0)
-                # print(lidar_feat)
-        
+
 #         IF extracting for stage 1
         create_clean_directory(args.stage1_save_dir)
         for d in tqdm(frame_data):
@@ -123,28 +121,21 @@ def main(args):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        # "--checkpoint", type=str, default="/home/youngwoo.shin/lidarclip/ckpt/vit_l_14_768/epoch=19-step=25750.ckpt", help="Full path to the checkpoint file"
-        # "--checkpoint", type=str, default="/home/youngwoo.shin/lidarclip/ckpt/vit_l_14_768_best/epoch=98-step=130000.ckpt", help="Full path to the checkpoint file"
-        # "--checkpoint", type=str, default="/home/youngwoo.shin/lidarclip/ckpt/lidarclip_750/epoch=19-step=28000.ckpt", help="Full path to the checkpoint file"
-        "--checkpoint", type=str, default="/home/youngwoo.shin/lidarclip/ckpt/lidarclip_mm/epoch=19-step=26000.ckpt", help="Full path to the checkpoint file"
+        "--checkpoint", type=str, default="./ckpt/trained/.ckpt file", help="Full path to the checkpoint file"
     )
     parser.add_argument("--clip-version", type=str, default="ViT-L/14")
     parser.add_argument("--data-path", type=str, default=None)
-    # parser.add_argument("--split", type=str, default="mini")
     parser.add_argument("--split", type=str, default="trainval")
-    # parser.add_argument("--prefix", type=str, default="/home/youngwoo.shin/lidarclip/features/768_trainval_")
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--use-anno-loader", action="store_true")
     parser.add_argument("--dataset-name", type=str, default="with_path", choices=["once", "nuscenes", "with_path"])
-    parser.add_argument("--scene-json-path", type=str, default="/home/youngwoo.shin/lidarclip/annotations/scene_metadata.json")
-    parser.add_argument("--frame-json-path", type=str, default="/home/youngwoo.shin/lidarclip/annotations/sequence_metadata.json")
-    
-    # parser.add_argument("--stage", type = int, default = 2, choices=[1, 2])
-    parser.add_argument("--stage1-save-dir", type=str, default="/home/youngwoo.shin/lidarclip/extracted_features_new/stage1_features/")
-    parser.add_argument("--stage2-save-dir", type=str, default="/home/youngwoo.shin/lidarclip/extracted_features_new/stage2_features/")
+    parser.add_argument("--scene-json-path", type=str, default="./annotations/scene_metadata.json")
+    parser.add_argument("--frame-json-path", type=str, default="./annotations/sequence_metadata.json")
+
+    parser.add_argument("--stage1-save-dir", type=str, default="lidarclip/extracted_features/stage1_features/")
+    parser.add_argument("--stage2-save-dir", type=str, default="lidarclip/extracted_features/stage2_features/")
     
     args = parser.parse_args()
-    # args, _ = parser.parse_known_args()
     
     if not args.data_path:
         args.data_path = DEFAULT_DATA_PATHS[args.dataset_name]
@@ -153,6 +144,5 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    
     args = parse_args()
     main(args)

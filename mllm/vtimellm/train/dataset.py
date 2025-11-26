@@ -401,7 +401,7 @@ class LazySupervisedDataset(Dataset):
 
 
         try:
-            feature_path = '{}/{}.npy'.format(self.data_args.feat_folder, source['id'])
+            feature_path = '{}/{}.npy'.format(self.data_args.feat_folder, source['scene_id'])
             image = np.load(feature_path) # <N, 768> float16
             image = torch.from_numpy(image)
             if data_type == 'image' and len(image.shape) == 1: # <768>
