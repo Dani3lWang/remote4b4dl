@@ -76,16 +76,16 @@ For training, check out here(mllm/README.md).
   </tr>
   <tr>
     <td align="center">
-      <img src="assets/dataset_lidar.gif" alt="Dataset (LiDAR)" width="400">
+      <img src="assets/dataset_lidar.gif" alt="Dataset (LiDAR)" width="350">
     </td>
     <td align="center">
-      <img src="assets/dataset_cam.gif" alt="Dataset (Camera)" width="400">
+      <img src="assets/dataset_cam.gif" alt="Dataset (Camera)" width="350">
     </td>
   </tr>
   
   <tr>
     <td colspan="2" align="center">
-      <img src="assets/dataset_text.png" alt="Dataset (Text)" width="800">
+      <img src="assets/dataset_text.png" alt="Dataset (Text)" width="700">
     </td>
   </tr>
   
@@ -94,15 +94,15 @@ For training, check out here(mllm/README.md).
   </tr>
   <tr>
     <td align="center">
-      <img src="assets/inference_lidar.gif" alt="Inference (LiDAR)" width="420">
+      <img src="assets/inference_lidar.gif" alt="Inference (LiDAR)" width="350">
     </td>
     <td align="center">
-      <img src="assets/inference_cam.gif" alt="Inference (Camera)" width="420">
+      <img src="assets/inference_cam.gif" alt="Inference (Camera)" width="350">
     </td>
   </tr>
   <tr>
     <td colspan="2" align="center">
-      <img src="assets/inference_output_text.png" alt="Inference (Text)" width="840">
+      <img src="assets/inference_output_text.png" alt="Inference (Text)" width="700">
     </td>
   </tr>
 </table>
