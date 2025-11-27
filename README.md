@@ -3,29 +3,63 @@ Official PyTorch implementation of the paper "B4DL: A Benchmark for 4D LiDAR LLM
 Understanding".
 
 ---
-
-## Installation
-
-We recommend setting up a conda environment for the project:
-```shell
-conda create --name=vtimellm python=3.10
-conda activate vtimellm
-
-git clone https://github.com/huangb23/VTimeLLM.git
-cd VTimeLLM
-pip install -r requirements.txt
-```
-Additionally, install additional packages for training cases.
-```shell
-pip install ninja
-pip install flash-attn --no-build-isolation
-```
 ## Dataset
 
-## Training
+---
+## Data Generation Pipeline
+**You should make your own OpenAI API key before running the code.**
+```bash
+cd datageneration
+```
 
-For training instructions, check out [train.md](docs/train.md).
+## 4D LiDAR Context Extraction Step
+Please download the `nuScenes` dataset and set the `nuscenes_root` argument to the download path.
 
+Run the following commands:
+```bash
+bash scripts/generate_description.sh
+```
+or you can run the python code directly
+```bash
+python3 generate_description.py \
+    --start_index 10 \
+    --end_index 20 \
+    --api_key {your openai api key} \
+    --nuscenes_root /mnt/nfs_shared_data/dataset/cch/nuScenes \
+    --dataroot ./data
+```
+
+## Context-to-QA Transformation Step
+```bash
+bash scripts/generate_dataset.sh
+```
+
+or you can run the python code directly
+```bash
+python3 generate_dataset.py \
+    --start_index 0 \
+    --end_index 10 \
+    --api_key {your openai api key} \
+    --nuscenes_root /mnt/nfs_shared_data/dataset/cch/nuScenes \
+    --dataroot ./data \
+    --task existence
+```
+
+---
+## Training Script
+
+Before running, please download [this file](https://huggingface.co/lmsys/vicuna-7b-v1.5/tree/main) and place it under ./base_model/
+
+```shell
+bash run_stages.sh \
+     --s1_data ./b4dl_dataset/stage1_lidarllm_mm.json \
+     --s1_feat ./b4dl/stage1_features \
+     --s2_data ./b4dl_dataset/stage2.json \
+     --s2_feat ./b4dl/stage2_features \
+     --model_name_or_path ./base_model/vicuna-v1-5-7b
+```
+
+For training, check out here(mllm/README.md).
 
 
 ## Acknowledgements
