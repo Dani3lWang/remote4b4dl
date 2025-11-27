@@ -19,7 +19,13 @@ Understanding".
       <img src="assets/dataset_cam.gif" alt="Dataset (Camera)" width="420">
     </td>
   </tr>
-
+  
+  <tr>
+    <td colspan="2" align="center">
+      <img src="assets/dataset_text.png" alt="Dataset (Text)" width="840">
+    </td>
+  </tr>
+  
   <tr>
     <td colspan="2" align="center"><b>Example of Inference</b></td>
   </tr>
@@ -29,6 +35,11 @@ Understanding".
     </td>
     <td align="center">
       <img src="assets/inference_cam.gif" alt="Inference (Camera)" width="420">
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <img src="assets/inference_output_text.png" alt="Inference (Text)" width="840">
     </td>
   </tr>
 </table>
