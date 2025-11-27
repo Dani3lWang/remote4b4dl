@@ -1,8 +1,37 @@
-# B4DL \[[Paper](https://www.arxiv.org/pdf/2508.05269)\]
+# B4DL
 Official PyTorch implementation of the paper "B4DL: A Benchmark for 4D LiDAR LLM in Spatio-Temporal
 Understanding".
 
 [![Hugging Face](https://img.shields.io/badge/Hugging%20Face-🤗-yellow)](https://huggingface.co/datasets/ccho4702/nuScenes-B4DL)
+[![arXiv](https://img.shields.io/badge/arXiv-2508.05269-b31b1b.svg)](https://www.arxiv.org/abs/2508.05269)
+[![Paper](https://img.shields.io/badge/Paper-arXiv-blue.svg)](https://arxiv.org/pdf/2508.05269)
+
+
+<table align="center">
+  <tr>
+    <td colspan="2" align="center"><b>Example of Generated Dataset</b></td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/dataset_lidar.gif" alt="Dataset (LiDAR)" width="420">
+    </td>
+    <td align="center">
+      <img src="assets/dataset_cam.gif" alt="Dataset (Camera)" width="420">
+    </td>
+  </tr>
+
+  <tr>
+    <td colspan="2" align="center"><b>Example of Inference</b></td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="assets/inference_lidar.gif" alt="Inference (LiDAR)" width="420">
+    </td>
+    <td align="center">
+      <img src="assets/inference_cam.gif" alt="Inference (Camera)" width="420">
+    </td>
+  </tr>
+</table>
 
 ---
 ## Data Generation Pipeline
