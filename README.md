@@ -120,16 +120,13 @@ Reliability, Ethics, and Adaptability)
 
 If you're using VTimeLLM in your research or applications, please cite using this BibTeX:
 ```bibtex
-@inproceedings{Choi_2025, series={MM ’25},
-   title={B4DL: A Benchmark for 4D LiDAR LLM in Spatio-Temporal Understanding},
-   url={http://dx.doi.org/10.1145/3746027.3755074},
-   DOI={10.1145/3746027.3755074},
-   booktitle={Proceedings of the 33rd ACM International Conference on Multimedia},
-   publisher={ACM},
-   author={Choi, Changho and Shin, Youngwoo and Han, Gyojin and Lee, Dong-Jae and Kim, Junmo},
-   year={2025},
-   month=oct, pages={3399–3407},
-   collection={MM ’25} }
+@inproceedings{choi2025b4dl,
+  title={B4DL: A Benchmark for 4D LiDAR LLM in Spatio-Temporal Understanding},
+  author={Choi, Changho and Shin, Youngwoo and Han, Gyojin and Lee, Dong-Jae and Kim, Junmo},
+  booktitle={Proceedings of the 33rd ACM International Conference on Multimedia},
+  pages={3399--3407},
+  year={2025}
+}
 ```
 
 ## License
