@@ -76,16 +76,16 @@ For training, check out here(mllm/README.md).
   </tr>
   <tr>
     <td align="center">
-      <img src="assets/dataset_lidar.gif" alt="Dataset (LiDAR)" width="420">
+      <img src="assets/dataset_lidar.gif" alt="Dataset (LiDAR)" width="400">
     </td>
     <td align="center">
-      <img src="assets/dataset_cam.gif" alt="Dataset (Camera)" width="420">
+      <img src="assets/dataset_cam.gif" alt="Dataset (Camera)" width="400">
     </td>
   </tr>
   
   <tr>
     <td colspan="2" align="center">
-      <img src="assets/dataset_text.png" alt="Dataset (Text)" width="840">
+      <img src="assets/dataset_text.png" alt="Dataset (Text)" width="800">
     </td>
   </tr>
   
