@@ -17,4 +17,4 @@ sentencepiece==0.2.0
 torch==2.5.1
 torchvision==0.20.1
 tqdm==4.67.1
-transformers==4.57.3
+transformers==4.31.0
