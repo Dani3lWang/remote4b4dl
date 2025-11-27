@@ -2,7 +2,7 @@
 Official PyTorch implementation of the paper "B4DL: A Benchmark for 4D LiDAR LLM in Spatio-Temporal
 Understanding".
 
-[![Hugging Face](https://img.shields.io/badge/Hugging%20Face-🤗-yellow)]([https://huggingface.co/yourname/model-name](https://huggingface.co/datasets/ccho4702/nuScenes-B4DL))
+[![Hugging Face](https://img.shields.io/badge/Hugging%20Face-🤗-yellow)](https://huggingface.co/datasets/ccho4702/nuScenes-B4DL)
 
 ---
 ## Data Generation Pipeline
