@@ -3,6 +3,64 @@
 # Exit immediately if any command fails
 set -e
 
+# --- Auto-detect CUDA_HOME ---
+# Even if CUDA_HOME is set, verify nvcc actually exists there
+_cuda_found=false
+
+_find_nvcc() {
+    # Priority 1: nvcc in PATH
+    if command -v nvcc &> /dev/null; then
+        export CUDA_HOME=$(dirname $(dirname $(command -v nvcc)))
+        _cuda_found=true
+        return
+    fi
+    # Priority 2: CUDA_HOME already set AND valid
+    if [ -n "$CUDA_HOME" ] && [ -f "$CUDA_HOME/bin/nvcc" ]; then
+        _cuda_found=true
+        return
+    fi
+    # Priority 3: conda env's cuda packages
+    if [ -n "$CONDA_PREFIX" ] && [ -f "$CONDA_PREFIX/bin/nvcc" ]; then
+        export CUDA_HOME="$CONDA_PREFIX"
+        _cuda_found=true
+        return
+    fi
+    # Priority 4: common install paths
+    for _ver in 12 12.6 12.5 12.4 12.3 12.2 12.1 11.8; do
+        if [ -f "/usr/local/cuda-$_ver/bin/nvcc" ]; then
+            export CUDA_HOME="/usr/local/cuda-$_ver"
+            _cuda_found=true
+            return
+        fi
+    done
+    # Priority 5: default /usr/local/cuda (only if valid)
+    if [ -f "/usr/local/cuda/bin/nvcc" ]; then
+        export CUDA_HOME=/usr/local/cuda
+        _cuda_found=true
+        return
+    fi
+}
+
+_find_nvcc
+
+if [ "$_cuda_found" = false ]; then
+    echo "[WARN] nvcc not found. Installing cuda-nvcc via conda..." >&2
+    conda install -c nvidia cuda-nvcc -y
+    if [ -n "$CONDA_PREFIX" ] && [ -f "$CONDA_PREFIX/bin/nvcc" ]; then
+        export CUDA_HOME="$CONDA_PREFIX"
+        _cuda_found=true
+    fi
+fi
+
+if [ "$_cuda_found" = false ]; then
+    echo "[ERROR] Cannot find or install nvcc." >&2
+    echo "Please set CUDA_HOME to your CUDA installation path, e.g.:" >&2
+    echo "  export CUDA_HOME=/usr/local/cuda-12.4" >&2
+    exit 1
+fi
+
+echo "Using CUDA_HOME=$CUDA_HOME"
+
 # --- Initialize Variables ---
 COMMON_ARGS=() # Arguments applied to ALL stages (e.g., learning_rate, num_epochs)
 S1_ARGS=()     # Arguments specific to Stage 1

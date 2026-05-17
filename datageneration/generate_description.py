@@ -60,6 +60,7 @@ class Description:
         
         client = OpenAI(
             api_key=self.cfg.API_KEY,
+            base_url=self.cfg.Base_URL,
         )
         
         content = self.prompts.get_description_prompt(index, view)

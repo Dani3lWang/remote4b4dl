@@ -16,3 +16,6 @@ env/
 
 .DS_Store
 Thumbs.db
+
+mllm/base_model/
+encoders/lidarclip/pretrained/

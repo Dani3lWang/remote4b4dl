@@ -1,0 +1,83 @@
+# =============================================================================
+# B4DL 统一环境 — 核心依赖 (LiDARCLIP + VTimeLLM 共享)
+# =============================================================================
+# Python: 3.10
+# CUDA:   12.4 (flash_attn 需要 Ampere/Ada GPU, 即 RTX 30/40 系列)
+# 安装:   conda create -n b4dl python=3.10 -y && conda activate b4dl
+#         pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
+#         pip install -r requirements_b4dl.txt
+#
+# ⚠️ 版本冲突说明:
+#   项目根 / mllm/ 两套 requirements 在以下包有版本分歧:
+#
+#   | 包            | mllm/requirements.txt | 根 requirements.txt | 本文件采用        |
+#   |---------------|----------------------|---------------------|-------------------|
+#   | transformers  | 4.31.0               | 4.37.2              | 4.31.0 (mllm 侧) |
+#   | peft          | 0.4.0                | 0.18.0              | 0.4.0  (mllm 侧) |
+#   | deepspeed     | 0.16.4               | 0.18.2              | 0.16.4 (mllm 侧) |
+#   | flash_attn    | 2.7.0.post2          | 2.8.3               | 2.7.0  (mllm 侧) |
+#   | clip          | 0.2.0                | 1.0                 | 1.0    (根侧)     |
+#
+#   原因: mllm/vtimellm/train/llama_flash_attn_monkey_patch.py 对
+#   transformers==4.31.0 的 LlamaAttention.forward 做了 monkey-patch;
+#   mllm/vtimellm/model/builder.py 的 LoRA 加载/合并依赖 peft==0.4.0
+#   的旧式 API (peft >=0.5.0 变更了 get_peft_model / PeftModel 接口).
+#   这两个无法安全升级, 因此整个环境以 mllm 的低版本为准.
+#
+#   如果你想尝试用根目录的新版 (4.37.2 / 0.18.0), 需自行修改 builder.py
+#   适配新版 peft API, 并验证 flash_attn monkey-patch 是否兼容.
+# =============================================================================
+
+# ---- PyTorch 核心 (conda/pip 预装, 此处仅声明) ----
+# torch==2.5.1                  # 见上方 install 命令
+# torchvision==0.20.1
+
+# ---- VTimeLLM 语言模型 ----
+transformers==4.31.0            # ⚠️ flash_attn monkey-patch 版本锁定
+tokenizers>=0.13.0,<0.14
+peft==0.4.0                     # ⚠️ LoRA API 版本锁定
+accelerate==0.21.0              # deepspeed 训练适配层
+
+# ---- 训练加速 ----
+deepspeed==0.16.4               # ZeRO-3 分布式训练
+flash_attn==2.7.0.post2         # FlashAttention v2 (Ampere+ GPU)
+einops==0.8.1                   # 张量重排
+
+# ---- CLIP (两处使用, 两个不同的包) ----
+#   1) openai_clip: LiDARCLIP 训练时的冻结图像编码器
+#   2) pip install --upgrade git+https://github.com/openai/CLIP.git
+#      注意: PyPI 上的 clip==1.0 是第三方的 clIP 包, 不是 OpenAI CLIP.
+#      根 requirements.txt 中的 clip==1.0 和 openai_clip==1.0.1
+#      应理解为同一个包的不同名称.
+#      经测试, LiDARCLIP 和 VTimeLLM inference.py 都 import clip,
+#      实际指向的是 OpenAI CLIP (即 PyPI 上的 openai_clip 包).
+openai_clip==1.0.1
+
+# ---- 视频 (VTimeLLM 推理) ----
+decord==0.6.0                   # 视频解码抽帧
+
+# ---- LiDARCLIP 编码器 ----
+pytorch_lightning==1.6.2        # LidarClip 训练框架
+mmengine==0.10.6                # SST Config / Registry (兼容 mmcv 2.x)
+
+# ---- nuScenes 数据处理 ----
+nuscenes_devkit==1.1.10
+pyquaternion==0.9.9
+opencv_python==4.11.0.86
+Shapely==1.8.5
+
+# ---- ChatGLM 中文版 (可选) ----
+sentencepiece==0.2.0
+cpm_kernels==1.0.11
+
+# ---- 工具 ----
+numpy==2.3.5
+scipy==1.15.0
+Pillow==12.0.0
+tqdm==4.67.1
+easydict==1.13
+Requests==2.32.5
+setuptools>=68.0.0
+
+# ---- Gradio Web Demo (可选) ----
+gradio==6.0.1

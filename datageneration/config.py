@@ -9,7 +9,9 @@ class Config:
 
     MAX_TOKENS = 2000
 
-    API_KEY = ""
+    API_KEY = "sk-oFW0Sj3ACdvwZJsfsoP0LTsouN2RhsTk4uPqLNqH6yQAGa9I"
+    Base_URL = "https://api.ccode.vip"
+
 
     CAMERA_VIEWS = ["CAM_FRONT", "CAM_FRONT_LEFT", "CAM_FRONT_RIGHT", "CAM_BACK", "CAM_BACK_LEFT", "CAM_BACK_RIGHT"]
     LIDAR_VIEW = "LIDAR_TOP"

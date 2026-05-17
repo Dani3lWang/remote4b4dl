@@ -3,12 +3,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "101229297",
-        "start_frame": 0,
-        "end_frame": 8,
+        "start_index": 0,
+        "end_index": 8,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was there a pedestrian in the front view in frame 005?"
+                "value": "Was a truck present in the front view between frame 0 and frame 6?"
             },
             {
                 "from": "gpt",
@@ -20,12 +20,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "101229297",
-        "start_frame": 0,
-        "end_frame": 8,
+        "start_index": 0,
+        "end_index": 8,
         "conversations": [
             {
                 "from": "human",
-                "value": "Did a car move in the back view between frame 002 and frame 006?"
+                "value": "Was a trafficcone visible in the back view during frames 2 through 5?"
             },
             {
                 "from": "gpt",
@@ -37,16 +37,16 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "101229297",
-        "start_frame": 0,
-        "end_frame": 8,
+        "start_index": 0,
+        "end_index": 8,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object was in front of the ego vehicle in frame 000?"
+                "value": "Which object moved across the construction site in the front view in frame 3?"
             },
             {
                 "from": "gpt",
-                "value": "TRUCK."
+                "value": "PEDESTRIAN."
             }
         ]
     },
@@ -54,12 +54,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "101229297",
-        "start_frame": 0,
-        "end_frame": 8,
+        "start_index": 0,
+        "end_index": 8,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was a traffic cone visible in the back view in frame 004?"
+                "value": "Did a car begin to move slowly forward in the back view after frame 5?"
             },
             {
                 "from": "gpt",
@@ -71,80 +71,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "101229297",
-        "start_frame": 0,
-        "end_frame": 8,
+        "start_index": 0,
+        "end_index": 8,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was there a motorcycle in the front view from frame 001 to frame 005?"
-            },
-            {
-                "from": "gpt",
-                "value": "No."
-            }
-        ]
-    },
-    {
-        "scene_id": "008395103",
-        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "109885902",
-        "start_frame": 6,
-        "end_frame": 14,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Was a construction present in the back view between frame 006 and frame 014?"
-            },
-            {
-                "from": "gpt",
-                "value": "Yes."
-            }
-        ]
-    },
-    {
-        "scene_id": "008395103",
-        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "109885902",
-        "start_frame": 6,
-        "end_frame": 14,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Was a pedestrian visible in front of the ego vehicle in frame 006?"
-            },
-            {
-                "from": "gpt",
-                "value": "Yes."
-            }
-        ]
-    },
-    {
-        "scene_id": "008395103",
-        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "109885902",
-        "start_frame": 6,
-        "end_frame": 14,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Which object was parked on the right in front of the ego vehicle in frame 010?"
-            },
-            {
-                "from": "gpt",
-                "value": "TRUCK."
-            }
-        ]
-    },
-    {
-        "scene_id": "008395103",
-        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "109885902",
-        "start_frame": 6,
-        "end_frame": 14,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Which object was visible moving across the intersection in the back view in frame 008?"
+                "value": "Which object was stationary on the left side of the road in the front view in frame 1?"
             },
             {
                 "from": "gpt",
@@ -156,12 +88,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "109885902",
-        "start_frame": 6,
-        "end_frame": 14,
+        "start_index": 6,
+        "end_index": 14,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was a barrier present in the back view between frame 006 and frame 014?"
+                "value": "Was a truck present in the front view in frame 008?"
             },
             {
                 "from": "gpt",
@@ -172,13 +104,30 @@
     {
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "104884792",
-        "start_frame": 12,
-        "end_frame": 20,
+        "sequence_id": "109885902",
+        "start_index": 6,
+        "end_index": 14,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was there a stationary truck in front of the ego vehicle between frame 12 and frame 20?"
+                "value": "Which object was observed crossing the intersection in the back view between frame 007 and frame 010?"
+            },
+            {
+                "from": "gpt",
+                "value": "CAR."
+            }
+        ]
+    },
+    {
+        "scene_id": "008395103",
+        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
+        "sequence_id": "109885902",
+        "start_index": 6,
+        "end_index": 14,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Was a pedestrian visible on the left side of the front view during frames 006 to 014?"
             },
             {
                 "from": "gpt",
@@ -189,30 +138,13 @@
     {
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "104884792",
-        "start_frame": 12,
-        "end_frame": 20,
+        "sequence_id": "109885902",
+        "start_index": 6,
+        "end_index": 14,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object was present near the truck in front of the ego vehicle in frame 15?"
-            },
-            {
-                "from": "gpt",
-                "value": "PEDESTRIAN."
-            }
-        ]
-    },
-    {
-        "scene_id": "008395103",
-        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "104884792",
-        "start_frame": 12,
-        "end_frame": 20,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Did a tanker appear in the back view between frame 12 and frame 20?"
+                "value": "Were barriers present near the roadside in the back view around frame 012?"
             },
             {
                 "from": "gpt",
@@ -223,30 +155,13 @@
     {
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "104884792",
-        "start_frame": 12,
-        "end_frame": 20,
+        "sequence_id": "109885902",
+        "start_index": 6,
+        "end_index": 14,
         "conversations": [
             {
                 "from": "human",
-                "value": "Were there construction barriers present in the front view in frame 18?"
-            },
-            {
-                "from": "gpt",
-                "value": "Yes."
-            }
-        ]
-    },
-    {
-        "scene_id": "008395103",
-        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "104884792",
-        "start_frame": 12,
-        "end_frame": 20,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Which type of vehicle was primarily visible in the back view from frame 12 to frame 20?"
+                "value": "Which object was stationary in the center lane of the front view throughout the sequence?"
             },
             {
                 "from": "gpt",
@@ -257,13 +172,13 @@
     {
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "104898342",
-        "start_frame": 18,
-        "end_frame": 26,
+        "sequence_id": "104884792",
+        "start_index": 12,
+        "end_index": 20,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was a pedestrian present in the front view between frames 018 and 026?"
+                "value": "Was a pedestrian visible in the front view from frame 12 to frame 16?"
             },
             {
                 "from": "gpt",
@@ -274,13 +189,13 @@
     {
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "104898342",
-        "start_frame": 18,
-        "end_frame": 26,
+        "sequence_id": "104884792",
+        "start_index": 12,
+        "end_index": 20,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object was in front of the ego vehicle throughout frames 018 to 026?"
+                "value": "Which object was stationary directly ahead of the ego vehicle in the front view between frame 13 and frame 19?"
             },
             {
                 "from": "gpt",
@@ -291,13 +206,47 @@
     {
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
-        "sequence_id": "104898342",
-        "start_frame": 18,
-        "end_frame": 26,
+        "sequence_id": "104884792",
+        "start_index": 12,
+        "end_index": 20,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was there a barrier visible in the back view between frames 018 and 026?"
+                "value": "Were construction barriers present in the back view between frame 14 and frame 20?"
+            },
+            {
+                "from": "gpt",
+                "value": "Yes."
+            }
+        ]
+    },
+    {
+        "scene_id": "008395103",
+        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
+        "sequence_id": "104884792",
+        "start_index": 12,
+        "end_index": 20,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Which object was located to the rear left of the ego vehicle in the back view imagery from frame 15 to frame 18?"
+            },
+            {
+                "from": "gpt",
+                "value": "TRUCK."
+            }
+        ]
+    },
+    {
+        "scene_id": "008395103",
+        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
+        "sequence_id": "104884792",
+        "start_index": 12,
+        "end_index": 20,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Did debris exist near the construction zone in the front view between frame 17 and frame 20?"
             },
             {
                 "from": "gpt",
@@ -309,16 +258,16 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "104898342",
-        "start_frame": 18,
-        "end_frame": 26,
+        "start_index": 18,
+        "end_index": 26,
         "conversations": [
             {
                 "from": "human",
-                "value": "Did a bicycle appear in the front view between frames 018 and 026?"
+                "value": "Was a truck present in front of the ego vehicle between frame 18 and frame 26?"
             },
             {
                 "from": "gpt",
-                "value": "No."
+                "value": "Yes."
             }
         ]
     },
@@ -326,12 +275,63 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "104898342",
-        "start_frame": 18,
-        "end_frame": 26,
+        "start_index": 18,
+        "end_index": 26,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object gradually moved out of view in the front view between frames 018 and 026?"
+                "value": "Was there a pedestrian in the back view from frame 18 to frame 26?"
+            },
+            {
+                "from": "gpt",
+                "value": "Yes."
+            }
+        ]
+    },
+    {
+        "scene_id": "008395103",
+        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
+        "sequence_id": "104898342",
+        "start_index": 18,
+        "end_index": 26,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Which object was positioned near the parked vehicles in the front view between frame 18 and frame 26?"
+            },
+            {
+                "from": "gpt",
+                "value": "BARRIER."
+            }
+        ]
+    },
+    {
+        "scene_id": "008395103",
+        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
+        "sequence_id": "104898342",
+        "start_index": 18,
+        "end_index": 26,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Did a car appear in the back view of the ego vehicle during frames 18 to 26?"
+            },
+            {
+                "from": "gpt",
+                "value": "Yes."
+            }
+        ]
+    },
+    {
+        "scene_id": "008395103",
+        "scene_token": "73030fb67d3c46cfb5e590168088ae39",
+        "sequence_id": "104898342",
+        "start_index": 18,
+        "end_index": 26,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Which object was seated on the embankment in the front view from frame 18 to frame 26?"
             },
             {
                 "from": "gpt",
@@ -343,12 +343,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "108125046",
-        "start_frame": 24,
-        "end_frame": 32,
+        "start_index": 24,
+        "end_index": 32,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was a truck present in the front part of the ego vehicle between frame 24 and frame 28?"
+                "value": "Were multiple trucks present in the front view between frame 24 and frame 28?"
             },
             {
                 "from": "gpt",
@@ -360,12 +360,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "108125046",
-        "start_frame": 24,
-        "end_frame": 32,
+        "start_index": 24,
+        "end_index": 32,
         "conversations": [
             {
                 "from": "human",
-                "value": "Did a pedestrian appear in the back view from frame 24 to frame 32?"
+                "value": "Was a barrier visible in the back view during frame 27?"
             },
             {
                 "from": "gpt",
@@ -377,12 +377,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "108125046",
-        "start_frame": 24,
-        "end_frame": 32,
+        "start_index": 24,
+        "end_index": 32,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object was consistently alongside the pathway on the right in the front view from frame 24 to frame 32?"
+                "value": "Which object was situated along the pathway on the right side in the front view from frame 24 to frame 32?"
             },
             {
                 "from": "gpt",
@@ -394,12 +394,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "108125046",
-        "start_frame": 24,
-        "end_frame": 32,
+        "start_index": 24,
+        "end_index": 32,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was any part of a construction site visible in the back part of the ego vehicle throughout frame 24 to frame 32?"
+                "value": "Did a car appear on the roadway in the back view between frame 24 and frame 32?"
             },
             {
                 "from": "gpt",
@@ -411,16 +411,16 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "108125046",
-        "start_frame": 24,
-        "end_frame": 32,
+        "start_index": 24,
+        "end_index": 32,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object was moving further down the road in the back view as the frames progressed?"
+                "value": "Which object was moving away towards the construction area in the back view over the frame sequence?"
             },
             {
                 "from": "gpt",
-                "value": "TRUCK."
+                "value": "PEDESTRIAN."
             }
         ]
     },
@@ -428,8 +428,8 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "106035837",
-        "start_frame": 30,
-        "end_frame": 38,
+        "start_index": 30,
+        "end_index": 38,
         "conversations": [
             {
                 "from": "human",
@@ -445,12 +445,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "106035837",
-        "start_frame": 30,
-        "end_frame": 38,
+        "start_index": 30,
+        "end_index": 38,
         "conversations": [
             {
                 "from": "human",
-                "value": "Were barriers visible in the front view in frame 32?"
+                "value": "Did a pedestrian remain near the embankment in the front view from frame 30 to frame 38?"
             },
             {
                 "from": "gpt",
@@ -462,16 +462,16 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "106035837",
-        "start_frame": 30,
-        "end_frame": 38,
+        "start_index": 30,
+        "end_index": 38,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object was in front of the ego vehicle in frame 34?"
+                "value": "Which object was positioned along the road edge in the front view during frames 30 to 38?"
             },
             {
                 "from": "gpt",
-                "value": "TRUCK."
+                "value": "TRAFFICCONE."
             }
         ]
     },
@@ -479,12 +479,12 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "106035837",
-        "start_frame": 30,
-        "end_frame": 38,
+        "start_index": 30,
+        "end_index": 38,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was a building under construction visible in the back view in frame 36?"
+                "value": "Were cars parked on the right side of the road in the back view between frame 30 and frame 38?"
             },
             {
                 "from": "gpt",
@@ -496,12 +496,29 @@
         "scene_id": "008395103",
         "scene_token": "73030fb67d3c46cfb5e590168088ae39",
         "sequence_id": "106035837",
-        "start_frame": 30,
-        "end_frame": 38,
+        "start_index": 30,
+        "end_index": 38,
         "conversations": [
             {
                 "from": "human",
-                "value": "Were traffic cones present in the front view between frame 30 and frame 38?"
+                "value": "Which object marked the work zone approaching the ego vehicle in the front view from frame 30 to frame 38?"
+            },
+            {
+                "from": "gpt",
+                "value": "BARRIER."
+            }
+        ]
+    },
+    {
+        "scene_id": "006584609",
+        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
+        "sequence_id": "106422554",
+        "start_index": 0,
+        "end_index": 8,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Was a pedestrian present in the front view between frame 0 and frame 8?"
             },
             {
                 "from": "gpt",
@@ -513,12 +530,29 @@
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
         "sequence_id": "106422554",
-        "start_frame": 0,
-        "end_frame": 8,
+        "start_index": 0,
+        "end_index": 8,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was a barrier present in the front view of the ego vehicle in frame 005?"
+                "value": "Which object was visible near the construction barriers in the back view from frame 0 to frame 6?"
+            },
+            {
+                "from": "gpt",
+                "value": "TRAFFICCONE."
+            }
+        ]
+    },
+    {
+        "scene_id": "006584609",
+        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
+        "sequence_id": "106422554",
+        "start_index": 0,
+        "end_index": 8,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Did a truck exist in the front view during frames 0 to 8?"
             },
             {
                 "from": "gpt",
@@ -530,12 +564,12 @@
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
         "sequence_id": "106422554",
-        "start_frame": 0,
-        "end_frame": 8,
+        "start_index": 0,
+        "end_index": 8,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object was positioned to the front right of the ego vehicle in frame 002?"
+                "value": "Which object started moving forward in the back view between frame 1 and frame 4?"
             },
             {
                 "from": "gpt",
@@ -547,12 +581,12 @@
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
         "sequence_id": "106422554",
-        "start_frame": 0,
-        "end_frame": 8,
+        "start_index": 0,
+        "end_index": 8,
         "conversations": [
             {
                 "from": "human",
-                "value": "Did a pedestrian appear in the back view of the ego vehicle in frame 008?"
+                "value": "Was a barrier present in the front view marking the construction zone between frame 0 and frame 8?"
             },
             {
                 "from": "gpt",
@@ -563,13 +597,13 @@
     {
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "106422554",
-        "start_frame": 0,
-        "end_frame": 8,
+        "sequence_id": "107712752",
+        "start_index": 6,
+        "end_index": 14,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was there a truck visible in the front view in frame 004?"
+                "value": "Was a truck present in the front view between frame 006 and frame 014?"
             },
             {
                 "from": "gpt",
@@ -580,13 +614,30 @@
     {
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "106422554",
-        "start_frame": 0,
-        "end_frame": 8,
+        "sequence_id": "107712752",
+        "start_index": 6,
+        "end_index": 14,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object approached from the back of the ego vehicle in frame 006?"
+                "value": "Were pedestrians visible near the crosswalk in the front view from frame 006 to frame 014?"
+            },
+            {
+                "from": "gpt",
+                "value": "Yes."
+            }
+        ]
+    },
+    {
+        "scene_id": "006584609",
+        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
+        "sequence_id": "107712752",
+        "start_index": 6,
+        "end_index": 14,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Which object was primarily observed turning left in the back view during frames 006 to 014?"
             },
             {
                 "from": "gpt",
@@ -598,12 +649,12 @@
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
         "sequence_id": "107712752",
-        "start_frame": 6,
-        "end_frame": 14,
+        "start_index": 6,
+        "end_index": 14,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was a bicycle present in front of the ego vehicle between frame 006 and frame 014?"
+                "value": "Did construction remain stationary along the roadside in the back view throughout frames 006 to 014?"
             },
             {
                 "from": "gpt",
@@ -615,63 +666,29 @@
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
         "sequence_id": "107712752",
-        "start_frame": 6,
-        "end_frame": 14,
+        "start_index": 6,
+        "end_index": 14,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was there a van in the back view between frame 006 and frame 014?"
+                "value": "Which object was aligned along the edges of the road in the front view between frame 006 and frame 014?"
             },
             {
                 "from": "gpt",
-                "value": "Yes."
+                "value": "BARRIER."
             }
         ]
     },
     {
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "107712752",
-        "start_frame": 6,
-        "end_frame": 14,
+        "sequence_id": "108591840",
+        "start_index": 12,
+        "end_index": 20,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object was on the left in the back view in frame 010?"
-            },
-            {
-                "from": "gpt",
-                "value": "CAR."
-            }
-        ]
-    },
-    {
-        "scene_id": "006584609",
-        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "107712752",
-        "start_frame": 6,
-        "end_frame": 14,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Did the construction truck remain stationary in the back view throughout frames 006 to 014?"
-            },
-            {
-                "from": "gpt",
-                "value": "Yes."
-            }
-        ]
-    },
-    {
-        "scene_id": "006584609",
-        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "107712752",
-        "start_frame": 6,
-        "end_frame": 14,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Was a pedestrian visible near crosswalks in the front view between frame 006 and frame 014?"
+                "value": "Was a pedestrian present in the front view between frame 16 and frame 20?"
             },
             {
                 "from": "gpt",
@@ -683,80 +700,12 @@
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
         "sequence_id": "108591840",
-        "start_frame": 12,
-        "end_frame": 20,
+        "start_index": 12,
+        "end_index": 20,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was a motorcycle present in the front view between frame 12 and frame 20?"
-            },
-            {
-                "from": "gpt",
-                "value": "Yes."
-            }
-        ]
-    },
-    {
-        "scene_id": "006584609",
-        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "108591840",
-        "start_frame": 12,
-        "end_frame": 20,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Did a pedestrian appear in the back view from frame 12 to frame 20?"
-            },
-            {
-                "from": "gpt",
-                "value": "Yes."
-            }
-        ]
-    },
-    {
-        "scene_id": "006584609",
-        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "108591840",
-        "start_frame": 12,
-        "end_frame": 20,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Which object was in front of the ego vehicle most notably in frame 16?"
-            },
-            {
-                "from": "gpt",
-                "value": "PEDESTRIAN."
-            }
-        ]
-    },
-    {
-        "scene_id": "006584609",
-        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "108591840",
-        "start_frame": 12,
-        "end_frame": 20,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Was there a truck visible behind in the ego vehicle's field of view throughout frames 12 to 20?"
-            },
-            {
-                "from": "gpt",
-                "value": "Yes."
-            }
-        ]
-    },
-    {
-        "scene_id": "006584609",
-        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "108591840",
-        "start_frame": 12,
-        "end_frame": 20,
-        "conversations": [
-            {
-                "from": "human",
-                "value": "Which type of object was seen behind the ego vehicle moving from left to right in the intersection?"
+                "value": "Which object was observed moving from left to right across the intersection in the back view?"
             },
             {
                 "from": "gpt",
@@ -767,13 +716,30 @@
     {
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "103922091",
-        "start_frame": 18,
-        "end_frame": 26,
+        "sequence_id": "108591840",
+        "start_index": 12,
+        "end_index": 20,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was a motorcycle present in the front view from frame 18 to frame 26?"
+                "value": "Was a bicycle present in the front view from frame 12 to frame 20?"
+            },
+            {
+                "from": "gpt",
+                "value": "No."
+            }
+        ]
+    },
+    {
+        "scene_id": "006584609",
+        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
+        "sequence_id": "108591840",
+        "start_index": 12,
+        "end_index": 20,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Was a barrier visible in the back view during frames 12 through 20?"
             },
             {
                 "from": "gpt",
@@ -784,17 +750,17 @@
     {
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
-        "sequence_id": "103922091",
-        "start_frame": 18,
-        "end_frame": 26,
+        "sequence_id": "108591840",
+        "start_index": 12,
+        "end_index": 20,
         "conversations": [
             {
                 "from": "human",
-                "value": "Did a bicycle appear in the back view between frame 18 and frame 26?"
+                "value": "Which vehicle was noted moving steadily along the lane in the front view?"
             },
             {
                 "from": "gpt",
-                "value": "Yes."
+                "value": "MOTORCYCLE."
             }
         ]
     },
@@ -802,16 +768,16 @@
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
         "sequence_id": "103922091",
-        "start_frame": 18,
-        "end_frame": 26,
+        "start_index": 18,
+        "end_index": 26,
         "conversations": [
             {
                 "from": "human",
-                "value": "Which object was prominent in the left lane in the back view from frame 18 to frame 26?"
+                "value": "Was a trafficcone visible in the front view between frame 18 and frame 26?"
             },
             {
                 "from": "gpt",
-                "value": "TRUCK."
+                "value": "The answer is Yes."
             }
         ]
     },
@@ -819,16 +785,16 @@
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
         "sequence_id": "103922091",
-        "start_frame": 18,
-        "end_frame": 26,
+        "start_index": 18,
+        "end_index": 26,
         "conversations": [
             {
                 "from": "human",
-                "value": "Were there parked cars in the front view between frame 18 and frame 26?"
+                "value": "Which object was positioned on the sidewalk in the back view throughout the sequence?"
             },
             {
                 "from": "gpt",
-                "value": "Yes."
+                "value": "The answer is BICYCLE."
             }
         ]
     },
@@ -836,16 +802,50 @@
         "scene_id": "006584609",
         "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
         "sequence_id": "103922091",
-        "start_frame": 18,
-        "end_frame": 26,
+        "start_index": 18,
+        "end_index": 26,
         "conversations": [
             {
                 "from": "human",
-                "value": "Was there a traffic cone in the front view from frame 18 to frame 26?"
+                "value": "Did a pedestrian appear in the back view during frame 24?"
             },
             {
                 "from": "gpt",
-                "value": "Yes."
+                "value": "The answer is Yes."
+            }
+        ]
+    },
+    {
+        "scene_id": "006584609",
+        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
+        "sequence_id": "103922091",
+        "start_index": 18,
+        "end_index": 26,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Which object stayed in the left lane of the back view from frame 18 to frame 26?"
+            },
+            {
+                "from": "gpt",
+                "value": "The answer is TRUCK."
+            }
+        ]
+    },
+    {
+        "scene_id": "006584609",
+        "scene_token": "c3e0e9f6ee8d4170a3d22a6179f1ca3a",
+        "sequence_id": "103922091",
+        "start_index": 18,
+        "end_index": 26,
+        "conversations": [
+            {
+                "from": "human",
+                "value": "Was a suv present in the back view between frame 18 and frame 26?"
+            },
+            {
+                "from": "gpt",
+                "value": "The answer is Yes."
             }
         ]
     }
