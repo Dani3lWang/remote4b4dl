@@ -20,3 +20,4 @@ Thumbs.db
 
 mllm/base_model/
 encoders/lidarclip/pretrained/
+b4dl-dataset/
