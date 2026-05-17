@@ -13,7 +13,7 @@ env/
 .venv/
 .env
 .ssh
-.claude
+.claude/
 datageneration/config.py
 
 
