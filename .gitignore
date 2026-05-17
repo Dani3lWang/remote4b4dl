@@ -12,6 +12,7 @@ venv/
 env/
 .venv/
 .env
+.ssh
 
 
 .DS_Store
