@@ -26,7 +26,7 @@ _find_nvcc() {
         return
     fi
     # Priority 4: common install paths
-    for _ver in 12 12.6 12.5 12.4 12.3 12.2 12.1 11.8; do
+    for _ver in 12.8 12 12.6 12.5 12.4 12.3 12.2 12.1 11.8; do
         if [ -f "/usr/local/cuda-$_ver/bin/nvcc" ]; then
             export CUDA_HOME="/usr/local/cuda-$_ver"
             _cuda_found=true

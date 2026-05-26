@@ -9,8 +9,7 @@ class VTimeLLMMetaModel:
         pretrain_mm_mlp_adapter = model_args.pretrain_mm_mlp_adapter
 
         if not hasattr(self, 'mm_projector'):
-            # self.mm_projector = nn.Linear(768, self.config.hidden_size)
-            self.mm_projector = nn.Linear(128, self.config.hidden_size)
+            self.mm_projector = nn.Linear(768, self.config.hidden_size)
 
         if pretrain_mm_mlp_adapter is not None:
             mm_projector_weights = torch.load(pretrain_mm_mlp_adapter, map_location='cpu')

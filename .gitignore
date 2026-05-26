@@ -23,3 +23,7 @@ mllm/base_model/
 encoders/lidarclip/pretrained/
 b4dl-dataset/
 requirements_sum/
+# Large model files
+*.ckpt
+*.pt
+backup/

@@ -10,9 +10,13 @@ print(root_dir)
 import sys
 sys.path.append(root_dir)
 
-from llama_flash_attn_monkey_patch import replace_llama_attn_with_flash_attn
-
-replace_llama_attn_with_flash_attn()
+# flash_attn 2.x 不支持 RTX 5090 (sm_120)，改用 transformers 原生 SDPA
+# 需要 transformers >= 4.45
+try:
+    from llama_flash_attn_monkey_patch import replace_llama_attn_with_flash_attn
+    replace_llama_attn_with_flash_attn()
+except ImportError:
+    pass  # flash_attn not installed, using transformers native SDPA
 
 from train import train
 

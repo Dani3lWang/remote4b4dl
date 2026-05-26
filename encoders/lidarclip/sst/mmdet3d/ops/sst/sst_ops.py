@@ -1,5 +1,5 @@
 import torch
-from ipdb import set_trace
+from pdb import set_trace
 import random
 import numpy as np
 from mmdet3d.ops import spconv

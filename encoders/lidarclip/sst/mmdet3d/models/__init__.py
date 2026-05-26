@@ -23,4 +23,10 @@ __all__ = [
     'build_neck', 'build_roi_extractor', 'build_shared_head', 'build_head',
     'build_loss', 'build_detector', 'build_fusion_layer', 'build_model',
     'build_middle_encoder', 'build_voxel_encoder',
+    'register_all_modules',
 ]
+
+
+def register_all_modules(init_default_scope=False):
+    """No-op for mmengine compat."""
+    pass
