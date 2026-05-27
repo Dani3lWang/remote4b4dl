@@ -35,7 +35,9 @@ class VTimeLLMMetaForCausalLM(ABC):
         # print(input_ids.shape, position_ids.shape, attention_mask.shape, past_key_values.shape, images)
         if images is None or input_ids.shape[1] == 1:
             if past_key_values is not None and images is not None and input_ids.shape[1] == 1:
-                if self.get_model().config.model_type == 'chatglm':
+                if hasattr(past_key_values, 'get_seq_length'):
+                    target_shape = past_key_values.get_seq_length() + 1
+                elif self.get_model().config.model_type == 'chatglm':
                     target_shape = past_key_values[-1][-1].shape[0] + 1
                 else:
                     target_shape = past_key_values[-1][-1].shape[-2] + 1
