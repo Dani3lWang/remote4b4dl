@@ -7,13 +7,11 @@ MASTER_PORT=29576
 deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT vtimellm/train/train_mem.py \
     --deepspeed ./scripts/zero3.json \
     --lora_enable True \
-    --model_name_or_path ./base_model/vicuna-v1-5-7b \
+    --model_name_or_path ./checkpoints/vtimellm-$MODEL_VERSION-stage2-merged \
     --version v1 \
     --data_path ./b4dl_dataset/stage3_train.json \
     --feat_folder ../encoders/lidarclip/b4dl/stage2_features \
-    --pretrain_mm_mlp_adapter ./checkpoints/vtimellm-$MODEL_VERSION-stage1/mm_projector.bin \
-    --stage2_path ./checkpoints/vtimellm-$MODEL_VERSION-stage2 \
-    --training_stage 3 \
+    --pretrain_mm_mlp_adapter ./checkpoints/vtimellm-$MODEL_VERSION-stage2-merged/mm_projector.bin \
     --output_dir ./checkpoints/vtimellm-$MODEL_VERSION-stage3 \
     --bf16 True \
     --num_train_epochs 3 \
