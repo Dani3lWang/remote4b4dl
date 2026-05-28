@@ -1,7 +1,7 @@
 #!/bin/bash
 
 MODEL_VERSION=vicuna-v1-5-7b
-gpu_vis=1
+gpu_vis=0,1
 MASTER_PORT=29576
 
 deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT vtimellm/train/train_mem.py \
