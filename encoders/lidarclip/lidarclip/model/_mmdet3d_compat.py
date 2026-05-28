@@ -122,9 +122,17 @@ def _dynamic_voxelize_py(
 ) -> None:
     vs = points.new_tensor(voxel_size)
     cr_min = points.new_tensor(coors_range[:3])
+    cr_max = points.new_tensor(coors_range[3:])
+    grid_size = torch.round((cr_max - cr_min) / vs).long()
+    # Grid dims: nx, ny, nz = x, y, z axes
+    nx, ny, nz = grid_size[0].item(), grid_size[1].item(), grid_size[2].item()
     coors_float = (points[:, :num_features] - cr_min[None, :]) / vs[None, :]
     coors_int = torch.floor(coors_float).to(torch.int32)
-    coors[:, 2] = coors_int[:, 0]  # x
+    # Clamp to valid grid range (points outside range get mapped to boundary)
+    coors_int[:, 0].clamp_(0, nx - 1)  # x
+    coors_int[:, 1].clamp_(0, ny - 1)  # y
+    coors_int[:, 2].clamp_(0, nz - 1)  # z
+    coors[:, 2] = coors_int[:, 0]  # x -> z (mmdet3d convention: z,y,x)
     coors[:, 1] = coors_int[:, 1]  # y
     coors[:, 0] = coors_int[:, 2]  # z
 

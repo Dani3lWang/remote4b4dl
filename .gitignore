@@ -25,9 +25,17 @@ b4dl-dataset/
 requirements_sum/
 mllm/b4dl_dataset
 mllm/checkpoints
+mllm/wandb
+mllm/eval_results
 encoders/lidarclip/b4dl
+claude_records/
 # Large model files
 
 *.ckpt
 *.pt
 backup/
+encoders/lidarclip/extract_pc_features.py
+encoders/lidarclip/README.md
+encoders/lidarclip/extract_pc_features.py
+Claude_record/RTX5090_DEBUG_LOG.md
+mmb4dl.pdf

@@ -1,11 +1,10 @@
-from train import LidarClip
+import torch
 import argparse
 import os, json
 import numpy as np
 import shutil
 
 from tqdm import tqdm
-import torch
 
 import clip
 
@@ -29,19 +28,31 @@ DEFAULT_DATA_PATHS = {
 
 def load_model(args):
     assert torch.cuda.is_available()
-    
+
     clip_model, clip_preprocess = clip.load(args.clip_version)
     lidar_encoder = LidarEncoderSST(
         "lidarclip/model/sst_encoder_only_config.py", clip_model.visual.output_dim
     )
-    model = LidarClip.load_from_checkpoint(
-        args.checkpoint,
-        lidar_encoder=lidar_encoder,
-        clip_model=clip_model,
-        batch_size=1,
-        epoch_size=1,
-    )
-    model.to("cuda")
+
+    # PyTorch 2.6+ defaults to weights_only=True for torch.load, but the
+    # PyTorch Lightning checkpoint contains non-tensor objects (scheduler, etc.).
+    ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    lidar_state = {
+        k.replace("lidar_encoder.", ""): v
+        for k, v in ckpt["state_dict"].items()
+        if k.startswith("lidar_encoder.")
+    }
+    # strict=False: checkpoint may contain old bbox_head keys that our
+    # encoder-only SSTEncoder does not have.
+    lidar_encoder.load_state_dict(lidar_state, strict=False)
+    print(f"Loaded {len(lidar_state)} lidar_encoder parameters from checkpoint")
+
+    # Wrap in a thin wrapper that exposes .lidar_encoder
+    class _EncoderWrapper:
+        def __init__(self, encoder):
+            self.lidar_encoder = encoder.cuda()
+
+    model = _EncoderWrapper(lidar_encoder)
     return model, clip_preprocess
 
 
@@ -52,7 +63,7 @@ def main(args):
         args.data_path,
         clip_preprocess,
         batch_size=args.batch_size,
-        num_workers=4,
+        num_workers=args.num_workers,
         split=args.split,
         dataset_name=args.dataset_name,
     )
@@ -127,6 +138,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-path", type=str, default=None)
     parser.add_argument("--split", type=str, default="trainval")
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--use-anno-loader", action="store_true")
     parser.add_argument("--dataset-name", type=str, default="with_path", choices=["once", "nuscenes", "with_path"])
     parser.add_argument("--scene-json-path", type=str, default="./annotations/scene_metadata.json")
