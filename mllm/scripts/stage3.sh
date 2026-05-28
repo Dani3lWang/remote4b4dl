@@ -5,7 +5,7 @@ gpu_vis=0,1
 MASTER_PORT=29576
 
 deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT vtimellm/train/train_mem.py \
-    --deepspeed ./scripts/zero2.json \
+    --deepspeed ./scripts/zero3.json \
     --lora_enable True \
     --model_name_or_path ./checkpoints/vtimellm-$MODEL_VERSION-stage2-merged \
     --version v1 \

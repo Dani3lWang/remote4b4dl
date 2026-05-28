@@ -24,6 +24,20 @@ from typing import Dict, Optional, Sequence, List
 import torch
 import transformers
 import sys
+from contextlib import contextmanager
+
+# Monkey-patch: ZeRO-3 gradient partitioning 与 accelerate 的 no_sync 不兼容.
+# 当 DeepSpeed 自行管理 gradient accumulation 时，跳过 no_sync 是安全的.
+import deepspeed.runtime.engine as ds_engine
+_original_no_sync = ds_engine.DeepSpeedEngine.no_sync
+@contextmanager
+def _patched_no_sync(self):
+    if self.zero_optimization_partition_gradients():
+        yield
+    else:
+        with _original_no_sync(self):
+            yield
+ds_engine.DeepSpeedEngine.no_sync = _patched_no_sync
 sys.path.append(root_dir)
 from vtimellm import conversation as conversation_lib
 from vtimellm.train.vtimellm_trainer import VTimeLLMTrainer
