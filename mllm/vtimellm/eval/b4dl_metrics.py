@@ -165,7 +165,7 @@ def compute_captioning_metrics(results):
     meteor = None
     try:
         from nltk.translate.meteor_score import meteor_score
-        meteor_scores = [meteor_score([ref], pred) for ref, pred in zip(references, predictions)]
+        meteor_scores = [meteor_score([ref.split()], pred.split()) for ref, pred in zip(references, predictions)]
         meteor = round(sum(meteor_scores) / len(meteor_scores) * 100, 2)
     except ImportError:
         meteor = "nltk_not_available"
