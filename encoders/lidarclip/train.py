@@ -1,5 +1,8 @@
 import argparse
 import os
+
+os.environ["WANDB_MODE"] = "offline"  # wandb 离线模式
+
 # import sys
 # sys.path.append("./sst")
 
@@ -166,7 +169,6 @@ def train(
         logger=wandb_logger,
         strategy="ddp",
         callbacks=[checkpoint_callback, learningrate_callback],
-        resume_from_checkpoint=checkpoint_path,
     )
     if trainer.global_rank == 0:
         old_id = wandb_logger.experiment.config.get("slurm-id", "")
@@ -174,7 +176,7 @@ def train(
         new_id = old_id + "-" + curr_id if len(old_id) else curr_id
         wandb_logger.experiment.config.update({"slurm-id": new_id}, allow_val_change=True)
 
-    trainer.fit(model=model, train_dataloaders=train_loader)
+    trainer.fit(model=model, train_dataloaders=train_loader, ckpt_path=checkpoint_path)
 
 
 def parse_args():
