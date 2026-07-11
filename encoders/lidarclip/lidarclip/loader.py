@@ -103,7 +103,8 @@ class NuscenesImageLidarDataset(Dataset):
         
         #################################### for 700 scenes only #########################################
         print("ok_scene_tokens: ", len(ok_scene_tokens))
-        with open("/home/youngwoo.shin/lidarclip/annotations/sequence_metadata.json", "r") as f:
+        seq_meta_path = osp.join(osp.dirname(__file__), "..", "annotations", "sequence_metadata.json")
+        with open(seq_meta_path, "r") as f:
             seq_data = json.load(f)
         filtered_scene_list = []
         for seq in seq_data[-900:]:

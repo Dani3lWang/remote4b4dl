@@ -2,15 +2,15 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    DESCRIPTION_GPT_MODEL = "gpt-4o" # "gpt-4o" / "gpt-4o-mini" / "o1-preview"
-    GENERATE_GPT_MODEL = "gpt-4o"
-    STAGE1_GPT_MODEL = "gpt-4o"
-    STAGE2_GPT_MODEL = "gpt-4o"
+    DESCRIPTION_GPT_MODEL = "MiniMax-M3" # "gpt-4o" / "gpt-4o-mini" / "o1-preview"
+    GENERATE_GPT_MODEL = "MiniMax-M3"
+    STAGE1_GPT_MODEL = "MiniMax-M3"
+    STAGE2_GPT_MODEL = "MiniMax-M3"
 
-    MAX_TOKENS = 2000
+    MAX_TOKENS = 2048
 
-    API_KEY = ""
-    Base_URL = ""
+    API_KEY = "YOUR_API_KEY_HERE"
+    Base_URL = "https://api.minimaxi.com/v1"
 
 
     CAMERA_VIEWS = ["CAM_FRONT", "CAM_FRONT_LEFT", "CAM_FRONT_RIGHT", "CAM_BACK", "CAM_BACK_LEFT", "CAM_BACK_RIGHT"]

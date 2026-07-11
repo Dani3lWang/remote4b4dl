@@ -28,7 +28,8 @@ mllm/checkpoints
 mllm/wandb
 mllm/eval_results
 encoders/lidarclip/b4dl
-claude_records/
+Claude_record/
+wandb/
 # Large model files
 
 *.ckpt
@@ -39,3 +40,4 @@ encoders/lidarclip/README.md
 encoders/lidarclip/extract_pc_features.py
 Claude_record/RTX5090_DEBUG_LOG.md
 mmb4dl.pdf
+datageneration/config.py
