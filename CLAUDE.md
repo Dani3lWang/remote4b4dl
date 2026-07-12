@@ -193,6 +193,7 @@ conda run -n wqlc python vtimellm/demo_gradio.py \
 - OpenAI API 调用：`client.chat.completions.create()`
 - 特征文件：`.npy`，dtype float16
 - 模型权重：预训练模型放 `./base_model/`，checkpoint 放 `./checkpoints/`
+- **文档存放**：后续生成的所有说明文档（.md）统一保存到 `learn docs/` 目录下
 
 ## 已知问题与注意事项
 
