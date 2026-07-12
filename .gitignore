@@ -14,6 +14,7 @@ env/
 .env
 .ssh
 .claude/
+CLAUDE.md
 
 
 .DS_Store
