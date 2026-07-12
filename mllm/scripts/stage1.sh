@@ -1,7 +1,7 @@
 #!/bin/bash
 
 MODEL_VERSION=vicuna-v1-5-7b
-gpu_vis=1 # per_device_train_batch_size * gradient_accumulation_steps * n_gpus = 128
+gpu_vis=0 # per_device_train_batch_size * gradient_accumulation_steps * n_gpus = 128
 MASTER_PORT=29571
 
 
