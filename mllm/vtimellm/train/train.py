@@ -102,8 +102,16 @@ def maybe_zero_3(param, ignore_status=False, name=None):
         if param.ds_status == ZeroParamStatus.NOT_AVAILABLE:
             if not ignore_status:
                 logging.warning(f"{name}: param.ds_status != ZeroParamStatus.NOT_AVAILABLE: {param.ds_status}")
-        with zero.GatheredParameters([param]):
-            param = param.data.detach().cpu().clone()
+            with zero.GatheredParameters([param]):
+                param = param.data.detach().cpu().clone()
+        else:
+            # 参数已经是 AVAILABLE 状态，直接访问避免 GatheredParameters 的
+            # active_sub_modules 跟踪在 exit 时触发 free_param 断言失败
+            # ds_tensor 可能是展平存储的，用 ds_shape 恢复原始形状
+            ds_shape = param.ds_shape
+            param = param.ds_tensor.detach().cpu().clone()
+            if param.shape != ds_shape:
+                param = param.reshape(ds_shape)
     else:
         param = param.detach().cpu().clone()
     return param
@@ -372,8 +380,12 @@ def train():
                     args=training_args,
                     **data_module)
 
-    if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
-        trainer.train(resume_from_checkpoint=True)
+    # 检查是否存在可恢复的 checkpoint（必须有 trainer_state.json 才算完整）
+    checkpoints = list(pathlib.Path(training_args.output_dir).glob("checkpoint-*/trainer_state.json"))
+    if checkpoints:
+        resume_from = checkpoints[0].parent
+        rank0_print(f'Resuming from checkpoint: {resume_from}')
+        trainer.train(resume_from_checkpoint=str(resume_from))
     else:
         trainer.train()
     trainer.save_state()

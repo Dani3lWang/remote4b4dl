@@ -14,7 +14,6 @@ env/
 .env
 .ssh
 .claude/
-CLAUDE.md
 
 
 .DS_Store
@@ -31,6 +30,7 @@ mllm/eval_results
 encoders/lidarclip/b4dl
 Claude_record/
 wandb/
+mllm/checkpoints_backup_20260228/
 # Large model files
 
 *.ckpt
@@ -42,4 +42,3 @@ encoders/lidarclip/extract_pc_features.py
 Claude_record/RTX5090_DEBUG_LOG.md
 mmb4dl.pdf
 datageneration/config.py
-learn docs/
