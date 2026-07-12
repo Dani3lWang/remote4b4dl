@@ -28,7 +28,6 @@ mllm/checkpoints
 mllm/wandb
 mllm/eval_results
 encoders/lidarclip/b4dl
-Claude_record/
 wandb/
 mllm/checkpoints_backup_20260228/
 # Large model files
