@@ -18,6 +18,8 @@ B4DL（Benchmark for 4D LiDAR LLM）是 ACM Multimedia 2025 论文的官方 PyTo
 - **核心依赖**：PyTorch 2.5.1 CUDA 12.4、transformers 4.31.0、deepspeed 0.16.4、peft 0.4.0、flash-attn 2.7.0
 - **权威依赖文件**：`requirements_sum/requirements_b4dl.txt`（不要用根目录的 `requirements.txt`，其版本过新且与 mllm 模块冲突）
 - 所有 Python 命令必须在 `wqlc` 环境中执行
+- **RTX 5090 / CUDA 13 环境**：详见 `requirements_sum/RTX5090_CUDA13_ENV_SETUP.md`，需特殊处理 flash-attn 和 CUDA 版本兼容性
+- **数据集**：B4DL 数据集托管在 [HuggingFace](https://huggingface.co/datasets/ccho4702/nuScenes-B4DL)；nuScenes 需自行下载
 
 ```bash
 # 完整环境搭建
@@ -58,11 +60,27 @@ nuScenes 数据集（相机图像 + LiDAR 点云）
 - **`VTimeLLMLlamaForCausalLM`**（`vtimellm_llama.py`）：继承 `LlamaForCausalLM` + `VTimeLLMMetaForCausalLM`，重写 `forward()` 在调用父类前先做多模态融合
 - **`VTimeLLMMetaForCausalLM`**（`vtimellm_arch.py`）：多模态融合的核心，`prepare_inputs_labels_for_multimodal()` 实现图像 token 替换、序列填充、attention mask 生成
 - **`mm_projector`**：单层 `nn.Linear(768, config.hidden_size)`，将 CLIP ViT-L/14 输出映射到 LLM 的 hidden space（Vicuna-7B 为 4096 维）
+- **`VTimeLLMTrainer`**（`vtimellm_trainer.py`）：继承 HF Trainer，Stage1 时只保存 mm_projector 权重（非全量 checkpoint），Stage2 走父类逻辑
 - 同时支持 **LLaMA**（Vicuna）和 **ChatGLM** 两种 backbone，通过模型名是否含 "chatglm" 自动选择
+
+### 对话系统
+
+`conversation.py` 定义了 Vicuna 和 ChatGLM 的对话模板，通过 `conv_templates` dict 管理：
+- **`plain`**：仅图像描述（Stage1 用），无角色标记，`<video>\n` + 描述文本
+- **`v1`** / **`vicuna_v1`**：标准 Vicuna 对话格式（Stage2 用），`USER: ... ASSISTANT: ...</s>`
+- **`llama_2`**：LLaMA2 格式，`[INST] ... [/INST]`
+
+训练数据中 `version` 参数选择模板，不同模板的 separator style 决定 `preprocess()` 函数的分支（`preprocess_v1` / `preprocess_llama_2` / `preprocess_plain`）。
 
 ### 五种 QA 任务类型
 
 `existence`、`binary`、`time_grounding`（简单任务）和 `description`、`temporal_understanding`、`comprehensive`（复杂任务），在 `datageneration/config.py` 中定义。
+
+每个任务类型对应 `prompts.py` 中的专用 prompt 方法和 `generate_dataset.py` 中的独立生成方法。数据生成流程：
+1. **Step 1**（`generate_description.py`）：将 nuScenes 6 个相机视图（FRONT/FRONT_LEFT/FRONT_RIGHT/BACK/BACK_LEFT/BACK_RIGHT）分为前/后两组，每组 3 视图的图像编码为 base64 → 发送给 GPT → 生成前/后场景描述 → 存为 JSON
+2. **Step 2**（`generate_dataset.py`）：读取 Step 1 的场景描述 JSON → 根据 `--task` 选择对应 prompt → 发送给 GPT → 解析 `Q:...A:...` 格式的回复 → 转为 Vicuna 对话格式 → 存为 JSON
+
+评估指标：captioning 任务用 SODA_c / METEOR / CIDEr；grounding 任务用 mIoU / R@n（n=0.3,0.5,0.7）。
 
 ## 常用命令
 
@@ -178,14 +196,17 @@ conda run -n wqlc python vtimellm/demo_gradio.py \
 
 ## 已知问题与注意事项
 
-- **API key 泄露**：`datageneration/config.py` 第 12 行有硬编码的 API key 已在 git 历史中，公开发布前必须轮换
+- **API key 配置**（已修复）：`config.py` 现在从环境变量 `OPENAI_API_KEY` 和 `OPENAI_BASE_URL` 读取，不再硬编码。默认模型改为 `gpt-4o`，可通过 `B4DL_GPT_MODEL` 环境变量覆盖。但 git 历史中仍有旧 key，公开发布前需清理历史
+- **`generate_description.py` break bug**（已修复）：移除了第 142 行的 `break` 语句，现在可以正常处理多批数据
+- **Gradio 路径 bug**（已修复）：`demo_gradio.py` 改为使用脚本自身目录计算路径（`_script_dir`），不再依赖 CWD
 - **index 约束**：`start_index` / `end_index` 必须是 `SAVE_TERM`(10) 的倍数，否则脚本直接退出
-- **Gradio 路径 bug**：`demo_gradio.py` 的 `root_dir` 计算依赖 CWD，务必用绝对路径传参
+- **数据生成两步使用不同的数据加载方式**：`generate_description.py` 用 `ReadJson.readFiles()` 解析 metadata 并加载 nuScenes 图像；`generate_dataset.py` 直接读取已生成的描述 JSON，不再访问 nuScenes
 - **peft 版本锁定**：必须用 peft 0.4.0（旧式 API），Stage3 的 `merge_and_unload()` + 重新加 LoRA 的模式依赖此版本
 - **Flash Attention**：通过 monkey-patch（`llama_flash_attn_monkey_patch.py`）注入，锁定 transformers 4.31.0
 - **DeepSpeed no_sync**：`train.py` 中对 `DeepSpeedEngine.no_sync` 做了 monkey-patch，原版在 ZeRO-3 梯度分区下会崩溃
-- **LiDAR-CLIP checkpoint**：PyTorch Lightning 格式，含非 tensor 对象（scheduler 等），加载需 `weights_only=False`
-- **GPT 模型**：`config.py` 默认设为 `MiniMax-M3`（非 OpenAI），需根据实际使用的 API 修改 `DESCRIPTION_GPT_MODEL` / `GENERATE_GPT_MODEL`
+- **LiDAR-CLIP checkpoint**：PyTorch Lightning 格式，含非 tensor 对象（scheduler 等），加载需 `weights_only=False`，且用 `strict=False`（忽略旧版 bbox_head 的 key）
+- **训练数据集容错**：`LazySupervisedDataset` 在特征文件缺失时返回随机其他样本（`random.choice(self)`），会导致静默的数据丢失，检查日志中的异常打印
+- **特征文件命名约定**：Stage2/3 训练时以 `scene_id` 查找 `{feat_folder}/{scene_id}.npy`，需确保 LiDAR-CLIP 提取时 stage2-save-dir 下的文件名与数据 JSON 中的 `scene_id` 一致
 
 ## Git 提交规范
 

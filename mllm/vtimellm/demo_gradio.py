@@ -1,11 +1,14 @@
 """
-Adapted from: https://github.com/Vision-CAIR/MiniGPT-4/blob/main/demo.py 
+Adapted from: https://github.com/Vision-CAIR/MiniGPT-4/blob/main/demo.py
 """
 import argparse
 import os
-root_dir = os.path.join(os.getcwd(), "..")
+# Use script-relative paths instead of CWD-dependent paths
+_script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # mllm/
+_repo_root = os.path.dirname(_script_dir)  # repo root
 import sys
-sys.path.append(root_dir)
+sys.path.append(_repo_root)
+sys.path.append(_script_dir)
 
 import torch
 import gradio as gr
@@ -33,10 +36,10 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpu_id", type=int, default=0, help="specify the gpu to load the model.")
     parser.add_argument("--model_base", type=str, required=True, help="Path to your vicuna-7b-v1.5 huggingface checkpoint")
-    parser.add_argument("--clip_path", type=str, default=os.path.join(root_dir, "checkpoints/clip/ViT-L-14.pt"))
-    parser.add_argument("--pretrain_mm_mlp_adapter", type=str, default=os.path.join(root_dir, "checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin"))
-    parser.add_argument("--stage2", type=str, default=os.path.join(root_dir, "checkpoints/vtimellm-vicuna-v1-5-7b-stage2"))
-    parser.add_argument("--stage3", type=str, default=os.path.join(root_dir, "checkpoints/vtimellm-vicuna-v1-5-7b-stage3"))
+    parser.add_argument("--clip_path", type=str, default=os.path.join(_script_dir, "checkpoints/clip/ViT-L-14.pt"))
+    parser.add_argument("--pretrain_mm_mlp_adapter", type=str, default=os.path.join(_script_dir, "checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin"))
+    parser.add_argument("--stage2", type=str, default=os.path.join(_script_dir, "checkpoints/vtimellm-vicuna-v1-5-7b-stage2"))
+    parser.add_argument("--stage3", type=str, default=os.path.join(_script_dir, "checkpoints/vtimellm-vicuna-v1-5-7b-stage3"))
     parser.add_argument("--share", action='store_true')
     args = parser.parse_args()
     return args

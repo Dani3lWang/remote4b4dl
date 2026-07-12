@@ -1,16 +1,17 @@
+import os
 from dataclasses import dataclass
 
 @dataclass
 class Config:
-    DESCRIPTION_GPT_MODEL = "MiniMax-M3" # "gpt-4o" / "gpt-4o-mini" / "o1-preview"
-    GENERATE_GPT_MODEL = "MiniMax-M3"
-    STAGE1_GPT_MODEL = "MiniMax-M3"
-    STAGE2_GPT_MODEL = "MiniMax-M3"
+    DESCRIPTION_GPT_MODEL = os.environ.get("B4DL_GPT_MODEL", "gpt-4o")
+    GENERATE_GPT_MODEL = os.environ.get("B4DL_GPT_MODEL", "gpt-4o")
+    STAGE1_GPT_MODEL = os.environ.get("B4DL_GPT_MODEL", "gpt-4o")
+    STAGE2_GPT_MODEL = os.environ.get("B4DL_GPT_MODEL", "gpt-4o")
 
     MAX_TOKENS = 2048
 
-    API_KEY = "YOUR_API_KEY_HERE"
-    Base_URL = "https://api.minimaxi.com/v1"
+    API_KEY = os.environ.get("OPENAI_API_KEY", "")
+    Base_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 
     CAMERA_VIEWS = ["CAM_FRONT", "CAM_FRONT_LEFT", "CAM_FRONT_RIGHT", "CAM_BACK", "CAM_BACK_LEFT", "CAM_BACK_RIGHT"]

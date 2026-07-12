@@ -138,8 +138,6 @@ class Description:
             utils.save_json(new_data, os.path.join(self.cfg.GENERATED_DESCRIPTION_DIR, "generated_description_" + str((start+j)*self.save_term) + "_" + str((start+j+1)*self.save_term - 1) + ".json"))
             new_data = []
             print(f"Saved {i+1} files")
-            
-            break
     
     
 def parse_args():
