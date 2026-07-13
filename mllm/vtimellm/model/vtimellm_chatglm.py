@@ -43,6 +43,7 @@ class VTimeLLMChatGLMForCausalLM(ChatGLMForConditionalGeneration, VTimeLLMMetaFo
         return_dict: Optional[bool] = None,
         return_last_logit: Optional[bool] = False,
         images: Optional[torch.FloatTensor] = None,
+        cache_position: Optional[torch.LongTensor] = None,
     ):
 
         if inputs_embeds is None:
@@ -72,7 +73,8 @@ class VTimeLLMChatGLMForCausalLM(ChatGLMForConditionalGeneration, VTimeLLMMetaFo
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            return_dict=return_dict
+            return_dict=return_dict,
+            cache_position=cache_position,
         )
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, inputs_embeds=None, **kwargs):
