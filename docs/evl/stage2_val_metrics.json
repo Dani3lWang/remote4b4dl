@@ -1,0 +1,16 @@
+{
+  "binary_count": 4950,
+  "binary_accuracy": 82.08,
+  "binary_precision": 82.42,
+  "binary_recall": 89.81,
+  "binary_f1": 85.95,
+  "frame_range_count": 1315,
+  "frame_range_exact_match": 10.49,
+  "frame_range_mean_iou": 20.35,
+  "frame_range_R1@0.5": 17.57,
+  "frame_range_R1@0.7": 12.17,
+  "categorical_count": 458,
+  "categorical_accuracy": 39.3,
+  "categorical_macro_f1": 13.96,
+  "overall_accuracy": 64.85
+}

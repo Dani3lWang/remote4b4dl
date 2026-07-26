@@ -1,0 +1,43 @@
+{
+  "per_task_metrics": {
+    "existence": {
+      "accuracy": 1.0
+    },
+    "binary_qa": {
+      "accuracy": 1.0
+    },
+    "time_grounding": {
+      "miou": 1.0
+    },
+    "description": {
+      "bleu4": 0.0,
+      "meteor": 0.0,
+      "rouge_l": 0.0,
+      "bertscore": 0.0,
+      "gpt_score": 0.0
+    },
+    "temporal_understanding": {
+      "bleu4": 0.0,
+      "meteor": 0.0,
+      "rouge_l": 0.0,
+      "bertscore": 0.0,
+      "gpt_score": 0.0
+    },
+    "comprehensive_reasoning": {
+      "bleu4": 0.0,
+      "meteor": 0.0,
+      "rouge_l": 0.0,
+      "bertscore": 0.0,
+      "gpt_score": 0.0
+    }
+  },
+  "final_scores": {
+    "simple_tasks_accuracy": 1.0,
+    "time_grounding_miou": 1.0,
+    "complex_tasks_bleu4": 0.0,
+    "complex_tasks_meteor": 0.0,
+    "complex_tasks_rouge_l": 0.0,
+    "complex_tasks_bertscore": 0.0,
+    "complex_tasks_gpt_score": 0.0
+  }
+}
