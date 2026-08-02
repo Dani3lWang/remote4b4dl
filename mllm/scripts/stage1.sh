@@ -9,8 +9,8 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT vtimellm/train
     --deepspeed ./scripts/zero3.json \
     --model_name_or_path ./base_model/vicuna-v1-5-7b \
     --version plain \
-    --data_path ./data/stage1_lidarllm_mm.json \
-    --feat_folder ../encoders/lidarclip/b4dl/stage2_features \
+    --data_path ./b4dl_dataset/stage1_train.json \
+    --feat_folder ../encoders/lidarclip/b4dl/stage1_features \
     --tune_mm_mlp_adapter True \
     --output_dir ./checkpoints/vtimellm-$MODEL_VERSION-stage1 \
     --bf16 True \
@@ -19,7 +19,7 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT vtimellm/train
     --gradient_accumulation_steps 8 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 24000 \
+    --save_steps 200 \
     --save_total_limit 1 \
     --learning_rate 1e-3 \
     --weight_decay 0. \
