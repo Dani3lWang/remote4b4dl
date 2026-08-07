@@ -42,4 +42,4 @@ encoders/lidarclip/README.md
 encoders/lidarclip/extract_pc_features.py
 Claude_record/RTX5090_DEBUG_LOG.md
 mmb4dl.pdf
-datageneration/config.py
+datageneration/config.py.ssh/
