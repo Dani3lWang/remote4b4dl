@@ -14,6 +14,8 @@ env/
 .env
 .ssh
 .claude/
+dataset/
+docs/mmb4dl-md/
 
 
 .DS_Store
