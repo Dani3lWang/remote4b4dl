@@ -134,10 +134,37 @@ def iter_items_by_task(items: list):
         yield task, g
 
 
-def build_query(human_value: str) -> str:
-    """Ensure the B4DL/VTimeLLM <video> placeholder is present in the query."""
-    if VIDEO_TOKEN not in human_value:
-        return f"{VIDEO_TOKEN}\n{human_value}"
+def build_query(human_value: str,
+                ego_meta: dict = None,
+                scene_id: str = None,
+                use_4dlidar: bool = True,
+                use_meta: bool = True) -> str:
+    """Ensure the B4DL/VTimeLLM <video> placeholder is present in the query.
+
+    If ego_meta is provided, prepend the Metatoken prefix
+    (<4DLiDAR> + <meta> + ego motion text) before <video>.
+    """
+    q = human_value
+
+    # Inject metatoken prefix if ego metadata is available
+    if ego_meta and scene_id and scene_id in ego_meta:
+        meta_parts = []
+        if use_4dlidar:
+            meta_parts.append("<4DLiDAR>")
+        if use_meta:
+            motion_text = ego_meta[scene_id]
+            meta_parts.append(f"<meta>\n{motion_text}")
+        meta_parts.append(VIDEO_TOKEN)
+        prefix = "\n".join(meta_parts)
+
+        # Strip any existing metatoken/<video> tags from the original to avoid dupes
+        for tag in [VIDEO_TOKEN, "<4DLiDAR>", "<meta>"]:
+            q = q.replace(tag + "\n", "").replace(tag + " ", "").replace(tag, "")
+        q = prefix + "\n" + q.strip()
+    elif VIDEO_TOKEN not in q:
+        q = f"{VIDEO_TOKEN}\n{q}"
+
+    return q
     return human_value
 
 
@@ -200,6 +227,14 @@ def main():
     parser.add_argument("--gpt_api_key", type=str,
                         default=os.environ.get("OPENAI_API_KEY"))
     parser.add_argument("--gpt_model", type=str, default="gpt-4o")
+    parser.add_argument("--ego_meta", type=str, default=None,
+                        help="ego_metadata.json from generate_ego_metadata.py. "
+                             "If provided, Metatoken prefix (<4DLiDAR> + <meta>) "
+                             "is injected at inference time.")
+    parser.add_argument("--no_4dlidar", action="store_true",
+                        help="Omit <4DLiDAR> from metatoken prefix (ablation)")
+    parser.add_argument("--no_meta", action="store_true",
+                        help="Omit <meta> from metatoken prefix (ablation)")
     args = parser.parse_args()
 
     # Assemble the flat test item list
@@ -217,6 +252,19 @@ def main():
 
     print(f"Loaded {len(items)} test QA items across "
           f"{len({B4DLEvaluator.canonical_task(i.get('task')) for i in items})} tasks.")
+
+    # Load ego metadata for Metatoken (optional)
+    ego_meta: dict = None
+    if args.ego_meta:
+        if os.path.isfile(args.ego_meta):
+            with open(args.ego_meta) as f:
+                ego_meta = json.load(f)
+            scenes_with = len(set(it.get("scene_id") or it.get("id") for it in items)
+                              & set(ego_meta.keys()))
+            print(f"Loaded ego metadata: {len(ego_meta)} scenes "
+                  f"({scenes_with} matched to test items)")
+        else:
+            print(f"Warning: --ego_meta file not found: {args.ego_meta}")
 
     # Load model (same path as vtimellm/eval/eval.py)
     disable_torch_init()
@@ -283,7 +331,13 @@ def main():
 
             question = it["conversations"][0]["value"]
             gt = it["conversations"][1]["value"]
-            query = build_query(question)
+            query = build_query(
+                question,
+                ego_meta=ego_meta,
+                scene_id=scene_id,
+                use_4dlidar=not getattr(args, 'no_4dlidar', False),
+                use_meta=not getattr(args, 'no_meta', False),
+            )
             try:
                 pred = run_inference(model, tokenizer, feat, query)
             except Exception as e:
