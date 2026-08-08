@@ -95,25 +95,21 @@ if $QUICK_MODE; then
     echo "  (快速模式: 仅评估 100 条)"
 fi
 
-# Stage2 Test 评估
-STAGE2_LOG="$EVAL_DIR/stage2_test_log.jsonl"
+# Stage2 Test 评估（论文对齐：6 任务 × 7 指标 + metatoken 注入）
+STAGE2_PRED="$EVAL_DIR/stage2_predictions.json"
+STAGE2_METRICS="$EVAL_DIR/stage2_metrics.json"
 echo ""
 echo "--- Stage2 Test 评估 ---"
-conda run -n wqlc python vtimellm/eval/b4dl_eval.py \
+conda run -n wqlc python evaluation/test_b4dl.py \
     --model_base "$MODEL_BASE" \
     --pretrain_mm_mlp_adapter "$MM_PROJECTOR" \
     --stage2 "$STAGE2_CKPT" \
-    --data_path ./b4dl_dataset/stage2_test.json \
     --feat_folder "$FEAT_FOLDER" \
-    --log_path "$STAGE2_LOG" \
+    --test_data ./b4dl_dataset/test_qa.json \
+    --ego_meta ./b4dl_dataset/ego_metadata.json \
+    --output "$STAGE2_PRED" \
+    --metrics_output "$STAGE2_METRICS" \
     $EXTRA_ARGS
-
-echo ""
-echo "--- 计算 Stage2 指标 ---"
-conda run -n wqlc python vtimellm/eval/b4dl_metrics.py \
-    --log_path "$STAGE2_LOG" \
-    --task stage2 \
-    --output "$EVAL_DIR/stage2_metrics.json"
 
 # 打印结果摘要
 echo ""
@@ -123,37 +119,31 @@ echo "============================================"
 python3 -c "
 import json
 try:
-    m = json.load(open('$EVAL_DIR/stage2_metrics.json'))
-    for k, v in m.items():
-        if isinstance(v, float):
-            print(f'  {k}: {v:.2f}')
-        else:
-            print(f'  {k}: {v}')
+    m = json.load(open('$STAGE2_METRICS'))
+    fs = m.get('final_scores', {})
+    for k, v in fs.items():
+        print(f'  {k}: {v:.4f}')
 except Exception as e:
     print(f'  无法读取指标: {e}')
 "
 
 # Stage3 评估（可选）
 if $INCLUDE_STAGE3; then
-    STAGE3_LOG="$EVAL_DIR/stage3_test_log.jsonl"
+    STAGE3_PRED="$EVAL_DIR/stage3_predictions.json"
+    STAGE3_METRICS="$EVAL_DIR/stage3_metrics.json"
     echo ""
     echo "--- Stage3 Test 评估 ---"
-    conda run -n wqlc python vtimellm/eval/b4dl_eval.py \
+    conda run -n wqlc python evaluation/test_b4dl.py \
         --model_base "$MODEL_BASE" \
         --pretrain_mm_mlp_adapter "$MM_PROJECTOR" \
         --stage2 "$STAGE2_CKPT" \
         --stage3 "$STAGE3_CKPT" \
-        --data_path ./b4dl_dataset/stage3_test.json \
         --feat_folder "$FEAT_FOLDER" \
-        --log_path "$STAGE3_LOG" \
+        --test_data ./b4dl_dataset/test_qa.json \
+        --ego_meta ./b4dl_dataset/ego_metadata.json \
+        --output "$STAGE3_PRED" \
+        --metrics_output "$STAGE3_METRICS" \
         $EXTRA_ARGS
-
-    echo ""
-    echo "--- 计算 Stage3 指标 ---"
-    conda run -n wqlc python vtimellm/eval/b4dl_metrics.py \
-        --log_path "$STAGE3_LOG" \
-        --task stage3 \
-        --output "$EVAL_DIR/stage3_metrics.json"
 
     echo ""
     echo "============================================"
@@ -162,12 +152,10 @@ if $INCLUDE_STAGE3; then
     python3 -c "
 import json
 try:
-    m = json.load(open('$EVAL_DIR/stage3_metrics.json'))
-    for k, v in m.items():
-        if isinstance(v, float):
-            print(f'  {k}: {v:.2f}')
-        else:
-            print(f'  {k}: {v}')
+    m = json.load(open('$STAGE3_METRICS'))
+    fs = m.get('final_scores', {})
+    for k, v in fs.items():
+        print(f'  {k}: {v:.4f}')
 except Exception as e:
     print(f'  无法读取指标: {e}')
 "
@@ -177,11 +165,11 @@ echo ""
 echo "============================================"
 echo "  验证完成"
 echo "============================================"
-echo "Stage2 日志: $STAGE2_LOG"
-echo "Stage2 指标: $EVAL_DIR/stage2_metrics.json"
+echo "Stage2 预测: $STAGE2_PRED"
+echo "Stage2 指标: $STAGE2_METRICS"
 if $INCLUDE_STAGE3; then
-    echo "Stage3 日志: $STAGE3_LOG"
-    echo "Stage3 指标: $EVAL_DIR/stage3_metrics.json"
+    echo "Stage3 预测: $STAGE3_PRED"
+    echo "Stage3 指标: $STAGE3_METRICS"
 fi
 
 # 上传到 wandb（可选）
@@ -191,11 +179,13 @@ if $WANDB_ENABLED; then
     conda run -n wqlc python -c "
 import json, wandb
 wandb.init(project='B4DL', name='eval-$(date +%m%d-%H%M)')
-m = json.load(open('$EVAL_DIR/stage2_metrics.json'))
-wandb.log({f'eval/{k}': v for k, v in m.items() if isinstance(v, (int, float))})
+m = json.load(open('$STAGE2_METRICS'))
+fs = m.get('final_scores', {})
+wandb.log({f'eval/{k}': v for k, v in fs.items() if isinstance(v, (int, float))})
 if $INCLUDE_STAGE3:
-    m3 = json.load(open('$EVAL_DIR/stage3_metrics.json'))
-    wandb.log({f'eval_stage3/{k}': v for k, v in m3.items() if isinstance(v, (int, float))})
+    m3 = json.load(open('$STAGE3_METRICS'))
+    fs3 = m3.get('final_scores', {})
+    wandb.log({f'eval_stage3/{k}': v for k, v in fs3.items() if isinstance(v, (int, float))})
 wandb.finish()
 print('  已上传到 wandb')
 "

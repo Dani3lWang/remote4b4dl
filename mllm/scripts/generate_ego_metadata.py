@@ -2,19 +2,26 @@
 """
 generate_ego_metadata.py — 从 nuScenes 提取 Metatoken 所需的 ego motion 文本描述
 ====================================================================================
-论文 §4.1 / Appendix C / Figure 6：Metatoken 为序列首帧与末帧之间的 ego vehicle
-运动信息文本，格式如：
+论文 §4.1 / Appendix C / Figure 6：Metatoken 为序列首帧与末帧各自的 ego vehicle
+运动状态文本，用连接词拼接，格式如：
 
-  The ego vehicle is slightly ahead and to the right on flat ground, moving at
-  about 5 meters per second, performing a left turn by about 11 degrees, with
-  an acceleration of about 1 meters per second squared.
+  The metadata of the first frame is 'The ego vehicle is at the starting
+  position on flat ground, moving at about 5 meters per second, moving
+  straight ahead, with nearly constant speed.' and the metadata of the last
+  frame is 'The ego vehicle is slightly ahead and to the right on flat
+  ground, moving at about 3 meters per second, performing a left turn by
+  about 11 degrees, with an acceleration of about 1 meters per second
+  squared.'
 
-此脚本为每个 sequence 生成该文本，输出 ego_metadata.json（scene_id → 元信息文本）。
+此脚本为每个 scene 生成首帧和末帧两段独立描述，输出 ego_metadata.json：
+  {scene_id: {"first_frame": "...", "last_frame": "..."}}
 
-算法（依据论文 Figure 6 样例推算）：
-  1. 取每个 sequence 的 first frame 和 last frame 的 ego_pose
-  2. 计算两帧之间的位移、方向变化、速度、加速度
-  3. 用自然语言模板转换为文本
+算法（依据论文 Figure 6）：
+  1. 收集每个 scene 的所有 LIDAR_TOP sample_data token，按时间排序
+  2. 取首帧和次帧的 ego_pose → 计算首帧速度、方向、加速度
+  3. 取末帧和次末帧的 ego_pose → 计算末帧速度、方向、加速度
+  4. 末帧位置/朝向相对于首帧计算
+  5. 用自然语言模板转换为文本
 
 用法：
     cd mllm
@@ -24,6 +31,7 @@ generate_ego_metadata.py — 从 nuScenes 提取 Metatoken 所需的 ego motion 
         --sequence_metadata ../encoders/lidarclip/annotations/sequence_metadata.json \
         --output ./b4dl_dataset/ego_metadata.json
 """
+from __future__ import annotations  # defer annotation eval (Quaternion may be absent)
 
 import os
 import sys
@@ -31,8 +39,7 @@ import json
 import argparse
 import math
 import numpy as np
-from typing import Dict, Optional, Tuple
-from collections import defaultdict
+from typing import Dict, Optional, List
 from pathlib import Path
 
 try:
@@ -65,57 +72,46 @@ def parse_args():
 
 def _quaternion_to_yaw(q: Quaternion) -> float:
     """Extract yaw angle (rotation around Z axis) from quaternion, in radians."""
-    # Quaternion to Euler: yaw = atan2(2*(qw*qz + qx*qy), 1 - 2*(qy² + qz²))
     qw, qx, qy, qz = q.w, q.x, q.y, q.z
     return math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
 
 
-def _compute_ego_motion(pose_first: dict, pose_last: dict) -> Dict[str, float]:
-    """Compute ego motion metrics between two ego_pose records.
+def _compute_frame_motion(pose_prev: dict, pose_curr: dict) -> Dict[str, float]:
+    """Compute instantaneous motion at *pose_curr* relative to *pose_prev*.
 
     Returns dict with:
-        displacement_m:  3D Euclidean displacement (meters)
-        lateral_m:       Left(+)/right(-) displacement (meters)
-        longitudinal_m:  Forward(+)/backward(-) displacement (meters)
-        speed_mps:       Average speed (m / s)
-        yaw_change_deg:  Absolute yaw change (degrees, positive = left turn)
-        acceleration_mpss: Average acceleration (m / s²)
+        displacement_m:   3D Euclidean displacement (meters)
+        lateral_m:        Left(+)/right(-) displacement relative to prev heading
+        longitudinal_m:   Forward(+)/backward(-) displacement
+        speed_mps:        Instantaneous speed (m / s)
+        yaw_change_deg:   Signed yaw change (degrees, positive = left turn)
         dt_sec:           Time interval (seconds)
     """
-    # Translation
-    t1 = np.array(pose_first["translation"])
-    t2 = np.array(pose_last["translation"])
-    disp_vec = t2 - t1
+    t_prev = np.array(pose_prev["translation"])
+    t_curr = np.array(pose_curr["translation"])
+    disp_vec = t_curr - t_prev
     displacement = float(np.linalg.norm(disp_vec))
 
-    # Decompose into longitudinal (forward) and lateral (right) components
-    # Use first frame's heading as reference
-    q1 = Quaternion(pose_first["rotation"])
-    yaw1 = _quaternion_to_yaw(q1)
-    # Rotate displacement vector into ego frame
-    cos_yaw = math.cos(-yaw1)
-    sin_yaw = math.sin(-yaw1)
+    # Decompose into longitudinal/lateral using prev frame's heading
+    q_prev = Quaternion(pose_prev["rotation"])
+    yaw_prev = _quaternion_to_yaw(q_prev)
+    cos_yaw = math.cos(-yaw_prev)
+    sin_yaw = math.sin(-yaw_prev)
     dx_ego = cos_yaw * disp_vec[0] - sin_yaw * disp_vec[1]
     dy_ego = sin_yaw * disp_vec[0] + cos_yaw * disp_vec[1]
     longitudinal = float(dx_ego)   # forward(+)
     lateral = float(dy_ego)         # left(+)
 
     # Time
-    dt = abs(pose_last["timestamp"] - pose_first["timestamp"]) / 1e6  # microseconds → seconds
-
-    # Speed
+    dt = abs(pose_curr["timestamp"] - pose_prev["timestamp"]) / 1e6
     speed = displacement / dt if dt > 0 else 0.0
 
-    # Yaw change (direction / turning)
-    q2 = Quaternion(pose_last["rotation"])
-    yaw2 = _quaternion_to_yaw(q2)
-    yaw_diff = yaw2 - yaw1
-    # Normalize to [-pi, pi]
+    # Yaw change — preserve sign (positive = left turn)
+    q_curr = Quaternion(pose_curr["rotation"])
+    yaw_curr = _quaternion_to_yaw(q_curr)
+    yaw_diff = yaw_curr - yaw_prev
     yaw_diff = math.atan2(math.sin(yaw_diff), math.cos(yaw_diff))
-    yaw_change_deg = float(abs(math.degrees(yaw_diff)))
-
-    # Acceleration (simplified: speed change / time)
-    acceleration = speed / dt if dt > 0 else 0.0
+    yaw_change_deg = float(math.degrees(yaw_diff))  # signed, not abs
 
     return {
         "displacement_m": displacement,
@@ -123,67 +119,83 @@ def _compute_ego_motion(pose_first: dict, pose_last: dict) -> Dict[str, float]:
         "longitudinal_m": longitudinal,
         "speed_mps": speed,
         "yaw_change_deg": yaw_change_deg,
-        "acceleration_mpss": acceleration,
         "dt_sec": dt,
     }
+
+
+def _compute_acceleration(speed_prev: float, speed_curr: float, dt_sec: float) -> float:
+    """Compute acceleration as Δspeed / Δt (m/s²)."""
+    if dt_sec <= 0:
+        return 0.0
+    return (speed_curr - speed_prev) / dt_sec
 
 
 # ---------------------------------------------------------------------------
 # 自然语言模板（论文 Figure 6 样例风格）
 # ---------------------------------------------------------------------------
 
-def _describe_direction(lateral: float, longitudinal: float) -> str:
-    """Describe the ego's relative position / movement direction."""
-    parts = []
+def _describe_position(lateral: float, longitudinal: float, is_relative: bool = True) -> str:
+    """Describe the ego's position / movement direction.
 
-    # Forward / backward
-    if abs(longitudinal) < 0.3:
-        pass  # negligible
-    elif longitudinal > 0:
-        parts.append("moving forward")
+    For is_relative=True (last frame relative to first frame):
+        "slightly ahead and to the right"
+    For is_relative=False (first frame, absolute-ish):
+        "at the starting position" or movement direction
+    """
+    if is_relative:
+        parts = []
+        # Forward / backward
+        if abs(longitudinal) < 0.3:
+            pass
+        elif longitudinal > 0:
+            parts.append("slightly ahead" if abs(longitudinal) < 5 else "ahead")
+        else:
+            parts.append("slightly behind" if abs(longitudinal) < 5 else "behind")
+        # Left / right
+        if abs(lateral) < 0.3:
+            pass
+        elif lateral > 0:
+            parts.append("and to the left" if parts else "to the left")
+        else:
+            parts.append("and to the right" if parts else "to the right")
+        if not parts:
+            return "nearly at the same position"
+        return " ".join(parts)
     else:
-        parts.append("moving backward")
+        # First frame: describe as starting position
+        return "at the starting position"
 
-    # Left / right
-    if abs(lateral) < 0.3:
-        pass
-    elif lateral > 0:
-        parts.append("and to the left" if parts else "to the left")
+
+def _describe_terrain(z_val: float, z_ref: Optional[float] = None) -> str:
+    """Describe terrain. For first frame, z_val is absolute. For last, compare to z_ref."""
+    if z_ref is not None:
+        dz = z_val - z_ref
+        if abs(dz) < 0.5:
+            return "on flat ground"
+        elif dz > 0:
+            return "on an uphill slope"
+        else:
+            return "on a downhill slope"
     else:
-        parts.append("and to the right" if parts else "to the right")
-
-    if not parts:
-        return "is nearly stationary"
-
-    return "is " + " ".join(parts)
-
-
-def _describe_terrain(z_first: float, z_last: float) -> str:
-    """Describe vertical terrain change."""
-    dz = z_last - z_first
-    if abs(dz) < 0.5:
+        # First frame — just check if near sea level or elevated
         return "on flat ground"
-    elif dz > 0:
-        return "on an uphill slope"
-    else:
-        return "on a downhill slope"
 
 
 def _describe_turn(yaw_change_deg: float) -> str:
-    """Describe turning behaviour."""
-    if yaw_change_deg < 1.0:
+    """Describe turning behaviour. yaw_change_deg is signed (positive=left)."""
+    abs_yaw = abs(yaw_change_deg)
+    if abs_yaw < 1.0:
         return "moving straight ahead"
-    elif yaw_change_deg < 5.0:
+    elif abs_yaw < 5.0:
         direction = "left" if yaw_change_deg > 0 else "right"
-        return f"with a slight turn to the {direction} by about {yaw_change_deg:.0f} degrees"
+        return f"with a slight turn to the {direction} by about {abs_yaw:.0f} degrees"
     else:
         direction = "left" if yaw_change_deg > 0 else "right"
-        return f"performing a turn to the {direction} by about {yaw_change_deg:.0f} degrees"
+        return f"performing a {direction} turn by about {abs_yaw:.0f} degrees"
 
 
 def _describe_speed(speed_mps: float) -> str:
     """Describe ego speed in natural language."""
-    speed_kmh = speed_mps * 3.6
     if speed_mps < 0.5:
         return "nearly stationary"
     elif speed_mps < 2.0:
@@ -199,99 +211,160 @@ def _describe_acceleration(accel_mpss: float) -> str:
     if abs(accel_mpss) < 0.1:
         return "with nearly constant speed"
     elif accel_mpss > 0:
-        return f"accelerating at about {accel_mpss:.1f} meters per second squared"
+        return f"with an acceleration of about {accel_mpss:.1f} meters per second squared"
     else:
-        return f"decelerating at about {abs(accel_mpss):.1f} meters per second squared"
+        return f"with a deceleration of about {abs(accel_mpss):.1f} meters per second squared"
 
 
-def motion_to_text(motion: Dict[str, float], pose_first: dict, pose_last: dict) -> str:
-    """Convert motion metrics dict into a natural language description.
+def frame_to_text(motion: Dict[str, float], z_val: float,
+                  z_ref: Optional[float] = None,
+                  is_relative: bool = True,
+                  accel: Optional[float] = None) -> str:
+    """Convert motion metrics into a natural-language frame description.
 
     Output format (paper Figure 6 style):
       "The ego vehicle is slightly ahead and to the right on flat ground,
        moving at about 5 meters per second, performing a left turn by about
        11 degrees, with an acceleration of about 1 meters per second squared."
     """
-    direction = _describe_direction(motion["lateral_m"], motion["longitudinal_m"])
-    terrain = _describe_terrain(
-        pose_first["translation"][2], pose_last["translation"][2])
+    position = _describe_position(motion["lateral_m"], motion["longitudinal_m"],
+                                  is_relative=is_relative)
+    terrain = _describe_terrain(z_val, z_ref)
     turn = _describe_turn(motion["yaw_change_deg"])
     speed = _describe_speed(motion["speed_mps"])
-    accel = _describe_acceleration(motion["acceleration_mpss"])
+    if accel is not None:
+        accel_str = _describe_acceleration(accel)
+    else:
+        accel_str = "with nearly constant speed"
 
-    # Compose
-    parts = [f"The ego vehicle {direction} {terrain}"]
-    parts.append(f"{speed}, {turn}, {accel}")
-
-    return ", ".join(parts)
+    return f"The ego vehicle is {position} {terrain}, {speed}, {turn}, {accel_str}."
 
 
 # ---------------------------------------------------------------------------
 # 主逻辑
 # ---------------------------------------------------------------------------
 
+def _collect_scene_frames(nusc: NuScenes, scene_token: str) -> List[dict]:
+    """Collect all LIDAR_TOP sample_data entries for a scene, sorted by timestamp.
+
+    Returns list of ego_pose dicts sorted by timestamp.
+    """
+    scene = nusc.get("scene", scene_token)
+    first_sample_token = scene["first_sample_token"]
+
+    # Walk through all samples in the scene
+    poses = []
+    sample_token = first_sample_token
+    while sample_token:
+        sample = nusc.get("sample", sample_token)
+        sd_token = sample["data"].get("LIDAR_TOP")
+        if sd_token:
+            sd = nusc.get("sample_data", sd_token)
+            pose = nusc.get("ego_pose", sd["ego_pose_token"])
+            poses.append(pose)
+        sample_token = sample["next"]
+
+    # Sort by timestamp just in case
+    poses.sort(key=lambda p: p["timestamp"])
+    return poses
+
+
 def generate_metadata(nusc: NuScenes,
                       scene_metadata: list,
-                      sequence_metadata: list) -> Dict[str, str]:
-    """Generate ego-motion text for every sequence, keyed by scene_id.
+                      sequence_metadata: list = None) -> Dict[str, Dict[str, str]]:
+    """Generate ego-motion text for every scene.
 
-    Returns: {scene_id: metadata_text}
+    Returns: {scene_id: {"first_frame": "text", "last_frame": "text"}}
+
+    For each scene, collects all ego_pose entries sorted by timestamp
+    directly from the nuScenes scene data (sequence_metadata is accepted
+    for backward compat but not used — we walk the sample chain instead).
+    - first_frame: motion at first frame (using first→second pose)
+    - last_frame: motion at last frame (using second-to-last→last pose,
+      position relative to first frame)
     """
-    # Build a lookup: scene_token → list of sequences sorted by first-frame timestamp
-    scene_seqs: Dict[str, list] = defaultdict(list)
-    for seq in sequence_metadata:
-        scene_seqs[seq["scene_token"]].append(seq)
-
-    # For each scene, pick the sequence with the most complete frame range
-    out: Dict[str, str] = {}
+    out: Dict[str, Dict[str, str]] = {}
     missing_pose = 0
 
     for scene in scene_metadata:
         scene_token = scene["scene_token"]
         scene_id = scene["scene_id"]
-        seqs = scene_seqs.get(scene_token, [])
-
-        if not seqs:
-            continue
-
-        # Use the longest sequence as representative for this scene
-        best_seq = max(seqs, key=lambda s: len(s.get("indices", s.get("frames", []))))
-
-        # Get first and last sample_data entries to obtain ego_pose tokens
-        frames = best_seq.get("frames", best_seq.get("indices", []))
-        if len(frames) < 2:
-            continue
-
-        first_frame = frames[0]
-        last_frame = frames[-1]
-
-        # Extract frame tokens — frames may be dicts or plain sample_data tokens
-        if isinstance(first_frame, dict):
-            # Use LIDAR_TOP as the reference sensor for ego_pose lookup
-            first_token = (first_frame.get("TOKEN_LIDAR_TOP")
-                           or first_frame.get("token"))
-            last_token = (last_frame.get("TOKEN_LIDAR_TOP")
-                          or last_frame.get("token"))
-        else:
-            first_token = first_frame
-            last_token = last_frame
-
-        if not first_token or not last_token:
-            missing_pose += 1
-            continue
 
         try:
-            sd_first = nusc.get("sample_data", first_token)
-            sd_last = nusc.get("sample_data", last_token)
-            pose_first = nusc.get("ego_pose", sd_first["ego_pose_token"])
-            pose_last = nusc.get("ego_pose", sd_last["ego_pose_token"])
+            poses = _collect_scene_frames(nusc, scene_token)
         except Exception:
             missing_pose += 1
             continue
 
-        motion = _compute_ego_motion(pose_first, pose_last)
-        text = motion_to_text(motion, pose_first, pose_last)
-        out[scene_id] = text
+        if len(poses) < 2:
+            missing_pose += 1
+            continue
+
+        pose_first = poses[0]
+        pose_last = poses[-1]
+        pose_second = poses[1] if len(poses) > 1 else pose_first
+        pose_prev_last = poses[-2] if len(poses) > 1 else pose_last
+
+        # --- First frame motion (relative to second frame) ---
+        first_motion = _compute_frame_motion(pose_first, pose_second)
+        z_first = pose_first["translation"][2]
+
+        # First frame acceleration (needs at least 3 frames)
+        # speed_01 is the mean speed over [t0,t1] (centered at its midpoint),
+        # speed_12 over [t1,t2]; the Δt between the two samples is therefore
+        # half the full span (t2 - t0) / 2.
+        first_accel = None
+        if len(poses) >= 3:
+            pose_third = poses[2]
+            speed_01 = first_motion["speed_mps"]
+            motion_12 = _compute_frame_motion(pose_second, pose_third)
+            speed_12 = motion_12["speed_mps"]
+            dt_02 = (pose_third["timestamp"] - pose_first["timestamp"]) / 1e6 / 2.0
+            first_accel = _compute_acceleration(speed_01, speed_12, dt_02)
+
+        first_text = frame_to_text(
+            first_motion, z_first, z_ref=None,
+            is_relative=False, accel=first_accel)
+
+        # --- Last frame motion (relative to second-to-last) ---
+        last_motion = _compute_frame_motion(pose_prev_last, pose_last)
+        z_last = pose_last["translation"][2]
+
+        # Last frame acceleration (needs at least 3 frames from the end)
+        # Same midpoint reasoning as above: Δt between the two interval-average
+        # speeds is half the full span (t_last - t_prev_prev) / 2.
+        last_accel = None
+        if len(poses) >= 3:
+            pose_prev_prev = poses[-3]
+            speed_prev = _compute_frame_motion(pose_prev_prev, pose_prev_last)["speed_mps"]
+            speed_curr = last_motion["speed_mps"]
+            dt_end = (pose_last["timestamp"] - pose_prev_prev["timestamp"]) / 1e6 / 2.0
+            last_accel = _compute_acceleration(speed_prev, speed_curr, dt_end)
+
+        # For last frame, position is relative to first frame
+        # Recompose lateral/longitudinal using first frame heading
+        t_first = np.array(pose_first["translation"])
+        t_last = np.array(pose_last["translation"])
+        disp_vec = t_last - t_first
+        q_first = Quaternion(pose_first["rotation"])
+        yaw_first = _quaternion_to_yaw(q_first)
+        cos_yaw = math.cos(-yaw_first)
+        sin_yaw = math.sin(-yaw_first)
+        dx_ego = cos_yaw * disp_vec[0] - sin_yaw * disp_vec[1]
+        dy_ego = sin_yaw * disp_vec[0] + cos_yaw * disp_vec[1]
+
+        last_motion_relative = {
+            "lateral_m": float(dy_ego),
+            "longitudinal_m": float(dx_ego),
+            "speed_mps": last_motion["speed_mps"],
+            "yaw_change_deg": last_motion["yaw_change_deg"],
+        }
+
+        last_text = frame_to_text(
+            last_motion_relative, z_last, z_ref=z_first,
+            is_relative=True, accel=last_accel)
+
+        out[scene_id] = {"first_frame": first_text, "last_frame": last_text}
 
     if missing_pose:
         print(f"  ⚠ {missing_pose} scenes skipped (missing ego_pose data)")
@@ -327,10 +400,12 @@ def main():
 
     # Print a few examples
     print("\nExample outputs:")
-    for i, (sid, text) in enumerate(ego_meta.items()):
+    for i, (sid, data) in enumerate(ego_meta.items()):
         if i >= 3:
             break
-        print(f"  [{sid}] {text[:120]}...")
+        print(f"  [{sid}]")
+        print(f"    first: {data['first_frame'][:120]}...")
+        print(f"    last:  {data['last_frame'][:120]}...")
 
 
 if __name__ == "__main__":

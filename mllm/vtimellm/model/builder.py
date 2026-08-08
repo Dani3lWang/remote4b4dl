@@ -38,6 +38,25 @@ def load_pretrained_model(args, stage2=None, stage3=None):
             model.lm_head.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
             model.model.embed_tokens.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
 
+    # ── Register B4DL special tokens at inference time (paper §4.1) ──
+    # <4DLiDAR> and <meta> must be single tokens for the model to use
+    # dedicated embeddings. If the model was already trained with these
+    # tokens (embeddings already resized), add_special_tokens is a no-op.
+    _b4dl_tokens = ["<4DLiDAR>", "<meta>"]
+    _num_new = tokenizer.add_special_tokens(
+        {"additional_special_tokens": _b4dl_tokens})
+    if _num_new > 0:
+        # Tokens are new — resize embeddings and initialise with mean
+        print(f"  Registered {_num_new} new B4DL special tokens, resizing embeddings...")
+        model.resize_token_embeddings(len(tokenizer))
+        with torch.no_grad():
+            _emb = model.get_input_embeddings().weight.data
+            _out_emb = model.get_output_embeddings().weight.data
+            _avg_in = _emb[:-_num_new].mean(dim=0, keepdim=True)
+            _avg_out = _out_emb[:-_num_new].mean(dim=0, keepdim=True)
+            _emb[-_num_new:] = _avg_in
+            _out_emb[-_num_new:] = _avg_out
+
 
     # load stage1:
     model.get_model().initialize_vision_modules(args)

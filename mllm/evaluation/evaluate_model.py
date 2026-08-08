@@ -127,6 +127,14 @@ Question: From frame 004 to frame 006, how does the building structure in the ba
 Answer: The building structure on the left side of the road in the back view remains constant, providing a stable reference point for the ego vehicle's navigation.
 GT: The building structure remains fixed, providing a static backdrop in the scene without impacting the dynamics.
 Score: 100
+Question: How do the cars to the right change over time from frame 00 to frame 16?
+Answer: The cars to the right remain stationary, indicating they are parked.
+GT: They become slightly closer to the ego vehicle.
+Score: 50
+Question: What moving vehicles are visible in the ego vehicle's path by frame 026?
+Answer: A car is moving away from the ego vehicle.
+GT: There are no significant moving vehicles in the visible path.
+Score: 10
 INSTRUCTIONS
 Question: {q} GT: {ref} Answer: {pred}
 Please provide a score between 0 and 100 based on the quality of the prediction compared to the reference.

@@ -158,18 +158,19 @@ conda run -n wqlc python vtimellm/inference.py \
     --stage2 ./checkpoints/vtimellm-vicuna-v1-5-7b-stage2 \
     --video_path /path/to/video.mp4
 
-# 批量评估（captioning + grounding）
-conda run -n wqlc python vtimellm/eval/eval.py \
+# B4DL 六任务评测（论文 Table 3 对齐，含 metatoken 注入）
+conda run -n wqlc python evaluation/test_b4dl.py \
     --model_base ./base_model/vicuna-v1-5-7b \
-    --data_path vtimellm/eval/data_example.json \
-    --feat_folder /path/to/features \
-    --task all \
-    --log_path vtimellm/eval/log/eval_log.txt
+    --pretrain_mm_mlp_adapter ./checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin \
+    --stage2 ./checkpoints/vtimellm-vicuna-v1-5-7b-stage2 \
+    --feat_folder ../encoders/lidarclip/b4dl/stage2_features \
+    --test_data ./b4dl_dataset/test_qa.json \
+    --ego_meta ./b4dl_dataset/ego_metadata.json \
+    --output ./evaluation/predictions.json \
+    --metrics_output ./evaluation/evaluation_results.json
 
-# 计算指标（METEOR、CIDEr、SODA_c、mIoU、R@n）
-conda run -n wqlc python vtimellm/eval/metric.py \
-    --log_path vtimellm/eval/log/eval_log.txt \
-    --task all --data_path vtimellm/eval/data_example.json
+# 一键脚本（数据划分 + 评测 + 指标）
+conda run -n wqlc bash scripts/run_b4dl_eval.sh
 ```
 
 ### Gradio Web Demo

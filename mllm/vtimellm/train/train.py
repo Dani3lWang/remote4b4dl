@@ -93,6 +93,13 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_dropout: float = 0.05
     lora_weight_path: str = ""
     lora_bias: str = "none"
+    train_meta_embed: bool = field(
+        default=True,
+        metadata={"help": "Train the <4DLiDAR>/<meta> embedding rows during LoRA "
+                          "stages. Only those rows receive gradients (masked hook); "
+                          "the rest of the embedding table stays frozen. Requires "
+                          "weight_decay=0 so frozen rows are not decayed."}
+    )
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
@@ -287,6 +294,44 @@ def train():
                 output.requires_grad_(True)
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
 
+    # ── Tokenizer is created before the LoRA block so the B4DL special tokens
+    # can be registered and the embedding table resized on the *plain* model
+    # (resizing after PEFT wrapping is not supported, and stage-3's load_lora
+    # needs the already-resized base model to restore trained embeddings). ──
+    if 'chatglm' in model_args.model_name_or_path:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_args.model_name_or_path,
+            trust_remote_code=True
+        )
+    else:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_args.model_name_or_path,
+            cache_dir=training_args.cache_dir,
+            model_max_length=training_args.model_max_length,
+            padding_side="right",
+            use_fast=False,
+        )
+        tokenizer.pad_token = tokenizer.unk_token
+
+    # ── Register B4DL special tokens (paper §4.1 / Appendix C) ──
+    # <4DLiDAR> marks the task as 4D LiDAR reasoning; <meta> precedes the
+    # ego-motion metatoken block. Both are added as single tokens; new rows
+    # are mean-initialised and (under LoRA) trained via the gradient mask
+    # installed below.
+    if not getattr(tokenizer, '_b4dl_tokens_added', False):
+        _num_new = tokenizer.add_special_tokens(
+            {"additional_special_tokens": ["<4DLiDAR>", "<meta>"]})
+        if _num_new > 0:
+            model.resize_token_embeddings(len(tokenizer))
+            _emb = model.get_input_embeddings().weight.data
+            _out_emb = model.get_output_embeddings().weight.data
+            _avg_in = _emb[:-_num_new].mean(dim=0, keepdim=True)
+            _avg_out = _out_emb[:-_num_new].mean(dim=0, keepdim=True)
+            _emb[-_num_new:] = _avg_in
+            _out_emb[-_num_new:] = _avg_out
+        rank0_print(f"Registered {_num_new} new B4DL special tokens: <4DLiDAR>, <meta>")
+        tokenizer._b4dl_tokens_added = True
+
     if training_args.lora_enable:
         from peft import LoraConfig, get_peft_model
         lora_config = LoraConfig(
@@ -319,22 +364,38 @@ def train():
             model = get_peft_model(model, lora_config)
         # print_trainable_parameters(model)
 
-    if 'chatglm' in model_args.model_name_or_path:
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            model_args.model_name_or_path,
-            trust_remote_code=True
-        )
-    else:
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            model_args.model_name_or_path,
-            cache_dir=training_args.cache_dir,
-            model_max_length=training_args.model_max_length,
-            padding_side="right",
-            use_fast=False,
-        )
-        tokenizer.pad_token = tokenizer.unk_token
+    # ── Make the B4DL metatoken embedding rows learnable (paper §4.1) ──
+    # get_peft_model froze every base parameter above; re-enable gradient
+    # flow for the two metatoken rows only. A backward hook zero-masks all
+    # other rows, so they stay bit-identical to the base model while
+    # <4DLiDAR>/<meta> learn dedicated embeddings. The trained rows are
+    # persisted through non_lora_trainables.bin (see end of train()) and
+    # restored by load_lora() at inference time and in stage 3.
+    # Requires weight_decay=0 (stage2.sh default) so the frozen rows are
+    # not decayed by AdamW; also assumes single-device ZeRO-3 as in the
+    # provided launch scripts (gradient hooks are not ZeRO-partition aware).
+    if (training_args.lora_enable
+            and training_args.train_meta_embed
+            and 'chatglm' not in model_args.model_name_or_path):
+        _meta_ids = tokenizer.convert_tokens_to_ids(["<4DLiDAR>", "<meta>"])
+        if all(i is not None and i != tokenizer.unk_token_id for i in _meta_ids):
+            _embed = model.get_model().embed_tokens
+            _embed.weight.requires_grad_(True)
+            _mask_cache = {}
 
-    
+            def _mask_meta_token_grads(grad, ids=tuple(_meta_ids), cache=_mask_cache):
+                key = (grad.device, grad.dtype, grad.shape[0])
+                mask = cache.get(key)
+                if mask is None:
+                    mask = torch.zeros(grad.shape[0], 1, device=grad.device, dtype=grad.dtype)
+                    mask[list(ids)] = 1.0
+                    cache[key] = mask
+                return grad * mask
+
+            _embed.weight.register_hook(_mask_meta_token_grads)
+            rank0_print(f"Metatoken embeddings trainable: rows {_meta_ids} "
+                        f"(other embedding rows gradient-masked)")
+
     if model_args.version in conversation_lib.conv_templates:
         conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version]
     else:

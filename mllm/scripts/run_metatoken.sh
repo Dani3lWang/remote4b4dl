@@ -2,8 +2,12 @@
 # ============================================================================
 # run_metatoken.sh — B4DL Metatoken 数据准备与训练/评测一键脚本
 # ============================================================================
-# 论文 §4.1 / Appendix C / Figure 6：在 question 前拼接 Metatoken 前缀
-# 格式：<4DLiDAR>\n<meta>\n首帧元信息描述 ... 末帧元信息描述\n<video>\n问题
+# 论文 §4.1 / Appendix C / Figure 6：在 question 前后拼接 Metatoken 前缀
+# 格式（Figure 6）：
+#   <4DLiDAR>
+#   <video>
+#   <question>
+#   <meta> The metadata of the first frame is '...' and the metadata of the last frame is '...'
 #
 # 用法：
 #   bash scripts/run_metatoken.sh \
@@ -154,6 +158,12 @@ echo ""
 echo "============================================================"
 echo "Metatoken pipeline complete! (config: ${ABLATION_TAG})"
 echo "============================================================"
+echo ""
+echo "Format (paper Figure 6):"
+echo "  <4DLiDAR>"
+echo "  <video>"
+echo "  <question>"
+echo "  <meta> The metadata of the first frame is '...' and the metadata of the last frame is '...'"
 echo ""
 echo "Next steps:"
 echo ""

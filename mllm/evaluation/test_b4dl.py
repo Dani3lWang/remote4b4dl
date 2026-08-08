@@ -8,9 +8,8 @@ six tasks, writes per-task predictions, and finally computes the paper metrics
 optionally, the reference-free GPT-4o score.
 
 This is the "verify model results" test code. It mirrors the inference path
-used by mllm/vtimellm/eval/eval.py and mllm/vtimellm/inference.py, but targets
-the B4DL 6-task benchmark rather than VTimeLLM's video grounding/captioning
-benchmark.
+used by mllm/vtimellm/inference.py, but targets the B4DL 6-task benchmark
+rather than VTimeLLM's video grounding/captioning benchmark.
 
 Input test data format
 ----------------------
@@ -139,33 +138,65 @@ def build_query(human_value: str,
                 scene_id: str = None,
                 use_4dlidar: bool = True,
                 use_meta: bool = True) -> str:
-    """Ensure the B4DL/VTimeLLM <video> placeholder is present in the query.
+    """Build the query string for the B4DL model.
 
-    If ego_meta is provided, prepend the Metatoken prefix
-    (<4DLiDAR> + <meta> + ego motion text) before <video>.
+    Paper Figure 6 / Appendix C format:
+        <4DLiDAR>
+        <video>
+        <question>
+        <meta> The metadata of the first frame is '...' and the metadata of the last frame is '...'
+
+    The <video> token is the VTimeLLM embedding placeholder (IMAGE_TOKEN_INDEX=-200)
+    where the LiDAR features are inserted. It must be present in the query.
+
+    If ego_meta is provided, the metatoken block (<meta> + frame descriptions)
+    is appended after the question, matching the paper's layout.
     """
     q = human_value
 
-    # Inject metatoken prefix if ego metadata is available
-    if ego_meta and scene_id and scene_id in ego_meta:
-        meta_parts = []
-        if use_4dlidar:
-            meta_parts.append("<4DLiDAR>")
-        if use_meta:
-            motion_text = ego_meta[scene_id]
-            meta_parts.append(f"<meta>\n{motion_text}")
-        meta_parts.append(VIDEO_TOKEN)
-        prefix = "\n".join(meta_parts)
+    # Remove the entire <meta> block first (tag + following text) so
+    # orphaned metatoken descriptions don't survive in the question.
+    if "<meta>" in q:
+        q = q.split("<meta>")[0]
+    # Then strip remaining structural tags
+    for tag in [VIDEO_TOKEN, "<4DLiDAR>"]:
+        q = q.replace(tag + "\n", "").replace(tag + " ", "").replace(tag, "")
+    q = q.strip()
 
-        # Strip any existing metatoken/<video> tags from the original to avoid dupes
-        for tag in [VIDEO_TOKEN, "<4DLiDAR>", "<meta>"]:
-            q = q.replace(tag + "\n", "").replace(tag + " ", "").replace(tag, "")
-        q = prefix + "\n" + q.strip()
-    elif VIDEO_TOKEN not in q:
-        q = f"{VIDEO_TOKEN}\n{q}"
+    parts = []
 
-    return q
-    return human_value
+    if use_4dlidar:
+        parts.append("<4DLiDAR>")
+
+    # <video> placeholder — VTimeLLM/B4DL embedding insertion point
+    parts.append(VIDEO_TOKEN)
+
+    # The actual question
+    parts.append(q)
+
+    # Metatoken block (paper Figure 6: after the question)
+    if use_meta and ego_meta and scene_id and scene_id in ego_meta:
+        scene_data = ego_meta[scene_id]
+        if isinstance(scene_data, dict):
+            first_text = scene_data.get("first_frame", "")
+            last_text = scene_data.get("last_frame", "")
+        else:
+            # Backward compat: old format was a single string
+            first_text = scene_data
+            last_text = ""
+
+        if first_text and last_text:
+            meta_line = (
+                f"<meta> The metadata of the first frame is '{first_text}' "
+                f"and the metadata of the last frame is '{last_text}'"
+            )
+        elif first_text:
+            meta_line = f"<meta> The metadata of the first frame is '{first_text}'"
+        else:
+            meta_line = "<meta> No ego motion metadata available for this scene."
+        parts.append(meta_line)
+
+    return "\n".join(parts)
 
 
 def load_features(feat_folder: str, scene_id: str) -> torch.Tensor:
@@ -266,7 +297,7 @@ def main():
         else:
             print(f"Warning: --ego_meta file not found: {args.ego_meta}")
 
-    # Load model (same path as vtimellm/eval/eval.py)
+    # Load model (same path as vtimellm/inference.py)
     disable_torch_init()
     tokenizer, model, _ = load_pretrained_model(
         args, args.stage2, args.stage3)
@@ -346,7 +377,9 @@ def main():
                 continue
             preds.append(pred)
             gts.append(gt)
-            qs.append(query.replace(VIDEO_TOKEN, "").strip())
+            qs.append(query.replace(VIDEO_TOKEN, "")
+                          .replace("<4DLiDAR>", "")
+                          .split("<meta>")[0].strip())
 
             # Periodic checkpoint save
             if (sample_idx + 1) % checkpoint_interval == 0:
