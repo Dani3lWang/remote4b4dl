@@ -93,10 +93,27 @@ python evaluation/test_b4dl.py --checkpoint_interval 100 ...
 ### 5. 仅计算指标（已有预测结果）
 
 ```bash
+# 方式 A：对 test_b4dl.py 输出的 predictions.json 直接计算指标
+# （predictions.json 已包含 ground_truths）
+python evaluation/evaluate_model.py \
+    --predictions ./evaluation/predictions.json
+
+# 方式 B：单独指定 predictions 和 ground_truth
 python evaluation/evaluate_model.py \
     --predictions ./evaluation/predictions.json \
     --ground_truth ./b4dl_dataset/test_qa.json
+
+# 方式 C：快速验证 — 只加载 test_qa.json 查看数据统计
+python evaluation/evaluate_model.py \
+    --ground_truth ./b4dl_dataset/test_qa.json
+
+# 方式 D：内置 demo 数据测试
+python evaluation/evaluate_model.py --demo
 ```
+
+> **格式自动检测**：`evaluate_model.py` 会自动识别输入格式 —
+> `test_b4dl.py` 输出的 dict 格式（`{task: {predictions:[], ground_truths:[]}}`）
+> 和 `test_qa.json` 的 list 格式（`[{task, conversations}]`）均支持。
 
 ## 验收标准（论文 Table 3 参考值）
 
@@ -113,3 +130,11 @@ pip install pycocoevalcap nltk rouge-score bert-score openai
 ```
 
 首次运行时会自动下载 NLTK 数据（punkt、wordnet、omw-1.4）。
+
+| 依赖 | 说明 | 缺失时影响 |
+|------|------|-----------|
+| `pycocoevalcap` | BLEU-4、METEOR 计算后端 | BLEU-4 / METEOR 返回 0 |
+| `nltk` | 分词 + METEOR | BLEU-4 / METEOR 返回 0 |
+| `rouge-score` | ROUGE-L F1 | ROUGE-L 返回 0 |
+| `bert-score` | BERTScore F1（deberta-xlarge-mnli ~1.5GB） | BERTScore 返回 0 |
+| `openai` | GPT-4o 参考无关打分（需 API Key） | GPT Score 返回 0 |

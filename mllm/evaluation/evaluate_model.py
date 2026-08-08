@@ -371,6 +371,43 @@ def load_ground_truth(gt_path: str) -> Dict[str, Dict]:
         return json.load(f)
 
 
+def _is_qa_list_format(data) -> bool:
+    """Return True if *data* looks like a list of QA items (test_qa.json format)."""
+    return isinstance(data, list) and len(data) > 0 and 'conversations' in data[0]
+
+
+def load_qa_list_as_results(qa_path: str, evaluator: 'B4DLEvaluator' = None) -> Dict[str, Dict]:
+    """Convert a flat test_qa.json list into the dict format expected by evaluate_all().
+
+    Input (test_qa.json):
+        [{"scene_id": ..., "task": "existence", "conversations": [
+            {"from":"human","value":"<video>\\n..."}, {"from":"gpt","value":"..."}]}, ...]
+
+    Output:
+        {canonical_task: {"ground_truths": [...], "questions": [...], "predictions": []}}
+    """
+    with open(qa_path, 'r') as f:
+        data = json.load(f)
+
+    if evaluator is None:
+        evaluator = B4DLEvaluator()
+
+    by_task: Dict[str, Dict[str, list]] = {}
+    for item in data:
+        task = evaluator.canonical_task(item.get('task', ''))
+        if task not in evaluator.ALL_TASKS:
+            continue
+        if task not in by_task:
+            by_task[task] = {'ground_truths': [], 'questions': [], 'predictions': []}
+        conv = item.get('conversations', [])
+        if len(conv) >= 2:
+            q = conv[0].get('value', '').replace('<video>', '').replace('\n', ' ').strip()
+            gt = conv[1].get('value', '')
+            by_task[task]['ground_truths'].append(gt)
+            by_task[task]['questions'].append(q)
+    return by_task
+
+
 def merge_pred_gt(predictions: Dict, ground_truth: Dict, evaluator: B4DLEvaluator) -> Dict:
     """Combine a predictions file and a ground-truth file into the
     evaluate_all() input shape. Either file may carry subsets of the 6 tasks."""
@@ -467,11 +504,34 @@ def main():
         print("Running evaluation with sample data...")
         results = create_sample_data()
     else:
-        if not args.predictions or not args.ground_truth:
-            print("Error: provide --predictions and --ground_truth, or use --demo")
+        if not args.predictions and not args.ground_truth:
+            print("Error: provide --predictions and/or --ground_truth, or use --demo")
             return
-        results = merge_pred_gt(load_predictions(args.predictions),
-                                load_ground_truth(args.ground_truth), evaluator)
+
+        # Auto-detect format: support both test_b4dl.py output (dict) and
+        # test_qa.json flat list. List-format files are converted automatically.
+        pred_data = None
+        gt_data = None
+        if args.predictions:
+            pred_data = load_predictions(args.predictions)
+            if _is_qa_list_format(pred_data):
+                print(f"Detected list format in predictions → converting ({len(pred_data)} items)")
+                pred_data = load_qa_list_as_results(args.predictions, evaluator)
+        if args.ground_truth:
+            gt_data = load_ground_truth(args.ground_truth)
+            if _is_qa_list_format(gt_data):
+                print(f"Detected list format in ground_truth → converting ({len(gt_data)} items)")
+                gt_data = load_qa_list_as_results(args.ground_truth, evaluator)
+
+        if pred_data and gt_data:
+            results = merge_pred_gt(pred_data, gt_data, evaluator)
+        elif pred_data:
+            results = pred_data
+        elif gt_data:
+            results = gt_data
+        else:
+            print("Error: could not load any data")
+            return
 
     all_metrics = evaluator.evaluate_all(results)
     final_scores = evaluator.compute_final_score(all_metrics)
