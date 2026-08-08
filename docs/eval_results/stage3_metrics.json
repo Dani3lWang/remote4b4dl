@@ -1,0 +1,9 @@
+{
+  "BLEU-1": 33.22,
+  "BLEU-2": 20.61,
+  "BLEU-3": 13.83,
+  "BLEU-4": 9.64,
+  "ROUGE-L": 28.04,
+  "METEOR": 26.29,
+  "captioning_count": 8045
+}
