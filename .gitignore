@@ -43,3 +43,12 @@ encoders/lidarclip/extract_pc_features.py
 Claude_record/RTX5090_DEBUG_LOG.md
 mmb4dl.pdf
 datageneration/config.py.ssh/
+
+# 大文件 - 数据和元数据
+datageneration/data/
+encoders/lidarclip/annotations/
+
+# 评估结果和日志
+docs/eval_results/
+docs/evl/
+evaluation_results.json
