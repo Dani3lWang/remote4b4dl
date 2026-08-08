@@ -59,21 +59,34 @@ resolve, exactly like eval.py):
 
     # quick smoke test on N samples:
         --max_samples 50
+
+Prediction checkpointing
+-------------------------
+Predictions are incrementally saved to `<output>.ckpt` every
+`--checkpoint_interval` samples (default 50) and after each task completes.
+If the run is interrupted, re-run with the same `--output` to resume from
+the last checkpoint. The checkpoint is automatically removed on clean exit.
 """
 
 import os
 import sys
 import json
 import argparse
+import time
 import numpy as np
 import torch
 from tqdm import tqdm
 
 # Make `evaluation.*` and `vtimellm.*` importable regardless of cwd.
-_EVAL_DIR = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.dirname(_EVAL_DIR)
-_MLLM_DIR = os.path.join(_REPO_ROOT, "mllm")
-for _p in (_REPO_ROOT, _MLLM_DIR):
+# Layout:
+#   <repo_root>/                          e.g. /root/.../mmb4dl/
+#       mllm/
+#           evaluation/test_b4dl.py       <-- this file
+#           vtimellm/
+_EVAL_DIR = os.path.dirname(os.path.abspath(__file__))      # .../mllm/evaluation
+_MLLM_DIR = os.path.dirname(_EVAL_DIR)                       # .../mllm
+_REPO_ROOT = os.path.dirname(_MLLM_DIR)                      # .../ (actual repo root)
+for _p in (_MLLM_DIR, _REPO_ROOT):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -135,6 +148,14 @@ def load_features(feat_folder: str, scene_id: str) -> torch.Tensor:
     return torch.from_numpy(feat).to(torch.float16)
 
 
+def _save_checkpoint(results: dict, path: str):
+    """Atomically save intermediate predictions so a crash won't lose all progress."""
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"results": results}, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)  # atomic on POSIX
+
+
 def run_inference(model, tokenizer, features: torch.Tensor, query: str) -> str:
     """Run the B4DL autoregressive generation for one QA. Mirrors inference()."""
     return inference(model, features, query, tokenizer)
@@ -169,6 +190,9 @@ def main():
     parser.add_argument("--metrics_output", type=str, default="evaluation_results.json")
     parser.add_argument("--max_samples", type=int, default=-1,
                         help="Cap number of samples per task (-1 = use all)")
+    parser.add_argument("--checkpoint_interval", type=int, default=50,
+                        help="Save intermediate predictions every N samples (default 50). "
+                             "If interrupted, re-run with same --output to resume.")
     parser.add_argument("--dtype", type=str, default="float16",
                         choices=["float16", "bfloat16"])
     parser.add_argument("--use_gpt", action="store_true",
@@ -206,14 +230,46 @@ def main():
     # Cache features per scene_id to avoid reloading the same .npy repeatedly.
     feat_cache: dict = {}
 
+    # ── Resume from checkpoint if available ──
     results: dict = {}     # canonical_task -> {predictions, ground_truths, questions}
+    checkpoint_path = args.output + ".ckpt"
+    completed_ids: set = set()  # (task, sample_index) already done
+    if os.path.exists(checkpoint_path):
+        print(f"Resuming from checkpoint: {checkpoint_path}")
+        with open(checkpoint_path, "r") as f:
+            saved = json.load(f)
+        results = saved.get("results", {})
+        for task_data in results.values():
+            for i in range(len(task_data.get("predictions", []))):
+                completed_ids.add((task_data.get("_task", ""), i))
+        print(f"  Loaded {sum(len(v.get('predictions', [])) for v in results.values())} "
+              f"completed predictions across {len(results)} tasks.")
+
     skipped = 0
+    checkpoint_interval = getattr(args, 'checkpoint_interval', 50)
     for task, group in iter_items_by_task(items):
-        preds, gts, qs = [], [], []
+        # Determine starting point for this task
+        if task in results:
+            done_count = len(results[task].get("predictions", []))
+            if done_count >= len(group):
+                print(f"\n[{task}] {len(group)} samples — already complete, skipping")
+                continue
+            print(f"\n[{task}] resuming from {done_count}/{len(group)} samples")
+            preds = results[task]["predictions"]
+            gts = results[task]["ground_truths"]
+            qs = results[task]["questions"]
+            start_idx = done_count
+        else:
+            preds, gts, qs = [], [], []
+            start_idx = 0
+
         if args.max_samples and args.max_samples > 0:
             group = group[:args.max_samples]
-        print(f"\n[{task}] {len(group)} samples")
-        for it in tqdm(group, desc=task):
+
+        pbar = tqdm(group[start_idx:], desc=task, initial=start_idx, total=len(group))
+        task_start_time = time.time()
+        for i, it in enumerate(pbar):
+            sample_idx = start_idx + i
             scene_id = it.get("scene_id") or it.get("id")
             try:
                 feat = feat_cache.get(scene_id)
@@ -237,16 +293,40 @@ def main():
             preds.append(pred)
             gts.append(gt)
             qs.append(query.replace(VIDEO_TOKEN, "").strip())
-        results[task] = {"predictions": preds, "ground_truths": gts, "questions": qs}
+
+            # Periodic checkpoint save
+            if (sample_idx + 1) % checkpoint_interval == 0:
+                results[task] = {"predictions": preds, "ground_truths": gts,
+                                 "questions": qs, "_task": task}
+                _save_checkpoint(results, checkpoint_path)
+                elapsed = time.time() - task_start_time
+                rate = (i + 1) / elapsed if elapsed > 0 else 0
+                eta = (len(group) - sample_idx - 1) / rate if rate > 0 else 0
+                pbar.set_postfix({"ckpt": "✓", "rate": f"{rate:.1f}/s",
+                                  "eta": f"{eta/60:.0f}m"})
+
+        results[task] = {"predictions": preds, "ground_truths": gts,
+                         "questions": qs, "_task": task}
+        # Save after each task completes
+        _save_checkpoint(results, checkpoint_path)
 
     if skipped:
         print(f"\nSkipped {skipped} items (missing features or inference errors).")
 
-    # Save raw predictions
+    # Save final predictions (clean version without _task metadata)
+    clean_results = {k: {"predictions": v["predictions"],
+                         "ground_truths": v["ground_truths"],
+                         "questions": v["questions"]}
+                     for k, v in results.items()}
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+        json.dump(clean_results, f, indent=2, ensure_ascii=False)
     print(f"\nPredictions written to {args.output}")
+
+    # Remove checkpoint on successful completion
+    if os.path.exists(checkpoint_path):
+        os.remove(checkpoint_path)
+        print(f"Checkpoint {checkpoint_path} removed (run completed).")
 
     # Compute metrics
     evaluator = B4DLEvaluator(use_gpt=args.use_gpt, gpt_api_key=args.gpt_api_key,

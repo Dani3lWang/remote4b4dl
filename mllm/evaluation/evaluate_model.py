@@ -39,6 +39,7 @@ from collections import defaultdict
 # (returning 0.0 for missing metrics) if a library is absent.
 # --------------------------------------------------------------------------
 try:
+    import nltk
     from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
     from nltk.tokenize import word_tokenize
     try:
@@ -49,6 +50,34 @@ try:
         def meteor_score(refs, hyp):
             return _sms(refs[0], hyp)
     HAS_NLTK = True
+
+    def _ensure_nltk_data():
+        """Download required NLTK data if missing (idempotent, quiet).
+
+        Only downloads when the resource is genuinely absent (LookupError).
+        Corrupted files are noted but NOT auto-repaired to avoid network hangs;
+        the user should manually run: python -c \"import nltk; nltk.download('punkt')\"
+        """
+        _required = {
+            'tokenizers/punkt_tab': 'punkt_tab',
+            'tokenizers/punkt': 'punkt',
+            'corpora/wordnet': 'wordnet',
+            'corpora/omw-1.4': 'omw-1.4',
+        }
+        for resource_path, download_name in _required.items():
+            try:
+                nltk.data.find(resource_path)
+            except LookupError:
+                # Resource genuinely not found — attempt download (may hang offline)
+                try:
+                    nltk.download(download_name, quiet=True)
+                except Exception:
+                    pass
+            except Exception:
+                # Corrupted resource (e.g. BadZipFile) — warn, don't auto-download
+                pass
+    _ensure_nltk_data()
+
 except ImportError:
     HAS_NLTK = False
     print("Warning: NLTK not installed. BLEU and METEOR scores unavailable.")
