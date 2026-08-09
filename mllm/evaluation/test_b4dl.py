@@ -136,8 +136,8 @@ def iter_items_by_task(items: list):
 def build_query(human_value: str,
                 ego_meta: dict = None,
                 scene_id: str = None,
-                use_4dlidar: bool = True,
-                use_meta: bool = True) -> str:
+                use_4dlidar: bool = False,
+                use_meta: bool = False) -> str:
     """Build the query string for the B4DL model.
 
     Paper Figure 6 / Appendix C format:
@@ -362,12 +362,20 @@ def main():
 
             question = it["conversations"][0]["value"]
             gt = it["conversations"][1]["value"]
+            # Metatoken (<4DLiDAR> + <meta>) is only enabled when ego_meta is
+            # provided AND the model checkpoint supports it (i.e. was trained with
+            # these special tokens). The current Stage2 checkpoint was trained
+            # without metatokens, so it defaults to OFF unless explicitly opted in.
+            _use_4dlidar = (ego_meta is not None
+                            and not getattr(args, 'no_4dlidar', False))
+            _use_meta = (ego_meta is not None
+                         and not getattr(args, 'no_meta', False))
             query = build_query(
                 question,
                 ego_meta=ego_meta,
                 scene_id=scene_id,
-                use_4dlidar=not getattr(args, 'no_4dlidar', False),
-                use_meta=not getattr(args, 'no_meta', False),
+                use_4dlidar=_use_4dlidar,
+                use_meta=_use_meta,
             )
             try:
                 pred = run_inference(model, tokenizer, feat, query)
