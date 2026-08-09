@@ -52,3 +52,6 @@ encoders/lidarclip/annotations/
 docs/eval_results/
 docs/evl/
 evaluation_results.json
+
+# 本地下载的模型文件
+models/

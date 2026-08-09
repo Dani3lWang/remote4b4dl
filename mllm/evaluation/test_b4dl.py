@@ -258,6 +258,9 @@ def main():
     parser.add_argument("--gpt_api_key", type=str,
                         default=os.environ.get("OPENAI_API_KEY"))
     parser.add_argument("--gpt_model", type=str, default="gpt-4o")
+    parser.add_argument("--bert_model", type=str, default=None,
+                        help="Path to local roberta-large model for BERTScore "
+                             "(default: auto-detect models/roberta-large)")
     parser.add_argument("--ego_meta", type=str, default=None,
                         help="ego_metadata.json from generate_ego_metadata.py. "
                              "If provided, Metatoken prefix (<4DLiDAR> + <meta>) "
@@ -425,7 +428,8 @@ def main():
 
     # Compute metrics
     evaluator = B4DLEvaluator(use_gpt=args.use_gpt, gpt_api_key=args.gpt_api_key,
-                              gpt_model=args.gpt_model)
+                              gpt_model=args.gpt_model,
+                              bert_model_path=getattr(args, 'bert_model', None))
     per_task = evaluator.evaluate_all(results)
     final = evaluator.compute_final_score(per_task)
 
