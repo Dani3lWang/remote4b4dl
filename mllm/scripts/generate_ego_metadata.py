@@ -13,15 +13,26 @@ generate_ego_metadata.py — 从 nuScenes 提取 Metatoken 所需的 ego motion 
   about 11 degrees, with an acceleration of about 1 meters per second
   squared.'
 
-此脚本为每个 scene 生成首帧和末帧两段独立描述，输出 ego_metadata.json：
-  {scene_id: {"first_frame": "...", "last_frame": "..."}}
+此脚本为每个 sequence 生成首帧和末帧两段独立描述（论文 Appendix C：
+"the metatoken descriptions of the first and last frames referenced in the
+QA pair are concatenated"）。同时保留 per-scene 条目用于 fallback。
 
-算法（依据论文 Figure 6）：
-  1. 收集每个 scene 的所有 LIDAR_TOP sample_data token，按时间排序
-  2. 取首帧和次帧的 ego_pose → 计算首帧速度、方向、加速度
-  3. 取末帧和次末帧的 ego_pose → 计算末帧速度、方向、加速度
-  4. 末帧位置/朝向相对于首帧计算
-  5. 用自然语言模板转换为文本
+输出 ego_metadata.json：
+  {
+    "scene_id": {"first_frame": "...", "last_frame": "..."},           # per-scene (fallback)
+    "scene_id_0_8": {"first_frame": "...", "last_frame": "..."},      # per-sequence
+    "scene_id_30_38": {"first_frame": "...", "last_frame": "..."},    # per-sequence
+    ...
+  }
+
+算法（依据论文 Figure 6 + Appendix C）：
+  1. 从 sequence_metadata 获取每个 sequence 的 indices（如 [0,2,4,6,8]）
+  2. 收集对应 scene 的所有 LIDAR_TOP ego_pose，按时间排序
+  3. 对每个 sequence，取 indices[0] 和 indices[-1] 对应的 ego_pose
+  4. 计算首帧速度、方向、加速度（首帧→次帧）
+  5. 计算末帧速度、方向、加速度（次末帧→末帧），位置相对首帧
+  6. 用自然语言模板转换为文本
+  7. 同时生成 per-scene 条目（scene 首末帧）用于无帧号的问题
 
 用法：
     cd mllm
@@ -269,22 +280,131 @@ def _collect_scene_frames(nusc: NuScenes, scene_token: str) -> List[dict]:
     return poses
 
 
+def _compute_ego_for_pose_range(
+    poses: List[dict],
+    first_idx: int,
+    last_idx: int,
+) -> Dict[str, str]:
+    """Compute ego-motion text for a specific frame range within a scene.
+
+    first_idx / last_idx are indices into the *poses* list (which is the
+    scene's full ego_pose array sorted by timestamp).
+
+    Returns {"first_frame": "...", "last_frame": "..."} where:
+    - first_frame: motion at poses[first_idx] (relative to poses[first_idx+1])
+    - last_frame: motion at poses[last_idx] (relative to poses[last_idx-1],
+      position relative to poses[first_idx])
+    """
+    pose_first = poses[first_idx]
+    pose_last = poses[last_idx]
+
+    # Need at least 2 frames in the range for motion computation
+    if first_idx == last_idx:
+        # Single frame — no motion, just position
+        return {
+            "first_frame": frame_to_text(
+                {"lateral_m": 0, "longitudinal_m": 0, "speed_mps": 0,
+                 "yaw_change_deg": 0},
+                pose_first["translation"][2], z_ref=None,
+                is_relative=False, accel=None),
+            "last_frame": frame_to_text(
+                {"lateral_m": 0, "longitudinal_m": 0, "speed_mps": 0,
+                 "yaw_change_deg": 0},
+                pose_first["translation"][2], z_ref=None,
+                is_relative=False, accel=None),
+        }
+
+    # First frame: motion relative to the next frame in the sequence
+    pose_after_first = poses[first_idx + 1] if first_idx + 1 <= last_idx else pose_first
+    first_motion = _compute_frame_motion(pose_first, pose_after_first)
+    z_first = pose_first["translation"][2]
+
+    # First frame acceleration (needs at least 3 frames in range)
+    first_accel = None
+    if last_idx - first_idx >= 2:
+        pose_third = poses[first_idx + 2]
+        speed_01 = first_motion["speed_mps"]
+        motion_12 = _compute_frame_motion(pose_after_first, pose_third)
+        speed_12 = motion_12["speed_mps"]
+        dt_02 = (pose_third["timestamp"] - pose_first["timestamp"]) / 1e6 / 2.0
+        first_accel = _compute_acceleration(speed_01, speed_12, dt_02)
+
+    first_text = frame_to_text(
+        first_motion, z_first, z_ref=None,
+        is_relative=False, accel=first_accel)
+
+    # Last frame: motion relative to the previous frame in the sequence
+    pose_before_last = poses[last_idx - 1] if last_idx - 1 >= first_idx else pose_last
+    last_motion = _compute_frame_motion(pose_before_last, pose_last)
+    z_last = pose_last["translation"][2]
+
+    # Last frame acceleration (needs at least 3 frames from the end)
+    last_accel = None
+    if last_idx - first_idx >= 2:
+        pose_prev_prev = poses[last_idx - 2]
+        speed_prev = _compute_frame_motion(pose_prev_prev, pose_before_last)["speed_mps"]
+        speed_curr = last_motion["speed_mps"]
+        dt_end = (pose_last["timestamp"] - pose_prev_prev["timestamp"]) / 1e6 / 2.0
+        last_accel = _compute_acceleration(speed_prev, speed_curr, dt_end)
+
+    # Position of last frame relative to first frame
+    t_first = np.array(pose_first["translation"])
+    t_last = np.array(pose_last["translation"])
+    disp_vec = t_last - t_first
+    q_first = Quaternion(pose_first["rotation"])
+    yaw_first = _quaternion_to_yaw(q_first)
+    cos_yaw = math.cos(-yaw_first)
+    sin_yaw = math.sin(-yaw_first)
+    dx_ego = cos_yaw * disp_vec[0] - sin_yaw * disp_vec[1]
+    dy_ego = sin_yaw * disp_vec[0] + cos_yaw * disp_vec[1]
+
+    last_motion_relative = {
+        "lateral_m": float(dy_ego),
+        "longitudinal_m": float(dx_ego),
+        "speed_mps": last_motion["speed_mps"],
+        "yaw_change_deg": last_motion["yaw_change_deg"],
+    }
+
+    last_text = frame_to_text(
+        last_motion_relative, z_last, z_ref=z_first,
+        is_relative=True, accel=last_accel)
+
+    return {"first_frame": first_text, "last_frame": last_text}
+
+
 def generate_metadata(nusc: NuScenes,
                       scene_metadata: list,
                       sequence_metadata: list = None) -> Dict[str, Dict[str, str]]:
-    """Generate ego-motion text for every scene.
+    """Generate ego-motion text for every scene AND every sequence.
 
-    Returns: {scene_id: {"first_frame": "text", "last_frame": "text"}}
+    Returns a dict with two types of entries:
+    - Per-scene (fallback): {scene_id: {"first_frame": "...", "last_frame": "..."}}
+    - Per-sequence: {f"{scene_id}_{first_idx}_{last_idx}": {"first_frame": "...", "last_frame": "..."}}
 
-    For each scene, collects all ego_pose entries sorted by timestamp
-    directly from the nuScenes scene data (sequence_metadata is accepted
-    for backward compat but not used — we walk the sample chain instead).
-    - first_frame: motion at first frame (using first→second pose)
-    - last_frame: motion at last frame (using second-to-last→last pose,
-      position relative to first frame)
+    Per-sequence entries are keyed by f"{scene_id}_{indices[0]}_{indices[-1]}"
+    so that inject_metatoken.py and build_query() can look up the correct
+    ego data by parsing frame numbers from the question text.
+
+    Per-scene entries use the scene's first and last frames (indices 0 and -1)
+    and are used as fallback for questions that don't mention specific frame
+    numbers (e.g. time_grounding questions at inference time).
     """
     out: Dict[str, Dict[str, str]] = {}
     missing_pose = 0
+    missing_seq = 0
+
+    # Build scene_token → scene_id mapping
+    token_to_id: Dict[str, str] = {}
+    for scene in scene_metadata:
+        token_to_id[scene["scene_token"]] = scene["scene_id"]
+
+    # Group sequences by scene_token
+    sequences_by_scene: Dict[str, List[dict]] = {}
+    if sequence_metadata:
+        for seq in sequence_metadata:
+            st = seq.get("scene_token")
+            if st:
+                sequences_by_scene.setdefault(st, []).append(seq)
 
     for scene in scene_metadata:
         scene_token = scene["scene_token"]
@@ -300,74 +420,41 @@ def generate_metadata(nusc: NuScenes,
             missing_pose += 1
             continue
 
-        pose_first = poses[0]
-        pose_last = poses[-1]
-        pose_second = poses[1] if len(poses) > 1 else pose_first
-        pose_prev_last = poses[-2] if len(poses) > 1 else pose_last
+        # --- Per-scene entry (fallback): first & last frame of entire scene ---
+        scene_ego = _compute_ego_for_pose_range(poses, 0, len(poses) - 1)
+        out[scene_id] = scene_ego
 
-        # --- First frame motion (relative to second frame) ---
-        first_motion = _compute_frame_motion(pose_first, pose_second)
-        z_first = pose_first["translation"][2]
+        # --- Per-sequence entries: first & last frame of each sequence ---
+        seqs = sequences_by_scene.get(scene_token, [])
+        if not seqs:
+            missing_seq += 1
+            continue
 
-        # First frame acceleration (needs at least 3 frames)
-        # speed_01 is the mean speed over [t0,t1] (centered at its midpoint),
-        # speed_12 over [t1,t2]; the Δt between the two samples is therefore
-        # half the full span (t2 - t0) / 2.
-        first_accel = None
-        if len(poses) >= 3:
-            pose_third = poses[2]
-            speed_01 = first_motion["speed_mps"]
-            motion_12 = _compute_frame_motion(pose_second, pose_third)
-            speed_12 = motion_12["speed_mps"]
-            dt_02 = (pose_third["timestamp"] - pose_first["timestamp"]) / 1e6 / 2.0
-            first_accel = _compute_acceleration(speed_01, speed_12, dt_02)
+        for seq in seqs:
+            indices = seq.get("indices", [])
+            if not indices or len(indices) < 1:
+                continue
 
-        first_text = frame_to_text(
-            first_motion, z_first, z_ref=None,
-            is_relative=False, accel=first_accel)
+            first_idx = indices[0]
+            last_idx = indices[-1]
 
-        # --- Last frame motion (relative to second-to-last) ---
-        last_motion = _compute_frame_motion(pose_prev_last, pose_last)
-        z_last = pose_last["translation"][2]
+            # Bounds check
+            if last_idx >= len(poses) or first_idx < 0:
+                continue
 
-        # Last frame acceleration (needs at least 3 frames from the end)
-        # Same midpoint reasoning as above: Δt between the two interval-average
-        # speeds is half the full span (t_last - t_prev_prev) / 2.
-        last_accel = None
-        if len(poses) >= 3:
-            pose_prev_prev = poses[-3]
-            speed_prev = _compute_frame_motion(pose_prev_prev, pose_prev_last)["speed_mps"]
-            speed_curr = last_motion["speed_mps"]
-            dt_end = (pose_last["timestamp"] - pose_prev_prev["timestamp"]) / 1e6 / 2.0
-            last_accel = _compute_acceleration(speed_prev, speed_curr, dt_end)
-
-        # For last frame, position is relative to first frame
-        # Recompose lateral/longitudinal using first frame heading
-        t_first = np.array(pose_first["translation"])
-        t_last = np.array(pose_last["translation"])
-        disp_vec = t_last - t_first
-        q_first = Quaternion(pose_first["rotation"])
-        yaw_first = _quaternion_to_yaw(q_first)
-        cos_yaw = math.cos(-yaw_first)
-        sin_yaw = math.sin(-yaw_first)
-        dx_ego = cos_yaw * disp_vec[0] - sin_yaw * disp_vec[1]
-        dy_ego = sin_yaw * disp_vec[0] + cos_yaw * disp_vec[1]
-
-        last_motion_relative = {
-            "lateral_m": float(dy_ego),
-            "longitudinal_m": float(dx_ego),
-            "speed_mps": last_motion["speed_mps"],
-            "yaw_change_deg": last_motion["yaw_change_deg"],
-        }
-
-        last_text = frame_to_text(
-            last_motion_relative, z_last, z_ref=z_first,
-            is_relative=True, accel=last_accel)
-
-        out[scene_id] = {"first_frame": first_text, "last_frame": last_text}
+            seq_ego = _compute_ego_for_pose_range(poses, first_idx, last_idx)
+            seq_key = f"{scene_id}_{first_idx}_{last_idx}"
+            out[seq_key] = seq_ego
 
     if missing_pose:
         print(f"  ⚠ {missing_pose} scenes skipped (missing ego_pose data)")
+    if missing_seq:
+        print(f"  ⚠ {missing_seq} scenes had no sequence metadata (per-scene only)")
+
+    n_per_scene = sum(1 for k in out if "_" not in k)
+    n_per_seq = len(out) - n_per_scene
+    print(f"  Generated {n_per_scene} per-scene + {n_per_seq} per-sequence entries "
+          f"({len(out)} total)")
 
     return out
 
@@ -399,13 +486,29 @@ def main():
     print(f"Saved to {args.output}")
 
     # Print a few examples
-    print("\nExample outputs:")
-    for i, (sid, data) in enumerate(ego_meta.items()):
-        if i >= 3:
-            break
+    print("\nExample per-scene entries:")
+    n_shown = 0
+    for sid, data in ego_meta.items():
+        if "_" in sid:  # skip per-sequence keys
+            continue
         print(f"  [{sid}]")
         print(f"    first: {data['first_frame'][:120]}...")
         print(f"    last:  {data['last_frame'][:120]}...")
+        n_shown += 1
+        if n_shown >= 2:
+            break
+
+    print("\nExample per-sequence entries:")
+    n_shown = 0
+    for sid, data in ego_meta.items():
+        if "_" not in sid:  # skip per-scene keys
+            continue
+        print(f"  [{sid}]")
+        print(f"    first: {data['first_frame'][:120]}...")
+        print(f"    last:  {data['last_frame'][:120]}...")
+        n_shown += 1
+        if n_shown >= 4:
+            break
 
 
 if __name__ == "__main__":

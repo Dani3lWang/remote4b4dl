@@ -70,11 +70,13 @@ the last checkpoint. The checkpoint is automatically removed on clean exit.
 import os
 import sys
 import json
+import re
 import argparse
 import time
 import numpy as np
 import torch
 from tqdm import tqdm
+from typing import Optional, Tuple, Dict
 
 # Make `evaluation.*` and `vtimellm.*` importable regardless of cwd.
 # Layout:
@@ -97,6 +99,65 @@ from vtimellm.inference import inference                  # noqa: E402
 from vtimellm.utils import disable_torch_init             # noqa: E402
 
 VIDEO_TOKEN = "<video>"          # mllm/vtimellm/constants.DEFAULT_IMAGE_TOKEN
+
+
+# --------------------------------------------------------------------------
+# Frame number parsing and per-sequence ego lookup
+# --------------------------------------------------------------------------
+
+def parse_frame_numbers(text: str) -> Tuple[Optional[int], Optional[int]]:
+    """Extract the first and last frame numbers from a question text.
+
+    Looks for patterns like "frame 030", "frame 6", "frame 008".
+    Returns (first_frame, last_frame) as integers, or (None, None) if
+    no frame numbers are found.
+    """
+    matches = re.findall(r'frame\s+(\d+)', text, re.IGNORECASE)
+    if not matches:
+        return None, None
+    nums = [int(m) for m in matches]
+    return min(nums), max(nums)
+
+
+def lookup_ego_for_qa(ego_meta: dict, scene_id: str,
+                      question: str) -> Dict[str, str]:
+    """Look up per-sequence ego data using frame numbers from the question.
+
+    Tries per-sequence key f"{scene_id}_{first}_{last}" first (paper Appendix C:
+    "the metatoken descriptions of the first and last frames referenced in the
+    QA pair are concatenated"), then falls back to per-scene key scene_id.
+    """
+    first_frame, last_frame = parse_frame_numbers(question)
+
+    if first_frame is not None and last_frame is not None:
+        seq_key = f"{scene_id}_{first_frame}_{last_frame}"
+        if seq_key in ego_meta:
+            return ego_meta[seq_key]
+        # Try reversed order (some questions mention larger number first)
+        seq_key_rev = f"{scene_id}_{last_frame}_{first_frame}"
+        if seq_key_rev in ego_meta:
+            return ego_meta[seq_key_rev]
+
+    # Fallback: per-scene
+    return ego_meta.get(scene_id, {})
+
+
+def slice_features(feat: torch.Tensor,
+                   first_frame: Optional[int],
+                   last_frame: Optional[int]) -> torch.Tensor:
+    """Slice scene-level features to a specific frame range.
+
+    If first_frame/last_frame are None, returns the full feature tensor.
+    Otherwise returns feat[first_frame:last_frame+1] (inclusive on both ends).
+    """
+    if first_frame is None or last_frame is None:
+        return feat
+    # Clamp to valid range
+    first = max(0, min(first_frame, feat.shape[0] - 1))
+    last = max(0, min(last_frame, feat.shape[0] - 1))
+    if first > last:
+        first, last = last, first
+    return feat[first:last + 1]
 
 
 # --------------------------------------------------------------------------
@@ -136,8 +197,9 @@ def iter_items_by_task(items: list):
 def build_query(human_value: str,
                 ego_meta: dict = None,
                 scene_id: str = None,
-                use_4dlidar: bool = False,
-                use_meta: bool = False) -> str:
+                use_4dlidar: bool = True,
+                use_meta: bool = True,
+                per_sequence: bool = False) -> str:
     """Build the query string for the B4DL model.
 
     Paper Figure 6 / Appendix C format:
@@ -150,7 +212,11 @@ def build_query(human_value: str,
     where the LiDAR features are inserted. It must be present in the query.
 
     If ego_meta is provided, the metatoken block (<meta> + frame descriptions)
-    is appended after the question, matching the paper's layout.
+    is appended after the question. When per_sequence=True, per-sequence ego data
+    is looked up by parsing frame numbers from the question text (paper Appendix C:
+    "the metatoken descriptions of the first and last frames referenced in the
+    QA pair"). Falls back to per-scene ego data if no frame numbers are found
+    or if per_sequence=False.
     """
     q = human_value
 
@@ -175,8 +241,11 @@ def build_query(human_value: str,
     parts.append(q)
 
     # Metatoken block (paper Figure 6: after the question)
-    if use_meta and ego_meta and scene_id and scene_id in ego_meta:
-        scene_data = ego_meta[scene_id]
+    if use_meta and ego_meta and scene_id:
+        if per_sequence:
+            scene_data = lookup_ego_for_qa(ego_meta, scene_id, q)
+        else:
+            scene_data = ego_meta.get(scene_id, {})
         if isinstance(scene_data, dict):
             first_text = scene_data.get("first_frame", "")
             last_text = scene_data.get("last_frame", "")
@@ -258,9 +327,6 @@ def main():
     parser.add_argument("--gpt_api_key", type=str,
                         default=os.environ.get("OPENAI_API_KEY"))
     parser.add_argument("--gpt_model", type=str, default="gpt-4o")
-    parser.add_argument("--bert_model", type=str, default=None,
-                        help="Path to local roberta-large model for BERTScore "
-                             "(default: auto-detect models/roberta-large)")
     parser.add_argument("--ego_meta", type=str, default=None,
                         help="ego_metadata.json from generate_ego_metadata.py. "
                              "If provided, Metatoken prefix (<4DLiDAR> + <meta>) "
@@ -269,6 +335,11 @@ def main():
                         help="Omit <4DLiDAR> from metatoken prefix (ablation)")
     parser.add_argument("--no_meta", action="store_true",
                         help="Omit <meta> from metatoken prefix (ablation)")
+    parser.add_argument("--per_sequence", action="store_true",
+                        help="Enable per-sequence feature slicing + per-sequence ego "
+                             "lookup (paper Appendix C). Use this ONLY when the model "
+                             "was trained with per-sequence features. Default OFF "
+                             "(full scene features + per-scene ego, matches current checkpoint).")
     args = parser.parse_args()
 
     # Assemble the flat test item list
@@ -365,23 +436,26 @@ def main():
 
             question = it["conversations"][0]["value"]
             gt = it["conversations"][1]["value"]
-            # Metatoken (<4DLiDAR> + <meta>) is only enabled when ego_meta is
-            # provided AND the model checkpoint supports it (i.e. was trained with
-            # these special tokens). The current Stage2 checkpoint was trained
-            # without metatokens, so it defaults to OFF unless explicitly opted in.
-            _use_4dlidar = (ego_meta is not None
-                            and not getattr(args, 'no_4dlidar', False))
-            _use_meta = (ego_meta is not None
-                         and not getattr(args, 'no_meta', False))
+
+            # When per_sequence is enabled, slice features to the frame
+            # range mentioned in the question (paper: per-sequence input).
+            # When disabled, use full scene features (matches current checkpoint).
+            if getattr(args, 'per_sequence', False):
+                first_frame, last_frame = parse_frame_numbers(question)
+                feat_used = slice_features(feat, first_frame, last_frame)
+            else:
+                feat_used = feat
+
             query = build_query(
                 question,
                 ego_meta=ego_meta,
                 scene_id=scene_id,
-                use_4dlidar=_use_4dlidar,
-                use_meta=_use_meta,
+                use_4dlidar=not getattr(args, 'no_4dlidar', False),
+                use_meta=not getattr(args, 'no_meta', False),
+                per_sequence=getattr(args, 'per_sequence', False),
             )
             try:
-                pred = run_inference(model, tokenizer, feat, query)
+                pred = run_inference(model, tokenizer, feat_used, query)
             except Exception as e:
                 skipped += 1
                 print(f"  ! inference failed for {scene_id}: {e}")
@@ -428,8 +502,7 @@ def main():
 
     # Compute metrics
     evaluator = B4DLEvaluator(use_gpt=args.use_gpt, gpt_api_key=args.gpt_api_key,
-                              gpt_model=args.gpt_model,
-                              bert_model_path=getattr(args, 'bert_model', None))
+                              gpt_model=args.gpt_model)
     per_task = evaluator.evaluate_all(results)
     final = evaluator.compute_final_score(per_task)
 
