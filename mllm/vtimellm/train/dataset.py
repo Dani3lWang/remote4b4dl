@@ -1,17 +1,43 @@
 import random
 import copy
 import json
+import re
 import torch
 import transformers
 from PIL import Image
 import numpy as np
 from torch.utils.data import Dataset
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Sequence, List
+from typing import Dict, Optional, Sequence, List, Tuple
 
 from vtimellm.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
 from vtimellm import conversation as conversation_lib
 from vtimellm.mm_utils import tokenizer_image_token
+
+
+def _parse_frame_numbers(text: str) -> Tuple[Optional[int], Optional[int]]:
+    """Extract first and last frame numbers from a question text.
+
+    Looks for patterns like "frame 030", "frame 6", "frame 008".
+    Returns (first_frame, last_frame) as integers, or (None, None).
+    """
+    matches = re.findall(r'frame\s+(\d+)', text, re.IGNORECASE)
+    if not matches:
+        return None, None
+    nums = [int(m) for m in matches]
+    return min(nums), max(nums)
+
+
+def _slice_features(feat, first_frame, last_frame):
+    """Slice scene-level features to a specific frame range (inclusive)."""
+    if first_frame is None or last_frame is None:
+        return feat
+    n = feat.shape[0]
+    first = max(0, min(first_frame, n - 1))
+    last = max(0, min(last_frame, n - 1))
+    if first > last:
+        first, last = last, first
+    return feat[first:last + 1]
 
 @dataclass
 class DataArguments:
@@ -406,6 +432,11 @@ class LazySupervisedDataset(Dataset):
             image = torch.from_numpy(image)
             if data_type == 'image' and len(image.shape) == 1: # <768>
                 image = image.unsqueeze(0)
+            # Slice features to the frame range mentioned in the question
+            # (paper: per-sequence input, not per-scene)
+            question_text = source['conversations'][0]['value']
+            first_frame, last_frame = _parse_frame_numbers(question_text)
+            image = _slice_features(image, first_frame, last_frame)
         except Exception as e:
             print(e)
             return random.choice(self)

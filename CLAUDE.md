@@ -169,6 +169,12 @@ conda run -n wqlc python evaluation/test_b4dl.py \
     --output ./evaluation/predictions.json \
     --metrics_output ./evaluation/evaluation_results.json
 
+# 加 --per_sequence 启用 per-sequence 模式（论文 Appendix C 对齐）：
+#   - 特征按问题帧号切片（feat[first:last+1]）
+#   - ego 数据按 per-sequence key 查找（fallback 到 per-scene）
+#   ⚠️ 仅在模型用 per-sequence 数据训练后才启用，否则会有训练-评测不匹配
+conda run -n wqlc python evaluation/test_b4dl.py ... --per_sequence
+
 # 一键脚本（数据划分 + 评测 + 指标）
 conda run -n wqlc bash scripts/run_b4dl_eval.sh
 ```
@@ -209,6 +215,13 @@ conda run -n wqlc python vtimellm/demo_gradio.py \
 - **LiDAR-CLIP checkpoint**：PyTorch Lightning 格式，含非 tensor 对象（scheduler 等），加载需 `weights_only=False`，且用 `strict=False`（忽略旧版 bbox_head 的 key）
 - **训练数据集容错**：`LazySupervisedDataset` 在特征文件缺失时返回随机其他样本（`random.choice(self)`），会导致静默的数据丢失，检查日志中的异常打印
 - **特征文件命名约定**：Stage2/3 训练时以 `scene_id` 查找 `{feat_folder}/{scene_id}.npy`，需确保 LiDAR-CLIP 提取时 stage2-save-dir 下的文件名与数据 JSON 中的 `scene_id` 一致
+- **Per-sequence 特征切片**（2026-08-12 新增）：论文 Appendix C 指出 metatoken 应描述"QA pair 中引用的首末帧"的 ego 状态，且输入 $S_L$ 是序列（5-19 帧）而非整个 scene（~40 帧）。代码已修改为支持 per-sequence 模式：
+  - `generate_ego_metadata.py`：同时生成 per-scene（`{scene_id}`）和 per-sequence（`{scene_id}_{first_idx}_{last_idx}`）条目，共 5950 条（850 + 5100）
+  - `inject_metatoken.py`：从问题文本解析 `frame XXX` 帧号，构造 per-seq key 查找 ego 数据，fallback 到 per-scene
+  - `dataset.py`：训练加载器按问题帧号切片特征（`feat[first:last+1]`）
+  - `test_b4dl.py`：加 `--per_sequence` 开关（默认 OFF）。OFF = 旧格式（全 scene 特征 + per-scene ego），ON = 新格式（切片特征 + per-seq ego）
+  - 训练数据：`stage2_full_train_seq.json` 为 per-seq 注入版，`stage2_full_train.json` 为旧 per-scene 版
+  - ⚠️ 训练和评测必须用相同格式：用旧数据训练的 checkpoint 评测时不要加 `--per_sequence`；用 `stage2_full_train_seq.json` 训练后评测时加 `--per_sequence`
 
 ## Git 提交规范
 

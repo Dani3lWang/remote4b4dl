@@ -13,8 +13,12 @@ inject_metatoken.py — 将 Metatoken 前缀注入训练/测试数据
 frame is" 为 Figure 6 中红色高亮的连接词。
 
 需要先运行 generate_ego_metadata.py 生成 ego_metadata.json。
-ego_metadata.json 格式：
-    {scene_id: {"first_frame": "...", "last_frame": "..."}}
+ego_metadata.json 格式（per-sequence + per-scene fallback）：
+    {
+      "scene_id": {"first_frame": "...", "last_frame": "..."},
+      "scene_id_0_8": {"first_frame": "...", "last_frame": "..."},
+      ...
+    }
 
 用法：
     cd mllm
@@ -38,8 +42,9 @@ ego_metadata.json 格式：
 import os
 import sys
 import json
+import re
 import argparse
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Tuple
 
 
 def parse_args():
@@ -58,6 +63,43 @@ def parse_args():
     return p.parse_args()
 
 
+def parse_frame_numbers(text: str) -> Tuple[Optional[int], Optional[int]]:
+    """Extract the first and last frame numbers from a question text.
+
+    Looks for patterns like "frame 030", "frame 6", "frame 008".
+    Returns (first_frame, last_frame) as integers, or (None, None) if
+    no frame numbers are found.
+    """
+    matches = re.findall(r'frame\s+(\d+)', text, re.IGNORECASE)
+    if not matches:
+        return None, None
+    nums = [int(m) for m in matches]
+    return min(nums), max(nums)
+
+
+def lookup_ego_for_qa(ego_meta: dict, scene_id: str,
+                      question: str) -> Dict[str, str]:
+    """Look up per-sequence ego data using frame numbers from the question.
+
+    Tries per-sequence key f"{scene_id}_{first}_{last}" first (paper Appendix C:
+    "the metatoken descriptions of the first and last frames referenced in the
+    QA pair are concatenated"), then falls back to per-scene key scene_id.
+    """
+    first_frame, last_frame = parse_frame_numbers(question)
+
+    if first_frame is not None and last_frame is not None:
+        seq_key = f"{scene_id}_{first_frame}_{last_frame}"
+        if seq_key in ego_meta:
+            return ego_meta[seq_key]
+        # Try reversed order (some questions mention larger number first)
+        seq_key_rev = f"{scene_id}_{last_frame}_{first_frame}"
+        if seq_key_rev in ego_meta:
+            return ego_meta[seq_key_rev]
+
+    # Fallback: per-scene
+    return ego_meta.get(scene_id, {})
+
+
 def inject_metatoken(items: list,
                      ego_meta: dict,
                      include_4dlidar: bool = True,
@@ -71,9 +113,15 @@ def inject_metatoken(items: list,
     The <video> token is kept as the embedding placeholder (VTimeLLM convention).
     The metatoken block (<meta> + frame descriptions) comes after the question,
     matching the paper's Figure 6 layout.
+
+    Per-sequence ego data is looked up by parsing frame numbers from the
+    question text (e.g. "frame 30 and frame 38" → key "scene_id_30_38").
+    Falls back to per-scene ego data if no frame numbers are found.
     """
     modified = []
     no_meta_count = 0
+    seq_matched = 0
+    scene_fallback = 0
 
     for item in items:
         scene_id = item.get("scene_id") or item.get("id")
@@ -108,7 +156,18 @@ def inject_metatoken(items: list,
         prefix_parts.append(cleaned)  # the actual question
 
         if include_meta:
-            scene_data = ego_meta.get(scene_id, {})
+            scene_data = lookup_ego_for_qa(ego_meta, scene_id, cleaned)
+            # Track lookup type
+            first_frame, last_frame = parse_frame_numbers(cleaned)
+            if first_frame is not None:
+                seq_key = f"{scene_id}_{first_frame}_{last_frame}"
+                if seq_key in ego_meta or f"{scene_id}_{last_frame}_{first_frame}" in ego_meta:
+                    seq_matched += 1
+                else:
+                    scene_fallback += 1
+            else:
+                scene_fallback += 1
+
             if isinstance(scene_data, dict):
                 first_text = scene_data.get("first_frame", "")
                 last_text = scene_data.get("last_frame", "")
@@ -139,6 +198,7 @@ def inject_metatoken(items: list,
 
     if no_meta_count:
         print(f"  ⚠ {no_meta_count} items had no ego metadata; used fallback text.")
+    print(f"  Per-sequence match: {seq_matched}, per-scene fallback: {scene_fallback}")
 
     return modified
 
