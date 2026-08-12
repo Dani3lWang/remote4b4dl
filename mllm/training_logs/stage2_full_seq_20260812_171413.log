@@ -1,0 +1,45 @@
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/torch/cuda/__init__.py:182: UserWarning: CUDA initialization: CUDA unknown error - this may be due to an incorrectly set up environment, e.g. changing env variable CUDA_VISIBLE_DEVICES after program start. Setting the available devices to be zero. (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:109.)
+  return torch._C._cuda_getDeviceCount() > 0
+[2026-08-12 17:14:15,001] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2026-08-12 17:14:15,010] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+[2026-08-12 17:14:17,014] [WARNING] [runner.py:215:fetch_hostfile] Unable to find hostfile, will proceed with training with local resources only.
+[2026-08-12 17:14:17,015] [INFO] [runner.py:607:main] cmd = /root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python3.10 -u -m deepspeed.launcher.launch --world_info=eyJsb2NhbGhvc3QiOiBbMF19 --master_addr=127.0.0.1 --master_port=29576 --enable_each_rank_log=None vtimellm/train/train_mem.py --deepspeed ./scripts/zero3.json --lora_enable True --model_name_or_path ./base_model/vicuna-v1-5-7b --version v1 --data_path ./b4dl_dataset/stage2_full_train_seq.json --feat_folder ../encoders/lidarclip/b4dl/stage2_features --pretrain_mm_mlp_adapter ./checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin --output_dir ./checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seq --bf16 True --num_train_epochs 3 --per_device_train_batch_size 8 --gradient_accumulation_steps 16 --evaluation_strategy no --save_strategy steps --save_steps 500 --save_total_limit 3 --learning_rate 1e-4 --freeze_mm_mlp_adapter True --lora_r 64 --lora_alpha 128 --weight_decay 0. --warmup_ratio 0.03 --lr_scheduler_type cosine --logging_steps 1 --tf32 True --model_max_length 2048 --gradient_checkpointing True --dataloader_num_workers 4 --lazy_preprocess True --report_to wandb
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/torch/cuda/__init__.py:182: UserWarning: CUDA initialization: CUDA unknown error - this may be due to an incorrectly set up environment, e.g. changing env variable CUDA_VISIBLE_DEVICES after program start. Setting the available devices to be zero. (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:109.)
+  return torch._C._cuda_getDeviceCount() > 0
+[2026-08-12 17:14:18,385] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2026-08-12 17:14:18,393] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+[2026-08-12 17:14:20,290] [INFO] [launch.py:146:main] WORLD INFO DICT: {'localhost': [0]}
+[2026-08-12 17:14:20,291] [INFO] [launch.py:152:main] nnodes=1, num_local_procs=1, node_rank=0
+[2026-08-12 17:14:20,291] [INFO] [launch.py:163:main] global_rank_mapping=defaultdict(<class 'list'>, {'localhost': [0]})
+[2026-08-12 17:14:20,291] [INFO] [launch.py:164:main] dist_world_size=1
+[2026-08-12 17:14:20,291] [INFO] [launch.py:168:main] Setting CUDA_VISIBLE_DEVICES=0
+[2026-08-12 17:14:20,291] [INFO] [launch.py:256:main] process 127921 spawned with command: ['/root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python3.10', '-u', 'vtimellm/train/train_mem.py', '--local_rank=0', '--deepspeed', './scripts/zero3.json', '--lora_enable', 'True', '--model_name_or_path', './base_model/vicuna-v1-5-7b', '--version', 'v1', '--data_path', './b4dl_dataset/stage2_full_train_seq.json', '--feat_folder', '../encoders/lidarclip/b4dl/stage2_features', '--pretrain_mm_mlp_adapter', './checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin', '--output_dir', './checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seq', '--bf16', 'True', '--num_train_epochs', '3', '--per_device_train_batch_size', '8', '--gradient_accumulation_steps', '16', '--evaluation_strategy', 'no', '--save_strategy', 'steps', '--save_steps', '500', '--save_total_limit', '3', '--learning_rate', '1e-4', '--freeze_mm_mlp_adapter', 'True', '--lora_r', '64', '--lora_alpha', '128', '--weight_decay', '0.', '--warmup_ratio', '0.03', '--lr_scheduler_type', 'cosine', '--logging_steps', '1', '--tf32', 'True', '--model_max_length', '2048', '--gradient_checkpointing', 'True', '--dataloader_num_workers', '4', '--lazy_preprocess', 'True', '--report_to', 'wandb']
+/root/autodl-tmp/wql/mmb4dl/mllm/vtimellm/train/../..
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/torch/cuda/__init__.py:182: UserWarning: CUDA initialization: CUDA unknown error - this may be due to an incorrectly set up environment, e.g. changing env variable CUDA_VISIBLE_DEVICES after program start. Setting the available devices to be zero. (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:109.)
+  return torch._C._cuda_getDeviceCount() > 0
+[2026-08-12 17:14:23,368] [WARNING] [real_accelerator.py:181:get_accelerator] Setting accelerator to CPU. If you have GPU or other accelerator, we were unable to detect it.
+[2026-08-12 17:14:23,369] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cpu (auto detect)
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/transformers/training_args.py:1575: FutureWarning: `evaluation_strategy` is deprecated and will be removed in version 4.46 of 🤗 Transformers. Use `eval_strategy` instead
+  warnings.warn(
+[2026-08-12 17:14:23,716] [INFO] [comm.py:658:init_distributed] cdb=None
+[2026-08-12 17:14:23,716] [INFO] [comm.py:689:init_distributed] Initializing TorchBackend in DeepSpeed with backend gloo
+W0812 17:14:24.096000 127921 site-packages/torch/utils/cpp_extension.py:118] No CUDA runtime is found, using CUDA_HOME='/usr/local/cuda'
+ninja: no work to do.
+Time to load deepspeed_shm_comm op: 0.011028289794921875 seconds
+DeepSpeed deepspeed.ops.comm.deepspeed_shm_comm_op built successfully
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/accelerate/state.py:246: UserWarning: OMP_NUM_THREADS/MKL_NUM_THREADS unset, we set it at 104 to improve oob performance.
+  warnings.warn(
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/root/autodl-tmp/wql/mmb4dl/mllm/vtimellm/train/train_mem.py", line 24, in <module>
+[rank0]:     train()
+[rank0]:   File "/root/autodl-tmp/wql/mmb4dl/mllm/vtimellm/train/train.py", line 250, in train
+[rank0]:     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+[rank0]:   File "/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/transformers/hf_argparser.py", line 352, in parse_args_into_dataclasses
+[rank0]:     obj = dtype(**inputs)
+[rank0]:   File "<string>", line 148, in __init__
+[rank0]:   File "/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/transformers/training_args.py", line 1834, in __post_init__
+[rank0]:     raise ValueError("--tf32 requires Ampere or a newer GPU arch, cuda>=11 and torch>=1.7")
+[rank0]: ValueError: --tf32 requires Ampere or a newer GPU arch, cuda>=11 and torch>=1.7
+[2026-08-12 17:14:25,297] [INFO] [launch.py:319:sigkill_handler] Killing subprocess 127921
+[2026-08-12 17:14:25,298] [ERROR] [launch.py:325:sigkill_handler] ['/root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python3.10', '-u', 'vtimellm/train/train_mem.py', '--local_rank=0', '--deepspeed', './scripts/zero3.json', '--lora_enable', 'True', '--model_name_or_path', './base_model/vicuna-v1-5-7b', '--version', 'v1', '--data_path', './b4dl_dataset/stage2_full_train_seq.json', '--feat_folder', '../encoders/lidarclip/b4dl/stage2_features', '--pretrain_mm_mlp_adapter', './checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin', '--output_dir', './checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seq', '--bf16', 'True', '--num_train_epochs', '3', '--per_device_train_batch_size', '8', '--gradient_accumulation_steps', '16', '--evaluation_strategy', 'no', '--save_strategy', 'steps', '--save_steps', '500', '--save_total_limit', '3', '--learning_rate', '1e-4', '--freeze_mm_mlp_adapter', 'True', '--lora_r', '64', '--lora_alpha', '128', '--weight_decay', '0.', '--warmup_ratio', '0.03', '--lr_scheduler_type', 'cosine', '--logging_steps', '1', '--tf32', 'True', '--model_max_length', '2048', '--gradient_checkpointing', 'True', '--dataloader_num_workers', '4', '--lazy_preprocess', 'True', '--report_to', 'wandb'] exits with return code = 1
