@@ -60,6 +60,11 @@ def parse_args():
                    help="Omit <4DLiDAR> prefix (for ablation)")
     p.add_argument("--no_meta", action="store_true",
                    help="Omit <meta> + ego text (for ablation)")
+    p.add_argument("--frame_ctx", action="store_true",
+                   help="Prepend frame-range context to the <meta> line for "
+                        "questions that reference frame numbers, matching "
+                        "test_b4dl.py --per_sequence: "
+                        "\"<meta> This sequence covers frames XXX to XXX. ...\"")
     return p.parse_args()
 
 
@@ -103,7 +108,8 @@ def lookup_ego_for_qa(ego_meta: dict, scene_id: str,
 def inject_metatoken(items: list,
                      ego_meta: dict,
                      include_4dlidar: bool = True,
-                     include_meta: bool = True) -> list:
+                     include_meta: bool = True,
+                     frame_ctx: bool = False) -> list:
     """Inject Metatoken prefix into the first human message of each QA item.
 
     The format follows paper Figure 6 / Appendix C:
@@ -185,6 +191,17 @@ def inject_metatoken(items: list,
             else:
                 meta_line = "<meta> No ego motion metadata available for this scene."
                 no_meta_count += 1
+
+            # Frame-range context prefix (matches test_b4dl.py --per_sequence):
+            # tells the model which absolute frame indices the sliced feature
+            # tensor corresponds to. Only for questions with frame numbers.
+            if frame_ctx:
+                fc_first, fc_last = parse_frame_numbers(cleaned)
+                if fc_first is not None and fc_last is not None:
+                    meta_line = (
+                        f"<meta> This sequence covers frames {fc_first:03d} to "
+                        f"{fc_last:03d}. {meta_line[len('<meta> '):]}"
+                    )
             prefix_parts.append(meta_line)
 
         new_value = "\n".join(prefix_parts)
@@ -243,6 +260,7 @@ def main():
         items, ego_meta,
         include_4dlidar=not args.no_4dlidar,
         include_meta=not args.no_meta,
+        frame_ctx=args.frame_ctx,
     )
 
     # Save

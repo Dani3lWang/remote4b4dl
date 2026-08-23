@@ -175,6 +175,14 @@ conda run -n wqlc python evaluation/test_b4dl.py \
 #   ⚠️ 仅在模型用 per-sequence 数据训练后才启用，否则会有训练-评测不匹配
 conda run -n wqlc python evaluation/test_b4dl.py ... --per_sequence
 
+# frame-context 变体（2026-08-23 新增）：--per_sequence 时在 meta 行前注入
+# "This sequence covers frames XXX to XXX."，让模型知道切片特征对应的绝对
+# 帧号（缓解 time_grounding mode collapse 的尝试）。训练侧配套：
+#   scripts/inject_metatoken.py --frame_ctx 生成 stage2_full_train_seqctx.json，
+#   scripts/run_stage2_full_seq_ctx.sh 训练（输出 stage2-full-seqctx）
+# ⚠️ 训练/评测两侧注入格式必须一致，用 seqctx 模型评测时 --per_sequence
+#    会自动带上该前缀，与训练对齐
+
 # 一键脚本（数据划分 + 评测 + 指标）
 conda run -n wqlc bash scripts/run_b4dl_eval.sh
 ```

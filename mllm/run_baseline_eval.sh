@@ -1,6 +1,6 @@
 #!/bin/bash
 cd /root/autodl-tmp/wql/mmb4dl/mllm
-source /root/miniconda3/etc/profile.d/conda.sh
+eval "$(/root/autodl-tmp/miniconda3/bin/conda shell.bash hook)"
 conda activate wqlc
 echo "===== BASELINE EVAL (no per_sequence) ====="
 echo "Start: $(date)"

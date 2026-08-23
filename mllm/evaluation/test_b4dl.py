@@ -263,6 +263,17 @@ def build_query(human_value: str,
             meta_line = f"<meta> The metadata of the first frame is '{first_text}'"
         else:
             meta_line = "<meta> No ego motion metadata available for this scene."
+
+        # When per_sequence, inject frame range context so the model knows
+        # which absolute frame indices the sliced features correspond to.
+        if per_sequence:
+            first_frame, last_frame = parse_frame_numbers(q)
+            if first_frame is not None and last_frame is not None:
+                meta_line = (
+                    f"<meta> This sequence covers frames {first_frame:03d} to "
+                    f"{last_frame:03d}. {meta_line[len('<meta> '):]}"
+                )
+
         parts.append(meta_line)
 
     return "\n".join(parts)
