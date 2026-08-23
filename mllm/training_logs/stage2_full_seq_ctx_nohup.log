@@ -19,3 +19,29 @@ Data: b4dl_dataset/stage2_full_train_seqctx.json (metatoken + 'This sequence cov
 [2026-08-23 18:53:36,985] [INFO] [comm.py:689:init_distributed] Initializing TorchBackend in DeepSpeed with backend nccl
 You are using a model of type llama to instantiate a model of type VTimeLLM. This is not supported for all configurations of models and can yield errors.
 [2026-08-23 18:53:37,381] [INFO] [config.py:734:__init__] Config mesh_device None world_size = 1
+[2026-08-23 18:54:29,306] [INFO] [partition_parameters.py:348:__exit__] finished initializing model - num_params = 291, num_elems = 6.74B
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:36<00:36, 36.24s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:52<00:00, 24.60s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:52<00:00, 26.35s/it]
+The new embeddings will be initialized from a multivariate normal distribution that has old embeddings' mean and covariance. As described in this article: https://nlp.stanford.edu/~johnhew/vocab-expansion.html. To disable this, use `mean_resizing=False`
+The new lm_head weights will be initialized from a multivariate normal distribution that has old embeddings' mean and covariance. As described in this article: https://nlp.stanford.edu/~johnhew/vocab-expansion.html. To disable this, use `mean_resizing=False`
+Registered 2 new B4DL special tokens: <4DLiDAR>, <meta>
+Adding LoRA adapters...
+Metatoken embeddings trainable: rows [32000, 32001] (other embedding rows gradient-masked)
+load mlp: ./checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin
+/root/autodl-tmp/wql/mmb4dl/mllm/vtimellm/train/train.py:439: FutureWarning: `tokenizer` is deprecated and will be removed in version 5.0.0 for `VTimeLLMTrainer.__init__`. Use `processing_class` instead.
+  trainer = VTimeLLMTrainer(model=model,
+ninja: no work to do.
+Time to load cpu_adam op: 3.298351287841797 seconds
+Parameter Offload: Total persistent parameters: 270336 in 66 params
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/torch/distributed/distributed_c10d.py:4807: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+wandb: WARNING The `run_name` is currently set to the same value as `TrainingArguments.output_dir`. If this was not intended, please specify a different run name by setting the `TrainingArguments.run_name` parameter.
+wandb: Tracking run with wandb version 0.27.0
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /root/autodl-tmp/wql/mmb4dl/mllm/wandb/offline-run-20260823_190052-bw55lo0c
+  0%|          | 0/2781 [00:00<?, ?it/s]  0%|          | 1/2781 [00:42<32:39:36, 42.29s/it]                                                   {'loss': 8.2577, 'grad_norm': 47.07968521118164, 'learning_rate': 1.1904761904761904e-06, 'epoch': 0.0}
+  0%|          | 1/2781 [00:42<32:39:36, 42.29s/it]  0%|          | 2/2781 [01:04<23:44:40, 30.76s/it]                                                   {'loss': 8.1039, 'grad_norm': 36.37840270996094, 'learning_rate': 2.3809523809523808e-06, 'epoch': 0.0}
+  0%|          | 2/2781 [01:04<23:44:40, 30.76s/it]  0%|          | 3/2781 [01:28<21:04:25, 27.31s/it]                                                   {'loss': 8.2726, 'grad_norm': 34.894954681396484, 'learning_rate': 3.5714285714285714e-06, 'epoch': 0.0}
+  0%|          | 3/2781 [01:28<21:04:25, 27.31s/it]  0%|          | 4/2781 [01:51<19:48:46, 25.68s/it]                                                   {'loss': 7.917, 'grad_norm': 39.80976486206055, 'learning_rate': 4.7619047619047615e-06, 'epoch': 0.0}
+  0%|          | 4/2781 [01:51<19:48:46, 25.68s/it]  0%|          | 5/2781 [02:14<19:08:26, 24.82s/it]                                                   {'loss': 8.1137, 'grad_norm': 50.82843780517578, 'learning_rate': 5.9523809523809525e-06, 'epoch': 0.01}
+  0%|          | 5/2781 [02:14<19:08:26, 24.82s/it]  0%|          | 6/2781 [02:37<18:37:45, 24.17s/it]                                                   {'loss': 7.8837, 'grad_norm': 38.72214126586914, 'learning_rate': 7.142857142857143e-06, 'epoch': 0.01}
+  0%|          | 6/2781 [02:37<18:37:45, 24.17s/it]
