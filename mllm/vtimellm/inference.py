@@ -23,7 +23,7 @@ import numpy as np
 import clip
 
 
-def inference(model, image, query, tokenizer):
+def inference(model, image, query, tokenizer, do_sample=False, temperature=0.05):
     conv = conv_templates["v1"].copy()
     conv.append_message(conv.roles[0], query)
     conv.append_message(conv.roles[1], None)
@@ -35,15 +35,17 @@ def inference(model, image, query, tokenizer):
     stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
 
     with torch.inference_mode():
-        output_ids = model.generate(
-            input_ids,
+        gen_kwargs = dict(
+            input_ids=input_ids,
             images=image[None,].cuda(),
-            do_sample=True,
-            temperature=0.05,
+            do_sample=do_sample,
             num_beams=1,
             # no_repeat_ngram_size=3,
             max_new_tokens=1024,
             use_cache=True)
+        if do_sample:
+            gen_kwargs["temperature"] = temperature
+        output_ids = model.generate(**gen_kwargs)
 
         # https://github.com/huggingface/transformers/blob/main/src/transformers/generation/utils.py#L1295
 

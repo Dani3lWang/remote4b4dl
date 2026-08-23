@@ -201,8 +201,12 @@ class B4DLEvaluator:
         return answer.strip()
 
     @staticmethod
-    def extract_time_grounding_frames(text: str) -> Dict[str, int]:
-        """Extract {start_frame, end_frame} from text like 'from frame 006 to frame 014'."""
+    def extract_time_grounding_frames(text: str) -> Optional[Dict[str, int]]:
+        """Extract {start_frame, end_frame} from text like 'from frame 006 to frame 014'.
+
+        Returns None when no frame interval is found — a prediction without a
+        parseable interval must score IoU 0, not be credited with frame 0.
+        """
         for pat in (r'from\s+frame\s+(\d+)\s+to\s+frame\s+(\d+)',
                     r'frame\s+(\d+)\s+(?:to|-|and)\s+frame\s+(\d+)',
                     r'from\s+frame\s+(\d+)\s+until\s+frame\s+(\d+)'):
@@ -210,7 +214,7 @@ class B4DLEvaluator:
             if m:
                 return {'start_frame': int(m.group(1)),
                         'end_frame': int(m.group(2))}
-        return {'start_frame': 0, 'end_frame': 0}
+        return None
 
     # --------------------------------------------------------- simple metrics
     def compute_accuracy(self, predictions: List[str], ground_truths: List[str]) -> float:
@@ -220,14 +224,28 @@ class B4DLEvaluator:
                       if self.normalize_answer(p) == self.normalize_answer(g))
         return correct / len(predictions)
 
-    def compute_miou(self, predictions: List[Dict], ground_truths: List[Dict]) -> float:
-        """Mean IoU over [start_frame, end_frame] temporal segments."""
+    def compute_miou(self, predictions: List[Any], ground_truths: List[Any]) -> float:
+        """Mean IoU over [start_frame, end_frame] temporal segments.
+
+        Frame segments are closed integer intervals (frames 6..14 = 9 frames),
+        so intersection and union both use inclusive lengths. A prediction
+        with no parseable interval scores 0.
+        """
         ious = []
         for pred, gt in zip(predictions, ground_truths):
-            ps, pe = pred.get('start_frame', 0), pred.get('end_frame', 0)
-            gs, ge = gt.get('start_frame', 0), gt.get('end_frame', 0)
-            inter = max(0, min(pe, ge) - max(ps, gs))
-            union = (pe - ps) + (ge - gs) - inter
+            if not pred or not gt:
+                ious.append(0.0)
+                continue
+            ps, pe = pred.get('start_frame'), pred.get('end_frame')
+            gs, ge = gt.get('start_frame'), gt.get('end_frame')
+            if ps is None or pe is None or gs is None or ge is None:
+                ious.append(0.0)
+                continue
+            inter = min(pe, ge) - max(ps, gs) + 1
+            if inter <= 0:
+                ious.append(0.0)
+                continue
+            union = (pe - ps + 1) + (ge - gs + 1) - inter
             ious.append(inter / union if union > 0 else 0.0)
         return float(np.mean(ious)) if ious else 0.0
 
