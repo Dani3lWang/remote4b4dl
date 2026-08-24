@@ -221,7 +221,8 @@ conda run -n wqlc python vtimellm/demo_gradio.py \
   - `generate_ego_metadata.py`：per-scene（`{scene_id}`）+ per-sequence（`{scene_id}_{first}_{last}`）文本条目，以及 `--frame_motion` 输出的**逐帧运动表** `ego_frame_motion.json`（每 scene 全帧 `{x,y,z,yaw,spd/yaw/acc_next/prev}`）
   - `scripts/ego_text.py`（2026-08-24 新增）：metatoken 文本渲染单一来源，`render_meta_texts()` 可对**任意** (first,last) 帧对渲染真实描述（单帧引用输出真实邻帧运动）；generate_ego_metadata / inject_metatoken / test_b4dl 三方共用
   - `inject_metatoken.py --frame_motion + --sequence_metadata`（v2）：对 QA 引用帧渲染真实 metatoken（79,975 条有帧号 QA 零 per-scene 回退），并写入 `item["feat_indices"] = [i0,i1,...]`（序列**精确采样帧**，如 `[0,2,4,6,8]`）与 `item["feat_range"] = [s,e]`——训练 `dataset.py` 与评测 `test_b4dl.py` 优先按 feat_indices 选帧
-  - 训练数据：`stage2_full_train_seqv2.json`（v2 论文对齐版，推荐）> `stage2_full_train_seq.json`（legacy per-seq）> `stage2_full_train.json`（per-scene 旧版）
+  - 训练数据：`stage2_full_train_seqv2_148k.json`（**论文官方划分全量 148,271 条 / 699 scenes**，推荐）> `stage2_full_train_seqv2.json`（旧 80/10/10 划分 118,722 条，仅作对照）> `stage2_full_train_seq.json`（legacy per-seq）> `stage2_full_train.json`（per-scene 旧版）
+  - **数据划分（2026-08-24 对齐）**：HF 发布的 `dataset/nuScenes-B4DL/dataset/train/{stage2,stage3}.json`（148,271 条）**本身就是论文官方训练集**（700/150 划分的 train 部分，与官方 test_qa.json 的 150 scenes 零重叠），无需再划分。旧 `create_splits.py` 的 80/10/10 自创划分（seed 42）会把 850 scenes 混切、与官方测试集冲突，已废弃。一键重建：`python scripts/build_stage2_full_train.py --input_dir ../dataset/nuScenes-B4DL/dataset/train --output_dir ./b4dl_dataset` → 再跑 inject_metatoken 注入（v2 需 `--frame_motion + --sequence_metadata`）
   - ⚠️ 训练和评测必须用相同代际的格式：seqv2 模型评测时加 `--per_sequence --frame_motion --sequence_metadata`；seq 模型只加 `--per_sequence`；旧模型都不加。time_grounding 类无帧号问题两侧都用全 scene 特征（benchmark 未提供序列归属，属数据级限制）
 
 ## Git 提交规范
