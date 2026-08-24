@@ -52,9 +52,6 @@ referenced in the QA pair are concatenated" —— metatoken 描述的是 QA 文
         --sequence_metadata ../encoders/lidarclip/annotations/sequence_metadata.json \
         --output ./b4dl_dataset/stage2_full_train_seqv2.json
 
-    # frame-context 变体（自创干预，非论文内容；前缀用 feat_range 边界）
-    python scripts/inject_metatoken.py ... --frame_ctx
-
     # 消融：仅 <4DLiDAR> 无 <meta>
     python scripts/inject_metatoken.py ... --no_meta
 """
@@ -94,11 +91,6 @@ def parse_args():
                    help="Omit <4DLiDAR> prefix (for ablation)")
     p.add_argument("--no_meta", action="store_true",
                    help="Omit <meta> + ego text (for ablation)")
-    p.add_argument("--frame_ctx", action="store_true",
-                   help="Prepend frame-range context to the <meta> line using "
-                        "the feat_range boundaries: "
-                        "\"<meta> This sequence covers frames XXX to XXX. ...\" "
-                        "(our intervention, NOT part of the paper)")
     return p.parse_args()
 
 
@@ -180,7 +172,6 @@ def inject_metatoken(items: list,
                      ego_meta: dict,
                      include_4dlidar: bool = True,
                      include_meta: bool = True,
-                     frame_ctx: bool = False,
                      frame_motion: Optional[Dict[str, List[dict]]] = None,
                      sequence_ranges: Optional[Dict[str, List[Tuple[int, int]]]] = None) -> list:
     """Inject Metatoken prefix into the first human message of each QA item.
@@ -302,15 +293,6 @@ def inject_metatoken(items: list,
                 no_meta_count += 1
             meta_line = f"<meta> {meta_body}"
 
-            # Frame-range context prefix (our intervention, NOT in the paper).
-            # Uses the feat_range boundaries when available (what the sliced
-            # features actually cover), else the QA-referenced numbers.
-            if frame_ctx:
-                fc = feat_range or ([first_frame, last_frame]
-                                    if first_frame is not None else None)
-                if fc is not None:
-                    meta_line = (f"<meta> This sequence covers frames {fc[0]:03d} to "
-                                 f"{fc[1]:03d}. {meta_body}")
             prefix_parts.append(meta_line)
 
         new_value = "\n".join(prefix_parts)
@@ -389,7 +371,6 @@ def main():
         items, ego_meta,
         include_4dlidar=not args.no_4dlidar,
         include_meta=not args.no_meta,
-        frame_ctx=args.frame_ctx,
         frame_motion=frame_motion,
         sequence_ranges=sequence_ranges,
     )

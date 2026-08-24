@@ -177,11 +177,6 @@ conda run -n wqlc python evaluation/test_b4dl.py ... --per_sequence \
     --frame_motion ./b4dl_dataset/ego_frame_motion.json \
     --sequence_metadata ../encoders/lidarclip/annotations/sequence_metadata.json
 
-# frame-context 变体（2026-08-23 引入，非论文内容）：--frame_ctx 在 meta 行前
-# 注入 "This sequence covers frames XXX to XXX."（用 feat_range 边界）。训练侧
-# 配套：scripts/inject_metatoken.py --frame_ctx 生成 seqctx 数据。评测 seqctx
-# 模型时必须显式加 --frame_ctx（2026-08-24 起不再与 --per_sequence 耦合）
-
 # 一键脚本（数据划分 + 评测 + 指标）
 conda run -n wqlc bash scripts/run_b4dl_eval.sh
 ```

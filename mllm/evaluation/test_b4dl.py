@@ -261,9 +261,7 @@ def build_query(human_value: str,
                 use_4dlidar: bool = True,
                 use_meta: bool = True,
                 per_sequence: bool = False,
-                frame_ctx: bool = False,
-                frame_motion: dict = None,
-                feat_range: Optional[Tuple[int, int]] = None) -> str:
+                frame_motion: dict = None) -> str:
     """Build the query string for the B4DL model.
 
     Paper Figure 6 / Appendix C format:
@@ -281,10 +279,6 @@ def build_query(human_value: str,
         frames (identical to inject_metatoken.py v2 output)
       - per_sequence: per-sequence ego_metadata key, per-scene fallback
       - else: per-scene ego entry
-
-    frame_ctx=True prepends "This sequence covers frames XXX to XXX." using the
-    feat_range boundaries — this is OUR intervention (not part of the paper),
-    only to be used with models trained on the seqctx variant.
     """
     q = human_value
 
@@ -338,13 +332,6 @@ def build_query(human_value: str,
 
         if meta_body is None:
             meta_body = "No ego motion metadata available for this scene."
-
-        if frame_ctx:
-            fc = feat_range or ((first_frame, last_frame)
-                                if first_frame is not None else None)
-            if fc is not None:
-                meta_body = (f"This sequence covers frames {fc[0]:03d} to "
-                             f"{fc[1]:03d}. {meta_body}")
 
         parts.append(f"<meta> {meta_body}")
 
@@ -433,11 +420,6 @@ def main():
                              "the QA's sequence + metatoken from per-sequence/per-"
                              "frame ego data. Use ONLY with models trained on "
                              "per-sequence data (stage2_full_train_seq[v2].json).")
-    parser.add_argument("--frame_ctx", action="store_true",
-                        help="Prepend 'This sequence covers frames XXX to XXX.' "
-                             "to the <meta> line (our intervention, NOT in the "
-                             "paper). Only for models trained on the seqctx "
-                             "variant; requires --per_sequence.")
     args = parser.parse_args()
 
     # Assemble the flat test item list
@@ -566,10 +548,8 @@ def main():
             if getattr(args, 'per_sequence', False):
                 sel = resolve_feat_slice(it, question, sequence_ranges)
                 feat_used = slice_features(feat, sel)
-                fr = (min(sel), max(sel)) if sel else None
             else:
                 feat_used = feat
-                fr = None
 
             query = build_query(
                 question,
@@ -578,9 +558,7 @@ def main():
                 use_4dlidar=not getattr(args, 'no_4dlidar', False),
                 use_meta=not getattr(args, 'no_meta', False),
                 per_sequence=getattr(args, 'per_sequence', False),
-                frame_ctx=getattr(args, 'frame_ctx', False),
                 frame_motion=frame_motion,
-                feat_range=fr,
             )
             try:
                 pred = run_inference(model, tokenizer, feat_used, query)
