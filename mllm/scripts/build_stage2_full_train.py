@@ -75,6 +75,14 @@ def main():
         items = json.load(open(path))
         print(f"{name}: {len(items)} 条" + (" (打 TG 标签)" if tag_tg else ""))
         conv += to_conversations(items, tag_tg=tag_tg)
+        # 同时写出分阶段数据（论文/官方训练法：stage2 简单任务先训，
+        # merge 后 stage3 复杂任务再训；合并版仅作对照）
+        sep_name = name.replace(".json", "_train.json")
+        with open(os.path.join(args.output_dir, sep_name), "w",
+                  encoding="utf-8") as f:
+            json.dump(to_conversations(items, tag_tg=tag_tg), f,
+                      ensure_ascii=False)
+        print(f"  → {args.output_dir}/{sep_name}")
     scenes = sorted({it["scene_id"] for it in conv})
 
     os.makedirs(args.output_dir, exist_ok=True)
