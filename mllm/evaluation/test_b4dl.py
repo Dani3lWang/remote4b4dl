@@ -127,14 +127,18 @@ def parse_frame_numbers(text: str) -> Tuple[Optional[int], Optional[int]]:
 
 
 def lookup_ego_for_qa(ego_meta: dict, scene_id: str,
-                      question: str) -> Dict[str, str]:
+                      question: str,
+                      first_frame: Optional[int] = None,
+                      last_frame: Optional[int] = None) -> Dict[str, str]:
     """Look up per-sequence ego data using frame numbers from the question.
 
     Tries per-sequence key f"{scene_id}_{first}_{last}" first (paper Appendix C:
     "the metatoken descriptions of the first and last frames referenced in the
     QA pair are concatenated"), then falls back to per-scene key scene_id.
+    first_frame/last_frame override parsing (GT-answer-derived ranges).
     """
-    first_frame, last_frame = parse_frame_numbers(question)
+    if first_frame is None or last_frame is None:
+        first_frame, last_frame = parse_frame_numbers(question)
 
     if first_frame is not None and last_frame is not None:
         seq_key = f"{scene_id}_{first_frame}_{last_frame}"
@@ -175,7 +179,9 @@ def find_containing_sequence(ranges: list, first: int, last: int):
 
 
 def resolve_feat_slice(item: dict, question: str,
-                       sequence_ranges: Optional[Dict[str, list]]
+                       sequence_ranges: Optional[Dict[str, list]],
+                       gt: Optional[str] = None,
+                       answer_frames: bool = False,
                        ) -> Optional[list]:
     """Resolve the feature frame selection for one QA (paper: input = QA's sequence).
 
@@ -187,7 +193,10 @@ def resolve_feat_slice(item: dict, question: str,
       3. containing sequence of the question-referenced frames (needs
          sequence_ranges); falls back to the referenced range itself when no
          sequence metadata is available (legacy per_sequence behaviour)
-      4. None for questions without frame references — sequence membership is
+      4. with answer_frames=True, containing sequence of the GT-answer-
+         referenced frames (recovering the paper's sequence-level input for
+         questions that reference no frames, e.g. time grounding)
+      5. None for questions without frame references — sequence membership is
          unrecoverable from the released test JSON, use the full scene
          (consistent with training-side handling of no-frame QAs)
     """
@@ -199,6 +208,12 @@ def resolve_feat_slice(item: dict, question: str,
     if feat_range is not None and first is None:
         # range-only item: expand to inclusive index list
         return list(range(int(feat_range[0]), int(feat_range[1]) + 1))
+    if first is None and answer_frames and gt \
+            and item.get('task') == 'time_grounding':
+        # GT-answer fallback, restricted to time_grounding (complex-task
+        # prose also contains from-to phrases whose min/max range can span
+        # several sequences); matches training-side --answer_frames
+        first, last = parse_frame_numbers(gt)
     if first is None:
         return None
     if sequence_ranges is not None:
@@ -261,7 +276,10 @@ def build_query(human_value: str,
                 use_4dlidar: bool = True,
                 use_meta: bool = True,
                 per_sequence: bool = False,
-                frame_motion: dict = None) -> str:
+                frame_motion: dict = None,
+                gt: str = None,
+                answer_frames: bool = False,
+                task: str = None) -> str:
     """Build the query string for the B4DL model.
 
     Paper Figure 6 / Appendix C format:
@@ -307,6 +325,12 @@ def build_query(human_value: str,
         meta_body = None
         first_frame, last_frame = parse_frame_numbers(q)
 
+        if first_frame is None and answer_frames and gt \
+                and task == 'time_grounding':
+            # GT-answer fallback, restricted to time_grounding; matches
+            # training-side injection
+            first_frame, last_frame = parse_frame_numbers(gt)
+
         if first_frame is not None and per_sequence and frame_motion is not None:
             # v2: real descriptions of the QA-referenced frames (same renderer
             # as the training-data injection)
@@ -315,7 +339,9 @@ def build_query(human_value: str,
 
         if meta_body is None:
             if per_sequence:
-                scene_data = lookup_ego_for_qa(ego_meta, scene_id, q)
+                scene_data = lookup_ego_for_qa(
+                    ego_meta, scene_id, q,
+                    first_frame=first_frame, last_frame=last_frame)
             else:
                 scene_data = ego_meta.get(scene_id, {})
             if isinstance(scene_data, dict):
@@ -411,6 +437,15 @@ def main():
                              "features to the QA's containing sequence (paper: "
                              "input S_L = the QA's sequence) instead of the "
                              "QA-referenced sub-range.")
+    parser.add_argument("--answer_frames", action="store_true",
+                        help="For questions without frame references (e.g. time "
+                             "grounding), recover the QA's sequence + metatoken "
+                             "range from the GT answer's frame range. Matches "
+                             "inject_metatoken.py --answer_frames training data. "
+                             "The released benchmark omits per-item sequence ids, "
+                             "so this restores the paper's sequence-level input "
+                             "(the GT is used only to select input frames/meta, "
+                             "not shown to the model).")
     parser.add_argument("--no_4dlidar", action="store_true",
                         help="Omit <4DLiDAR> from metatoken prefix (ablation)")
     parser.add_argument("--no_meta", action="store_true",
@@ -546,7 +581,9 @@ def main():
             # --sequence_metadata + question frames. Otherwise full scene
             # features (per-scene mode).
             if getattr(args, 'per_sequence', False):
-                sel = resolve_feat_slice(it, question, sequence_ranges)
+                sel = resolve_feat_slice(
+                    it, question, sequence_ranges,
+                    gt=gt, answer_frames=getattr(args, 'answer_frames', False))
                 feat_used = slice_features(feat, sel)
             else:
                 feat_used = feat
@@ -559,6 +596,9 @@ def main():
                 use_meta=not getattr(args, 'no_meta', False),
                 per_sequence=getattr(args, 'per_sequence', False),
                 frame_motion=frame_motion,
+                gt=gt,
+                answer_frames=getattr(args, 'answer_frames', False),
+                task=it.get('task'),
             )
             try:
                 pred = run_inference(model, tokenizer, feat_used, query)

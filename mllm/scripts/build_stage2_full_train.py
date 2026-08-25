@@ -26,17 +26,20 @@ HF 发布的 `ccho4702/nuScenes-B4DL` train 目录（stage2.json + stage3.json�
 """
 import os
 import json
+import re
 import argparse
 
+_TG_PATTERN = re.compile(r'from\s+frames?\s+\d+\s+to\s+frames?\s+\d+', re.I)
 
-def to_conversations(items: list) -> list:
+
+def to_conversations(items: list, tag_tg: bool = False) -> list:
     out = []
     for it in items:
         q = it.get("question", "").strip()
         a = it.get("answer", "").strip()
         if not q or not a:
             continue
-        out.append({
+        item_out = {
             "scene_id": it["scene_id"],
             "scene_token": it.get("scene_token"),
             "split": it.get("split", "train"),
@@ -45,7 +48,15 @@ def to_conversations(items: list) -> list:
                 {"from": "human", "value": q},
                 {"from": "gpt", "value": a},
             ],
-        })
+        }
+        # 仅 stage2 简单任务（存在性/二分类/time_grounding）打 TG 标签：
+        # 答案为 "from frame(s) X to frame(s) Y" 的是 time_grounding
+        # （13,124 条，与论文 Table 2 一致）。stage3 复杂任务的 prose 答案
+        # 也含该短语但不属于 TG，不在此打标签。标签供 inject_metatoken.py
+        # --answer_frames 精确限定 GT 归属回退。
+        if tag_tg and _TG_PATTERN.search(a):
+            item_out["task"] = "time_grounding"
+        out.append(item_out)
     return out
 
 
@@ -57,14 +68,13 @@ def main():
     parser.add_argument("--output_name", default="stage2_full_train_148k.json")
     args = parser.parse_args()
 
-    all_items = []
-    for name in ["stage2.json", "stage3.json"]:
+    conv = []
+    # 分别转换：只有 stage2 来源打 TG 标签（合并后无法区分来源）
+    for name, tag_tg in [("stage2.json", True), ("stage3.json", False)]:
         path = os.path.join(args.input_dir, name)
         items = json.load(open(path))
-        print(f"{name}: {len(items)} 条")
-        all_items.extend(items)
-
-    conv = to_conversations(all_items)
+        print(f"{name}: {len(items)} 条" + (" (打 TG 标签)" if tag_tg else ""))
+        conv += to_conversations(items, tag_tg=tag_tg)
     scenes = sorted({it["scene_id"] for it in conv})
 
     os.makedirs(args.output_dir, exist_ok=True)

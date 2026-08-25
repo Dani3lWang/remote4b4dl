@@ -87,6 +87,16 @@ def parse_args():
                         "framed QA, write item['feat_range'] = [s, e] of its "
                         "containing sequence (paper: model input S_L is the "
                         "QA's sequence, not the referenced sub-range).")
+    p.add_argument("--answer_frames", action="store_true",
+                   help="When the question references no frames (e.g. time "
+                        "grounding 'When do the pedestrians appear?'), fall "
+                        "back to the GT answer's frame range for sequence "
+                        "attribution + metatoken rendering. Paper Appendix C "
+                        "defines the metatoken by 'the first and last frames "
+                        "referenced in the QA pair' — the released benchmark "
+                        "omits per-item sequence ids, so the GT range is the "
+                        "only faithful way to recover the paper's sequence-"
+                        "level input S_L for these items.")
     p.add_argument("--no_4dlidar", action="store_true",
                    help="Omit <4DLiDAR> prefix (for ablation)")
     p.add_argument("--no_meta", action="store_true",
@@ -109,14 +119,18 @@ def parse_frame_numbers(text: str) -> Tuple[Optional[int], Optional[int]]:
 
 
 def lookup_ego_for_qa(ego_meta: dict, scene_id: str,
-                      question: str) -> Dict[str, str]:
+                      question: str,
+                      first_frame: Optional[int] = None,
+                      last_frame: Optional[int] = None) -> Dict[str, str]:
     """Look up per-sequence ego data using frame numbers from the question.
 
     Tries per-sequence key f"{scene_id}_{first}_{last}" first (paper Appendix C:
     "the metatoken descriptions of the first and last frames referenced in the
     QA pair are concatenated"), then falls back to per-scene key scene_id.
+    first_frame/last_frame override parsing (e.g. GT-answer-derived ranges).
     """
-    first_frame, last_frame = parse_frame_numbers(question)
+    if first_frame is None or last_frame is None:
+        first_frame, last_frame = parse_frame_numbers(question)
 
     if first_frame is not None and last_frame is not None:
         seq_key = f"{scene_id}_{first_frame}_{last_frame}"
@@ -173,7 +187,8 @@ def inject_metatoken(items: list,
                      include_4dlidar: bool = True,
                      include_meta: bool = True,
                      frame_motion: Optional[Dict[str, List[dict]]] = None,
-                     sequence_ranges: Optional[Dict[str, List[Tuple[int, int]]]] = None) -> list:
+                     sequence_ranges: Optional[Dict[str, List[Tuple[int, int]]]] = None,
+                     answer_frames: bool = False) -> list:
     """Inject Metatoken prefix into the first human message of each QA item.
 
     The format follows paper Figure 6 / Appendix C:
@@ -193,11 +208,16 @@ def inject_metatoken(items: list,
     item['feat_range'] = [s, e] of its containing sequence — the paper's model
     input S_L (the QA's sequence), consumed by dataset.py / test_b4dl.py for
     feature slicing instead of the QA-referenced sub-range.
+
+    When answer_frames=True and the question references no frames, the frame
+    range is parsed from the GT answer instead (recovering the paper's
+    sequence-level input for time-grounding-style questions).
     """
     modified = []
     no_meta_count = 0
     stats = {"v2_rendered": 0, "seq_matched": 0, "scene_fallback": 0,
-             "no_frame": 0, "feat_range_set": 0, "feat_range_missing": 0}
+             "no_frame": 0, "feat_range_set": 0, "feat_range_missing": 0,
+             "gt_attributed": 0}
 
     for item in items:
         scene_id = item.get("scene_id") or item.get("id")
@@ -232,6 +252,21 @@ def inject_metatoken(items: list,
         prefix_parts.append(cleaned)  # the actual question
 
         first_frame, last_frame = parse_frame_numbers(cleaned)
+        # Fallback: time-grounding questions reference no frames; the QA
+        # pair's referenced frames live in the GT answer. Paper Appendix C
+        # defines the metatoken by the first/last frames referenced in the QA
+        # pair, and the released benchmark omits per-item sequence ids, so
+        # the GT range is the faithful recovery path for S_L. Restricted to
+        # task=='time_grounding' (complex-task prose also contains from-to
+        # phrases whose min/max range can span several sequences and would
+        # produce inconsistent metatoken/feature pairs).
+        if (first_frame is None and answer_frames
+                and item.get('task') == 'time_grounding'):
+            answer_text = (conversations[1].get("value", "")
+                           if len(conversations) > 1 else "")
+            first_frame, last_frame = parse_frame_numbers(answer_text)
+            if first_frame is not None:
+                stats["gt_attributed"] += 1
         item = dict(item)  # shallow copy; conversations replaced below
 
         # ── feat_range / feat_indices: containing sequence ──
@@ -257,7 +292,9 @@ def inject_metatoken(items: list,
                     if meta_body is not None:
                         stats["v2_rendered"] += 1
                 if meta_body is None:
-                    scene_data = lookup_ego_for_qa(ego_meta, scene_id, cleaned)
+                    scene_data = lookup_ego_for_qa(
+                        ego_meta, scene_id, cleaned,
+                        first_frame=first_frame, last_frame=last_frame)
                     if isinstance(scene_data, dict):
                         first_text = scene_data.get("first_frame", "")
                         last_text = scene_data.get("last_frame", "")
@@ -307,7 +344,7 @@ def inject_metatoken(items: list,
         print(f"  ⚠ {no_meta_count} items had no ego metadata; used fallback text.")
     print(f"  metatoken source: v2_rendered={stats['v2_rendered']}, "
           f"seq_key={stats['seq_matched']}, scene_fallback={stats['scene_fallback']}, "
-          f"no_frame={stats['no_frame']}")
+          f"no_frame={stats['no_frame']}, gt_attributed={stats['gt_attributed']}")
     if sequence_ranges is not None:
         print(f"  feat_range: set={stats['feat_range_set']}, "
               f"missing={stats['feat_range_missing']}")
@@ -373,6 +410,7 @@ def main():
         include_meta=not args.no_meta,
         frame_motion=frame_motion,
         sequence_ranges=sequence_ranges,
+        answer_frames=args.answer_frames,
     )
 
     # Save
