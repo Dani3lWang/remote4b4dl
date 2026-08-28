@@ -96,6 +96,7 @@ def train(
 ):
     """Train the model."""
     clip_model, clip_preprocess = clip.load(clip_model_name, jit=False)
+    clip.model.convert_weights(clip_model)  # 本机 clip.load 不转 fp16，与 CLIP.self.dtype=fp16 保持一致
     clip_model.eval()
     clip_embed_dim = clip_model.visual.output_dim
     print("clip_embedding_dim_is: ", clip_embed_dim)
@@ -160,6 +161,9 @@ def train(
         save_on_train_epoch_end=True,
     )
     learningrate_callback = LearningRateMonitor(logging_interval="step")
+    # 单卡环境去掉 strategy="ddp"：ddp 在 1 GPU 上仍派生子进程，与 fork 型
+    # dataloader 组合会互锁（2026-08-28 实测两个 run 均卡死在首步前）。
+    # 多卡训练时恢复 ddp。
     trainer = pl.Trainer(
         precision=16,
         accelerator=accelerator,
@@ -167,7 +171,6 @@ def train(
         limit_train_batches=None,
         max_epochs=20,
         logger=wandb_logger,
-        strategy="ddp",
         callbacks=[checkpoint_callback, learningrate_callback],
     )
     if trainer.global_rank == 0:

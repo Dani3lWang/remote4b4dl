@@ -37,6 +37,7 @@ mllm/checkpoints_backup_20260228/
 *.ckpt
 *.pt
 backup/
+backups/
 encoders/lidarclip/extract_pc_features.py
 encoders/lidarclip/README.md
 encoders/lidarclip/extract_pc_features.py
@@ -52,3 +53,6 @@ encoders/lidarclip/annotations/
 docs/eval_results/
 docs/evl/
 evaluation_results.json
+
+# 本地下载的模型文件
+models/

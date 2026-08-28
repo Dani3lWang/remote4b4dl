@@ -53,6 +53,17 @@ import numpy as np
 from typing import Dict, Optional, List
 from pathlib import Path
 
+# 文本模板统一从 ego_text.py 导入（与 inject_metatoken.py / test_b4dl.py 共用同一实现）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ego_text import (  # noqa: E402
+    describe_position as _describe_position,
+    describe_terrain as _describe_terrain,
+    describe_turn as _describe_turn,
+    describe_speed as _describe_speed,
+    describe_acceleration as _describe_acceleration,
+    frame_text,
+)
+
 try:
     from nuscenes.nuscenes import NuScenes
     from pyquaternion import Quaternion
@@ -71,7 +82,13 @@ def parse_args():
     p.add_argument("--sequence_metadata", type=str, required=True,
                    help="Path to sequence_metadata.json")
     p.add_argument("--output", type=str, default="./b4dl_dataset/ego_metadata.json",
-                   help="Output JSON path")
+                   help="Output JSON path (per-scene + per-sequence text entries)")
+    p.add_argument("--frame_motion", type=str, default=None,
+                   help="Optional output JSON path for the per-frame motion table "
+                        "(ego_frame_motion.json). Enables rendering metatokens for "
+                        "ARBITRARY frame ranges referenced in QA pairs (paper "
+                        "Appendix C), consumed by inject_metatoken.py --frame_motion "
+                        "and test_b4dl.py --frame_motion.")
     p.add_argument("--version", type=str, default="v1.0-trainval",
                    help="nuScenes version")
     return p.parse_args()
@@ -141,90 +158,62 @@ def _compute_acceleration(speed_prev: float, speed_curr: float, dt_sec: float) -
     return (speed_curr - speed_prev) / dt_sec
 
 
-# ---------------------------------------------------------------------------
-# 自然语言模板（论文 Figure 6 样例风格）
-# ---------------------------------------------------------------------------
+def _build_frame_table(poses: List[dict]) -> List[dict]:
+    """Build the per-frame motion table for one scene (ego_text.py format).
 
-def _describe_position(lateral: float, longitudinal: float, is_relative: bool = True) -> str:
-    """Describe the ego's position / movement direction.
-
-    For is_relative=True (last frame relative to first frame):
-        "slightly ahead and to the right"
-    For is_relative=False (first frame, absolute-ish):
-        "at the starting position" or movement direction
+    For every frame index i (over ALL scene frames, not just sequences):
+        x/y/z/yaw : ego pose at frame i (global frame)
+        spd_prev  : speed of segment (i-1 → i), None at i == 0
+        spd_next  : speed of segment (i → i+1), None at i == n-1
+        yaw_prev  : signed yaw change (i-1 → i) in degrees, None at i == 0
+        yaw_next  : signed yaw change (i → i+1) in degrees, None at i == n-1
+        acc_next  : forward-looking acceleration at i from segments (i→i+1, i+1→i+2), None if unavailable
+        acc_prev  : backward-looking acceleration at i from segments (i-2→i-1, i-1→i), None if unavailable
     """
-    if is_relative:
-        parts = []
-        # Forward / backward
-        if abs(longitudinal) < 0.3:
-            pass
-        elif longitudinal > 0:
-            parts.append("slightly ahead" if abs(longitudinal) < 5 else "ahead")
-        else:
-            parts.append("slightly behind" if abs(longitudinal) < 5 else "behind")
-        # Left / right
-        if abs(lateral) < 0.3:
-            pass
-        elif lateral > 0:
-            parts.append("and to the left" if parts else "to the left")
-        else:
-            parts.append("and to the right" if parts else "to the right")
-        if not parts:
-            return "nearly at the same position"
-        return " ".join(parts)
-    else:
-        # First frame: describe as starting position
-        return "at the starting position"
+    n = len(poses)
+    ts = [p["timestamp"] for p in poses]
+
+    # Segment quantities: seg_speed[i] / seg_yaw[i] describe motion from frame i to i+1
+    seg_speed: List[Optional[float]] = [None] * max(n - 1, 0)
+    seg_yaw: List[Optional[float]] = [None] * max(n - 1, 0)
+    for i in range(n - 1):
+        seg_speed[i] = _compute_frame_motion(poses[i], poses[i + 1])["speed_mps"]
+        q0 = Quaternion(poses[i]["rotation"])
+        q1 = Quaternion(poses[i + 1]["rotation"])
+        d = _quaternion_to_yaw(q1) - _quaternion_to_yaw(q0)
+        d = math.atan2(math.sin(d), math.cos(d))
+        seg_yaw[i] = float(math.degrees(d))
+
+    table: List[dict] = []
+    for i in range(n):
+        yaw_i = _quaternion_to_yaw(Quaternion(poses[i]["rotation"]))
+        rec = {
+            "x": float(poses[i]["translation"][0]),
+            "y": float(poses[i]["translation"][1]),
+            "z": float(poses[i]["translation"][2]),
+            "yaw": float(yaw_i),
+            "spd_prev": seg_speed[i - 1] if i >= 1 else None,
+            "spd_next": seg_speed[i] if i <= n - 2 else None,
+            "yaw_prev": seg_yaw[i - 1] if i >= 1 else None,
+            "yaw_next": seg_yaw[i] if i <= n - 2 else None,
+            "acc_next": None,
+            "acc_prev": None,
+        }
+        # acc_next[i] uses segments (i→i+1) and (i+1→i+2), i.e. frames i..i+2
+        if i <= n - 3:
+            dt = abs(ts[i + 2] - ts[i]) / 1e6 / 2.0
+            rec["acc_next"] = _compute_acceleration(seg_speed[i], seg_speed[i + 1], dt)
+        # acc_prev[i] uses segments (i-2→i-1) and (i-1→i), i.e. frames i-2..i
+        if i >= 2:
+            dt = abs(ts[i] - ts[i - 2]) / 1e6 / 2.0
+            rec["acc_prev"] = _compute_acceleration(seg_speed[i - 2], seg_speed[i - 1], dt)
+        table.append(rec)
+    return table
 
 
-def _describe_terrain(z_val: float, z_ref: Optional[float] = None) -> str:
-    """Describe terrain. For first frame, z_val is absolute. For last, compare to z_ref."""
-    if z_ref is not None:
-        dz = z_val - z_ref
-        if abs(dz) < 0.5:
-            return "on flat ground"
-        elif dz > 0:
-            return "on an uphill slope"
-        else:
-            return "on a downhill slope"
-    else:
-        # First frame — just check if near sea level or elevated
-        return "on flat ground"
-
-
-def _describe_turn(yaw_change_deg: float) -> str:
-    """Describe turning behaviour. yaw_change_deg is signed (positive=left)."""
-    abs_yaw = abs(yaw_change_deg)
-    if abs_yaw < 1.0:
-        return "moving straight ahead"
-    elif abs_yaw < 5.0:
-        direction = "left" if yaw_change_deg > 0 else "right"
-        return f"with a slight turn to the {direction} by about {abs_yaw:.0f} degrees"
-    else:
-        direction = "left" if yaw_change_deg > 0 else "right"
-        return f"performing a {direction} turn by about {abs_yaw:.0f} degrees"
-
-
-def _describe_speed(speed_mps: float) -> str:
-    """Describe ego speed in natural language."""
-    if speed_mps < 0.5:
-        return "nearly stationary"
-    elif speed_mps < 2.0:
-        return f"moving slowly at about {speed_mps:.1f} meters per second"
-    elif speed_mps < 8.0:
-        return f"moving at about {speed_mps:.0f} meters per second"
-    else:
-        return f"moving quickly at about {speed_mps:.0f} meters per second"
-
-
-def _describe_acceleration(accel_mpss: float) -> str:
-    """Describe acceleration."""
-    if abs(accel_mpss) < 0.1:
-        return "with nearly constant speed"
-    elif accel_mpss > 0:
-        return f"with an acceleration of about {accel_mpss:.1f} meters per second squared"
-    else:
-        return f"with a deceleration of about {abs(accel_mpss):.1f} meters per second squared"
+# ---------------------------------------------------------------------------
+# 自然语言模板已迁移至 ego_text.py（单一来源），此处仅保留旧签名包装
+# ---------------------------------------------------------------------------
 
 
 def frame_to_text(motion: Dict[str, float], z_val: float,
@@ -238,17 +227,14 @@ def frame_to_text(motion: Dict[str, float], z_val: float,
        moving at about 5 meters per second, performing a left turn by about
        11 degrees, with an acceleration of about 1 meters per second squared."
     """
-    position = _describe_position(motion["lateral_m"], motion["longitudinal_m"],
-                                  is_relative=is_relative)
-    terrain = _describe_terrain(z_val, z_ref)
-    turn = _describe_turn(motion["yaw_change_deg"])
-    speed = _describe_speed(motion["speed_mps"])
-    if accel is not None:
-        accel_str = _describe_acceleration(accel)
-    else:
-        accel_str = "with nearly constant speed"
-
-    return f"The ego vehicle is {position} {terrain}, {speed}, {turn}, {accel_str}."
+    return frame_text(
+        _describe_position(motion["lateral_m"], motion["longitudinal_m"],
+                           is_relative=is_relative),
+        _describe_terrain(z_val, z_ref),
+        motion["speed_mps"],
+        motion["yaw_change_deg"],
+        accel,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +378,6 @@ def generate_metadata(nusc: NuScenes,
     out: Dict[str, Dict[str, str]] = {}
     missing_pose = 0
     missing_seq = 0
-
     # Build scene_token → scene_id mapping
     token_to_id: Dict[str, str] = {}
     for scene in scene_metadata:
@@ -459,6 +444,27 @@ def generate_metadata(nusc: NuScenes,
     return out
 
 
+def generate_frame_tables(nusc: NuScenes, scene_metadata: list) -> Dict[str, List[dict]]:
+    """Build the per-frame motion table for every scene (see _build_frame_table).
+
+    Used by inject_metatoken.py --frame_motion / test_b4dl.py --frame_motion to
+    render metatokens for ARBITRARY (first, last) frame pairs referenced in QA
+    text (paper Appendix C), instead of only precomputed sequence boundaries.
+    """
+    tables: Dict[str, List[dict]] = {}
+    for scene in scene_metadata:
+        try:
+            poses = _collect_scene_frames(nusc, scene["scene_token"])
+        except Exception:
+            continue
+        if len(poses) < 2:
+            continue
+        tables[scene["scene_id"]] = _build_frame_table(poses)
+    print(f"  Frame tables: {len(tables)} scenes "
+          f"({sum(len(v) for v in tables.values())} frames total)")
+    return tables
+
+
 def main():
     args = parse_args()
 
@@ -484,6 +490,16 @@ def main():
         json.dump(ego_meta, f, indent=2, ensure_ascii=False)
     print(f"Generated metadata for {len(ego_meta)}/{len(scene_meta)} scenes")
     print(f"Saved to {args.output}")
+
+    if args.frame_motion:
+        print("Generating per-frame motion table ...")
+        frame_tables = generate_frame_tables(nusc, scene_meta)
+        fm_dir = os.path.dirname(args.frame_motion)
+        if fm_dir:
+            os.makedirs(fm_dir, exist_ok=True)
+        with open(args.frame_motion, "w") as f:
+            json.dump(frame_tables, f, ensure_ascii=False)
+        print(f"Saved frame motion table to {args.frame_motion}")
 
     # Print a few examples
     print("\nExample per-scene entries:")

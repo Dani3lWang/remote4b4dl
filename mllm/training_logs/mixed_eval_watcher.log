@@ -1,0 +1,22 @@
+[2026-08-27 10:33:41] 等待训练进程 885593 退出...
+[2026-08-27 12:14:41] 训练进程已退出
+[2026-08-27 12:14:41] 最终 adapter 已就绪:
+-rw-r--r-- 1 root root       731 Aug 27 12:13 ./checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed/adapter_config.json
+-rw-r--r-- 1 root root 319876480 Aug 27 12:13 ./checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed/adapter_model.safetensors
+[1;34mwandb[0m: [1mwandb sync /root/autodl-tmp/wql/mmb4dl/mllm/wandb/offline-run-20260826_132207-x4ieq9ke[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/offline-run-20260826_132207-x4ieq9ke/logs[0m
+[2026-08-27 12:14:07,217] [INFO] [launch.py:351:main] Process 885593 exits successfully.
+[2026-08-27 12:14:41] 评测尝试 #1 开始...
+[2026-08-27 12:30:03] 评测失败 (rc=1, 尝试 #1)，30 分钟后重试...
+  File "/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 955, in _apply
+    param_applied = fn(param)
+  File "/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1082, in <lambda>
+    return self._apply(lambda t: t.cuda(device))
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 32.00 MiB. GPU 0 has a total capacity of 31.36 GiB of which 6.31 MiB is free. Process 998829 has 18.72 GiB memory in use. Including non-PyTorch memory, this process has 11.01 GiB memory in use. Process 667290 has 1.61 GiB memory in use. Of the allocated memory 10.52 GiB is allocated by PyTorch, and 3.55 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[2026-08-27 13:00:02] 评测尝试 #2 开始...
+[2026-08-27 15:43:51] 评测失败 (rc=143, 尝试 #2)，30 分钟后重试...
+    param_applied = fn(param)
+  File "/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1082, in <lambda>
+    return self._apply(lambda t: t.cuda(device))
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 32.00 MiB. GPU 0 has a total capacity of 31.36 GiB of which 6.31 MiB is free. Process 998829 has 18.72 GiB memory in use. Including non-PyTorch memory, this process has 11.01 GiB memory in use. Process 667290 has 1.61 GiB memory in use. Of the allocated memory 10.52 GiB is allocated by PyTorch, and 3.55 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+Terminated

@@ -39,6 +39,28 @@ def _slice_features(feat, first_frame, last_frame):
         first, last = last, first
     return feat[first:last + 1]
 
+
+def _select_features(feat, item):
+    """Select the QA's sequence frames from scene-level features.
+
+    Priority (paper: model input S_L is the QA's sequence):
+      1. item['feat_indices'] — the sequence's exact sampled frames
+      2. item['feat_range']   — [s, e] inclusive range of the sequence
+      3. frame numbers parsed from the question (legacy data files)
+    """
+    indices = item.get('feat_indices')
+    if indices:
+        n = feat.shape[0]
+        valid = [int(i) for i in indices if 0 <= int(i) < n]
+        if valid:
+            return feat[valid]
+    feat_range = item.get('feat_range')
+    if feat_range is not None:
+        return _slice_features(feat, int(feat_range[0]), int(feat_range[1]))
+    question_text = item['conversations'][0]['value']
+    first_frame, last_frame = _parse_frame_numbers(question_text)
+    return _slice_features(feat, first_frame, last_frame)
+
 @dataclass
 class DataArguments:
     data_path: str = field(default=None,
@@ -408,21 +430,6 @@ class LazySupervisedDataset(Dataset):
             source['conversations'][0]['value'] = source['conversations'][0]['value'].replace('<image>', '<video>')
             data_type = 'image'
 
-        if 'meta' in source:
-            def convert(duration, x):
-                x = x / duration * 100
-                x = str(min(round(x), 99))
-                if len(x) == 1:
-                    x = "0" + x
-                return x
-
-            replace_set = []
-            for k, v in source['meta']['token'].items():
-                replace_set.append((k, convert(source['meta']['duration'], v)))
-            for l in range(len(source['conversations'])):
-                for x1, x2 in replace_set:
-                    source['conversations'][l]['value'] = source['conversations'][l]['value'].replace(x1, x2)
-
         image = torch.zeros((100 if data_type == 'video' else 1, 768), dtype=torch.float16)
 
 
@@ -432,11 +439,10 @@ class LazySupervisedDataset(Dataset):
             image = torch.from_numpy(image)
             if data_type == 'image' and len(image.shape) == 1: # <768>
                 image = image.unsqueeze(0)
-            # Slice features to the frame range mentioned in the question
-            # (paper: per-sequence input, not per-scene)
-            question_text = source['conversations'][0]['value']
-            first_frame, last_frame = _parse_frame_numbers(question_text)
-            image = _slice_features(image, first_frame, last_frame)
+            # Slice features to the QA's containing sequence (paper: the model
+            # input S_L is the sequence the QA belongs to, not the whole scene).
+            # See _select_features for the priority order.
+            image = _select_features(image, source)
         except Exception as e:
             print(e)
             return random.choice(self)

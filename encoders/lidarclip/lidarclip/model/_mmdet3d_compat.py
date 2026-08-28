@@ -329,9 +329,10 @@ for _ext_mod in [
     sys.modules[_ext_mod] = _m
 
 def _dynamic_point_to_voxel_forward_py(feats, coors, reduce_type="max"):
-    """Pure-Python replacement for CUDA dynamic_point_to_voxel_forward.
+    """Vectorized replacement for CUDA dynamic_point_to_voxel_forward.
 
     Groups point features by their voxel coordinates and reduces within each voxel.
+    O(N log N)（torch.unique + scatter/index_add），替代逐体素 Python 循环。
 
     Args:
         feats: (N, C) float tensor, point features
@@ -358,27 +359,70 @@ def _dynamic_point_to_voxel_forward_py(feats, coors, reduce_type="max"):
     n_points, n_channels = feats.shape
     device = feats.device
 
-    voxel_feats = feats.new_zeros((n_voxels, n_channels))
-    voxel_coors_out = torch.zeros((n_voxels, coors.size(1)), dtype=coors.dtype, device=device)
+    if reduce_type == "max":
+        voxel_feats = feats.new_full((n_voxels, n_channels), float("-inf"))
+        voxel_feats.scatter_reduce_(
+            0, inverse_indices[:, None].expand(-1, n_channels), feats,
+            reduce="amax", include_self=True)
+    elif reduce_type in ("sum", "mean"):
+        voxel_feats = feats.new_zeros((n_voxels, n_channels))
+        voxel_feats.index_add_(0, inverse_indices, feats)
+        if reduce_type == "mean":
+            voxel_feats = voxel_feats / counts[:, None].to(feats.dtype)
+    else:
+        raise ValueError(f"reduce_type {reduce_type} not supported")
 
-    for v in range(n_voxels):
-        mask = inverse_indices == v
-        pts = feats[mask]
-        if reduce_type == "max":
-            voxel_feats[v] = pts.max(dim=0)[0]
-        elif reduce_type == "sum":
-            voxel_feats[v] = pts.sum(dim=0)
-        elif reduce_type == "mean":
-            voxel_feats[v] = pts.mean(dim=0)
-
-        # Recover the "first" coordinate assignment
-        first_idx = torch.where(mask)[0][0]
-        voxel_coors_out[v] = coors[first_idx]
+    # 每个体素取首次出现的点坐标（与旧循环语义一致）
+    first_idx = torch.full((n_voxels,), n_points, dtype=torch.long, device=device)
+    first_idx = first_idx.scatter_reduce(
+        0, inverse_indices,
+        torch.arange(n_points, dtype=torch.long, device=device),
+        reduce="amin", include_self=False)
+    voxel_coors_out = coors[first_idx]
 
     point2voxel_map = inverse_indices
     voxel_points_count = counts.int()
 
     return voxel_feats, voxel_coors_out, point2voxel_map, voxel_points_count
+
+
+def _dynamic_scatter_diff(feats, coors, reduce_type="mean"):
+    """Vectorized AND differentiable dynamic scatter (returns voxel_feats, voxel_coors).
+
+    用纯 torch 可微算子实现，autograd 自动生成梯度（替代被 shim 置为 no-op 的
+    _dynamic_scatter(Function).backward，训练时梯度可以穿过 scatter 到达 point 级层）。
+    """
+    if coors.size(0) == 0:
+        return feats.new_zeros((0, feats.shape[1])), coors.new_zeros((0, coors.shape[1]))
+
+    coors_flat = coors[:, 0].long()
+    for d in range(1, coors.size(1)):
+        coors_flat = coors_flat * (coors[:, d].max() + 1) + coors[:, d].long()
+
+    unique_coors, inverse_indices, counts = torch.unique(
+        coors_flat, return_inverse=True, return_counts=True)
+    n_voxels, n_channels = unique_coors.size(0), feats.shape[1]
+
+    if reduce_type == "max":
+        voxel_feats = feats.new_full((n_voxels, n_channels), float("-inf"))
+        voxel_feats = voxel_feats.scatter_reduce(
+            0, inverse_indices[:, None].expand(-1, n_channels), feats,
+            reduce="amax", include_self=True)
+    elif reduce_type in ("sum", "mean"):
+        voxel_feats = feats.new_zeros((n_voxels, n_channels))
+        voxel_feats = voxel_feats.index_add(0, inverse_indices, feats)
+        if reduce_type == "mean":
+            voxel_feats = voxel_feats / counts[:, None].to(feats.dtype)
+    else:
+        raise ValueError(f"reduce_type {reduce_type} not supported")
+
+    first_idx = torch.full((n_voxels,), coors.size(0), dtype=torch.long, device=coors.device)
+    first_idx = first_idx.scatter_reduce(
+        0, inverse_indices,
+        torch.arange(coors.size(0), dtype=torch.long, device=coors.device),
+        reduce="amin", include_self=False)
+    voxel_coors = coors[first_idx]
+    return voxel_feats, voxel_coors
 
 
 def _dynamic_point_to_voxel_backward_py(grad_feats, grad_voxel_feats, feats,
@@ -544,3 +588,14 @@ def _patch_voxel_ops():
     vl.hard_voxelize = _hard_voxelize_py
     vl.dynamic_point_to_voxel_forward = _dynamic_point_to_voxel_forward_py
     vl.dynamic_point_to_voxel_backward = _dynamic_point_to_voxel_backward_py
+
+    # 训练正确性：原 _dynamic_scatter(Function) 的 backward 被 shim 置为 no-op，
+    # 梯度无法穿过 scatter。把 DynamicScatter.forward_single 换成向量化可微实现，
+    # 不再经过 Function 包装（autograd 直接建图）。
+    from mmdet3d.ops.voxel.scatter_points import DynamicScatter
+
+    def _forward_single_diff(self, points, coors):
+        reduce_type = "mean" if self.average_points else "max"
+        return _dynamic_scatter_diff(points.contiguous(), coors.contiguous(), reduce_type)
+
+    DynamicScatter.forward_single = _forward_single_diff

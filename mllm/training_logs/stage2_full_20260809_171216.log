@@ -1,0 +1,3 @@
+启动: Sun Aug  9 17:12:16 CST 2026
+数据: stage2_full_train.json (118,722 条), 3 epochs
+日志: ./training_logs/stage2_full_20260809_171216.log

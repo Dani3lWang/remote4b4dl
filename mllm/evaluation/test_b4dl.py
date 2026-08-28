@@ -98,6 +98,13 @@ from vtimellm.model.builder import load_pretrained_model  # noqa: E402
 from vtimellm.inference import inference                  # noqa: E402
 from vtimellm.utils import disable_torch_init             # noqa: E402
 
+# Shared metatoken renderer (same templates as inject_metatoken.py, so the
+# inference-time metatoken matches the training-time injection verbatim).
+_SCRIPTS_DIR = os.path.join(_MLLM_DIR, "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+from ego_text import render_metatoken_for_range, build_metatoken_line  # noqa: E402
+
 VIDEO_TOKEN = "<video>"          # mllm/vtimellm/constants.DEFAULT_IMAGE_TOKEN
 
 
@@ -120,14 +127,18 @@ def parse_frame_numbers(text: str) -> Tuple[Optional[int], Optional[int]]:
 
 
 def lookup_ego_for_qa(ego_meta: dict, scene_id: str,
-                      question: str) -> Dict[str, str]:
+                      question: str,
+                      first_frame: Optional[int] = None,
+                      last_frame: Optional[int] = None) -> Dict[str, str]:
     """Look up per-sequence ego data using frame numbers from the question.
 
     Tries per-sequence key f"{scene_id}_{first}_{last}" first (paper Appendix C:
     "the metatoken descriptions of the first and last frames referenced in the
     QA pair are concatenated"), then falls back to per-scene key scene_id.
+    first_frame/last_frame override parsing (GT-answer-derived ranges).
     """
-    first_frame, last_frame = parse_frame_numbers(question)
+    if first_frame is None or last_frame is None:
+        first_frame, last_frame = parse_frame_numbers(question)
 
     if first_frame is not None and last_frame is not None:
         seq_key = f"{scene_id}_{first_frame}_{last_frame}"
@@ -142,22 +153,87 @@ def lookup_ego_for_qa(ego_meta: dict, scene_id: str,
     return ego_meta.get(scene_id, {})
 
 
-def slice_features(feat: torch.Tensor,
-                   first_frame: Optional[int],
-                   last_frame: Optional[int]) -> torch.Tensor:
-    """Slice scene-level features to a specific frame range.
+def build_sequence_ranges(sequence_metadata: list) -> Dict[str, list]:
+    """Group sequence ranges by scene_token: {token: [(s0, e0, indices), ...]}."""
+    by_scene: Dict[str, list] = {}
+    for seq in sequence_metadata:
+        st = seq.get("scene_token")
+        indices = seq.get("indices", [])
+        if not st or len(indices) < 1:
+            continue
+        by_scene.setdefault(st, []).append((indices[0], indices[-1], indices))
+    return by_scene
 
-    If first_frame/last_frame are None, returns the full feature tensor.
-    Otherwise returns feat[first_frame:last_frame+1] (inclusive on both ends).
+
+def find_containing_sequence(ranges: list, first: int, last: int):
+    """Narrowest sequence range fully containing [first, last]; else max overlap."""
+    containing = [r for r in ranges if r[0] <= first and last <= r[1]]
+    if containing:
+        return min(containing, key=lambda r: r[1] - r[0])
+    best, best_ov = None, 0
+    for r in ranges:
+        ov = min(r[1], last) - max(r[0], first) + 1
+        if ov > best_ov:
+            best, best_ov = r, ov
+    return best
+
+
+def resolve_feat_slice(item: dict, question: str,
+                       sequence_ranges: Optional[Dict[str, list]],
+                       gt: Optional[str] = None,
+                       answer_frames: bool = False,
+                       ) -> Optional[list]:
+    """Resolve the feature frame selection for one QA (paper: input = QA's sequence).
+
+    Returns a list of scene frame indices, or None (full-scene features).
+
+    Priority:
+      1. item['feat_indices'] — exact sampled frames (inject_metatoken.py v2)
+      2. item['feat_range']   — inclusive [s, e] of the containing sequence
+      3. containing sequence of the question-referenced frames (needs
+         sequence_ranges); falls back to the referenced range itself when no
+         sequence metadata is available (legacy per_sequence behaviour)
+      4. with answer_frames=True, containing sequence of the GT-answer-
+         referenced frames (recovering the paper's sequence-level input for
+         questions that reference no frames, e.g. time grounding)
+      5. None for questions without frame references — sequence membership is
+         unrecoverable from the released test JSON, use the full scene
+         (consistent with training-side handling of no-frame QAs)
     """
-    if first_frame is None or last_frame is None:
+    indices = item.get('feat_indices')
+    if indices:
+        return [int(i) for i in indices]
+    feat_range = item.get('feat_range')
+    first, last = parse_frame_numbers(question)
+    if feat_range is not None and first is None:
+        # range-only item: expand to inclusive index list
+        return list(range(int(feat_range[0]), int(feat_range[1]) + 1))
+    if first is None and answer_frames and gt \
+            and item.get('task') == 'time_grounding':
+        # GT-answer fallback, restricted to time_grounding (complex-task
+        # prose also contains from-to phrases whose min/max range can span
+        # several sequences); matches training-side --answer_frames
+        first, last = parse_frame_numbers(gt)
+    if first is None:
+        return None
+    if sequence_ranges is not None:
+        ranges = sequence_ranges.get(item.get('scene_token') or '', [])
+        seq_range = find_containing_sequence(ranges, first, last)
+        if seq_range is not None:
+            return [int(i) for i in seq_range[2]]
+    return list(range(first, last + 1))
+
+
+def slice_features(feat: torch.Tensor,
+                   frame_indices: Optional[list]) -> torch.Tensor:
+    """Select scene-level feature rows by frame index list (None = full scene)."""
+    if not frame_indices:
         return feat
-    # Clamp to valid range
-    first = max(0, min(first_frame, feat.shape[0] - 1))
-    last = max(0, min(last_frame, feat.shape[0] - 1))
-    if first > last:
-        first, last = last, first
-    return feat[first:last + 1]
+    n = feat.shape[0]
+    valid = [i for i in frame_indices if 0 <= i < n]
+    if not valid:
+        return feat
+    return feat[valid]
 
 
 # --------------------------------------------------------------------------
@@ -199,7 +275,11 @@ def build_query(human_value: str,
                 scene_id: str = None,
                 use_4dlidar: bool = True,
                 use_meta: bool = True,
-                per_sequence: bool = False) -> str:
+                per_sequence: bool = False,
+                frame_motion: dict = None,
+                gt: str = None,
+                answer_frames: bool = False,
+                task: str = None) -> str:
     """Build the query string for the B4DL model.
 
     Paper Figure 6 / Appendix C format:
@@ -211,12 +291,12 @@ def build_query(human_value: str,
     The <video> token is the VTimeLLM embedding placeholder (IMAGE_TOKEN_INDEX=-200)
     where the LiDAR features are inserted. It must be present in the query.
 
-    If ego_meta is provided, the metatoken block (<meta> + frame descriptions)
-    is appended after the question. When per_sequence=True, per-sequence ego data
-    is looked up by parsing frame numbers from the question text (paper Appendix C:
-    "the metatoken descriptions of the first and last frames referenced in the
-    QA pair"). Falls back to per-scene ego data if no frame numbers are found
-    or if per_sequence=False.
+    Metatoken body source (per paper Appendix C the descriptions cover the
+    first/last frames referenced in the QA):
+      - frame_motion table + per_sequence: rendered for the QA-referenced
+        frames (identical to inject_metatoken.py v2 output)
+      - per_sequence: per-sequence ego_metadata key, per-scene fallback
+      - else: per-scene ego entry
     """
     q = human_value
 
@@ -242,28 +322,44 @@ def build_query(human_value: str,
 
     # Metatoken block (paper Figure 6: after the question)
     if use_meta and ego_meta and scene_id:
-        if per_sequence:
-            scene_data = lookup_ego_for_qa(ego_meta, scene_id, q)
-        else:
-            scene_data = ego_meta.get(scene_id, {})
-        if isinstance(scene_data, dict):
-            first_text = scene_data.get("first_frame", "")
-            last_text = scene_data.get("last_frame", "")
-        else:
-            # Backward compat: old format was a single string
-            first_text = scene_data
-            last_text = ""
+        meta_body = None
+        first_frame, last_frame = parse_frame_numbers(q)
 
-        if first_text and last_text:
-            meta_line = (
-                f"<meta> The metadata of the first frame is '{first_text}' "
-                f"and the metadata of the last frame is '{last_text}'"
-            )
-        elif first_text:
-            meta_line = f"<meta> The metadata of the first frame is '{first_text}'"
-        else:
-            meta_line = "<meta> No ego motion metadata available for this scene."
-        parts.append(meta_line)
+        if first_frame is None and answer_frames and gt \
+                and task == 'time_grounding':
+            # GT-answer fallback, restricted to time_grounding; matches
+            # training-side injection
+            first_frame, last_frame = parse_frame_numbers(gt)
+
+        if first_frame is not None and per_sequence and frame_motion is not None:
+            # v2: real descriptions of the QA-referenced frames (same renderer
+            # as the training-data injection)
+            meta_body = render_metatoken_for_range(
+                frame_motion, scene_id, first_frame, last_frame)
+
+        if meta_body is None:
+            if per_sequence:
+                scene_data = lookup_ego_for_qa(
+                    ego_meta, scene_id, q,
+                    first_frame=first_frame, last_frame=last_frame)
+            else:
+                scene_data = ego_meta.get(scene_id, {})
+            if isinstance(scene_data, dict):
+                first_text = scene_data.get("first_frame", "")
+                last_text = scene_data.get("last_frame", "")
+            else:
+                # Backward compat: old format was a single string
+                first_text = scene_data
+                last_text = ""
+            if first_text and last_text:
+                meta_body = build_metatoken_line(first_text, last_text)
+            elif first_text:
+                meta_body = f"The metadata of the first frame is '{first_text}'"
+
+        if meta_body is None:
+            meta_body = "No ego motion metadata available for this scene."
+
+        parts.append(f"<meta> {meta_body}")
 
     return "\n".join(parts)
 
@@ -331,15 +427,34 @@ def main():
                         help="ego_metadata.json from generate_ego_metadata.py. "
                              "If provided, Metatoken prefix (<4DLiDAR> + <meta>) "
                              "is injected at inference time.")
+    parser.add_argument("--frame_motion", type=str, default=None,
+                        help="ego_frame_motion.json from generate_ego_metadata.py "
+                             "--frame_motion. With --per_sequence, renders REAL "
+                             "metatoken descriptions for the QA-referenced frames "
+                             "(identical to inject_metatoken.py v2 training data).")
+    parser.add_argument("--sequence_metadata", type=str, default=None,
+                        help="sequence_metadata.json. With --per_sequence, slices "
+                             "features to the QA's containing sequence (paper: "
+                             "input S_L = the QA's sequence) instead of the "
+                             "QA-referenced sub-range.")
+    parser.add_argument("--answer_frames", action="store_true",
+                        help="For questions without frame references (e.g. time "
+                             "grounding), recover the QA's sequence + metatoken "
+                             "range from the GT answer's frame range. Matches "
+                             "inject_metatoken.py --answer_frames training data. "
+                             "The released benchmark omits per-item sequence ids, "
+                             "so this restores the paper's sequence-level input "
+                             "(the GT is used only to select input frames/meta, "
+                             "not shown to the model).")
     parser.add_argument("--no_4dlidar", action="store_true",
                         help="Omit <4DLiDAR> from metatoken prefix (ablation)")
     parser.add_argument("--no_meta", action="store_true",
                         help="Omit <meta> from metatoken prefix (ablation)")
     parser.add_argument("--per_sequence", action="store_true",
-                        help="Enable per-sequence feature slicing + per-sequence ego "
-                             "lookup (paper Appendix C). Use this ONLY when the model "
-                             "was trained with per-sequence features. Default OFF "
-                             "(full scene features + per-scene ego, matches current checkpoint).")
+                        help="Paper-aligned per-sequence mode: slice features to "
+                             "the QA's sequence + metatoken from per-sequence/per-"
+                             "frame ego data. Use ONLY with models trained on "
+                             "per-sequence data (stage2_full_train_seq[v2].json).")
     args = parser.parse_args()
 
     # Assemble the flat test item list
@@ -370,6 +485,30 @@ def main():
                   f"({scenes_with} matched to test items)")
         else:
             print(f"Warning: --ego_meta file not found: {args.ego_meta}")
+
+    frame_motion: dict = None
+    if args.frame_motion:
+        if os.path.isfile(args.frame_motion):
+            with open(args.frame_motion) as f:
+                frame_motion = json.load(f)
+            print(f"Loaded frame motion table: {len(frame_motion)} scenes "
+                  f"(v2 metatoken rendering enabled)")
+        else:
+            print(f"Warning: --frame_motion file not found: {args.frame_motion}")
+
+    sequence_ranges: dict = None
+    if args.sequence_metadata:
+        if os.path.isfile(args.sequence_metadata):
+            with open(args.sequence_metadata) as f:
+                seq_meta = json.load(f)
+            sequence_ranges = build_sequence_ranges(seq_meta)
+            print(f"Loaded sequence metadata: "
+                  f"{sum(len(v) for v in sequence_ranges.values())} sequences "
+                  f"across {len(sequence_ranges)} scenes (containing-sequence "
+                  f"feature slicing enabled)")
+        else:
+            print(f"Warning: --sequence_metadata file not found: "
+                  f"{args.sequence_metadata}")
 
     # Load model (same path as vtimellm/inference.py)
     disable_torch_init()
@@ -437,12 +576,15 @@ def main():
             question = it["conversations"][0]["value"]
             gt = it["conversations"][1]["value"]
 
-            # When per_sequence is enabled, slice features to the frame
-            # range mentioned in the question (paper: per-sequence input).
-            # When disabled, use full scene features (matches current checkpoint).
+            # Feature slicing. per_sequence (paper): select the QA's containing
+            # sequence frames — from item fields if present, else resolved via
+            # --sequence_metadata + question frames. Otherwise full scene
+            # features (per-scene mode).
             if getattr(args, 'per_sequence', False):
-                first_frame, last_frame = parse_frame_numbers(question)
-                feat_used = slice_features(feat, first_frame, last_frame)
+                sel = resolve_feat_slice(
+                    it, question, sequence_ranges,
+                    gt=gt, answer_frames=getattr(args, 'answer_frames', False))
+                feat_used = slice_features(feat, sel)
             else:
                 feat_used = feat
 
@@ -453,6 +595,10 @@ def main():
                 use_4dlidar=not getattr(args, 'no_4dlidar', False),
                 use_meta=not getattr(args, 'no_meta', False),
                 per_sequence=getattr(args, 'per_sequence', False),
+                frame_motion=frame_motion,
+                gt=gt,
+                answer_frames=getattr(args, 'answer_frames', False),
+                task=it.get('task'),
             )
             try:
                 pred = run_inference(model, tokenizer, feat_used, query)

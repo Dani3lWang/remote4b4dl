@@ -1,0 +1,43 @@
+{
+  "per_task_metrics": {
+    "existence": {
+      "accuracy": 0.82
+    },
+    "binary_qa": {
+      "accuracy": 0.74
+    },
+    "time_grounding": {
+      "miou": 0.25137973137973135
+    },
+    "description": {
+      "bleu4": 0.12325231779399565,
+      "meteor": 0.35444090740351464,
+      "rouge_l": 0.30489441681564544,
+      "bertscore": 0.9679549336433411,
+      "gpt_score": 0.0
+    },
+    "temporal_understanding": {
+      "bleu4": 0.06931971055797609,
+      "meteor": 0.32031556871456035,
+      "rouge_l": 0.31100037256059465,
+      "bertscore": 0.9787429571151733,
+      "gpt_score": 0.0
+    },
+    "comprehensive_reasoning": {
+      "bleu4": 0.10290530352127533,
+      "meteor": 0.31471822779953135,
+      "rouge_l": 0.32803370659421766,
+      "bertscore": 0.973233163356781,
+      "gpt_score": 0.0
+    }
+  },
+  "final_scores": {
+    "accuracy": 0.78,
+    "miou": 0.25137973137973135,
+    "bleu4": 0.09849244395774903,
+    "meteor": 0.3298249013058688,
+    "rouge_l": 0.3146428319901526,
+    "bertscore": 0.9733103513717651,
+    "gpt_score": 0.0
+  }
+}

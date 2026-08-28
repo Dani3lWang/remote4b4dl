@@ -160,12 +160,28 @@ class B4DLEvaluator:
         'comprehensive_reasoning': 'comprehensive_reasoning',
     }
 
+    # Default BERT model path (local copy to avoid network dependency).
+    # Auto-detected relative to the repo root at init time.
+    _DEFAULT_BERT_MODEL = "models/roberta-large"
+
     def __init__(self, use_gpt: bool = False, gpt_api_key: Optional[str] = None,
-                 gpt_model: str = "gpt-4o"):
+                 gpt_model: str = "gpt-4o", bert_model_path: Optional[str] = None):
         self.use_gpt = use_gpt and HAS_OPENAI
         self.gpt_model = gpt_model
         self._client = OpenAI(api_key=gpt_api_key) if (self.use_gpt and gpt_api_key) else None
         self.rouge_scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True) if HAS_ROUGE else None
+
+        # Resolve BERT model path: explicit arg → env var → default relative to repo
+        if bert_model_path:
+            self.bert_model_path = bert_model_path
+        elif os.environ.get("B4DL_BERT_MODEL"):
+            self.bert_model_path = os.environ["B4DL_BERT_MODEL"]
+        else:
+            # Default: <repo_root>/models/roberta-large
+            _this_dir = os.path.dirname(os.path.abspath(__file__))
+            _repo_root = os.path.dirname(os.path.dirname(_this_dir))  # mllm/../ → repo root
+            _candidate = os.path.join(_repo_root, self._DEFAULT_BERT_MODEL)
+            self.bert_model_path = _candidate if os.path.isdir(_candidate) else "roberta-large"
 
     # ------------------------------------------------------------------ utils
     @classmethod
@@ -185,8 +201,12 @@ class B4DLEvaluator:
         return answer.strip()
 
     @staticmethod
-    def extract_time_grounding_frames(text: str) -> Dict[str, int]:
-        """Extract {start_frame, end_frame} from text like 'from frame 006 to frame 014'."""
+    def extract_time_grounding_frames(text: str) -> Optional[Dict[str, int]]:
+        """Extract {start_frame, end_frame} from text like 'from frame 006 to frame 014'.
+
+        Returns None when no frame interval is found — a prediction without a
+        parseable interval must score IoU 0, not be credited with frame 0.
+        """
         for pat in (r'from\s+frame\s+(\d+)\s+to\s+frame\s+(\d+)',
                     r'frame\s+(\d+)\s+(?:to|-|and)\s+frame\s+(\d+)',
                     r'from\s+frame\s+(\d+)\s+until\s+frame\s+(\d+)'):
@@ -194,7 +214,7 @@ class B4DLEvaluator:
             if m:
                 return {'start_frame': int(m.group(1)),
                         'end_frame': int(m.group(2))}
-        return {'start_frame': 0, 'end_frame': 0}
+        return None
 
     # --------------------------------------------------------- simple metrics
     def compute_accuracy(self, predictions: List[str], ground_truths: List[str]) -> float:
@@ -204,14 +224,28 @@ class B4DLEvaluator:
                       if self.normalize_answer(p) == self.normalize_answer(g))
         return correct / len(predictions)
 
-    def compute_miou(self, predictions: List[Dict], ground_truths: List[Dict]) -> float:
-        """Mean IoU over [start_frame, end_frame] temporal segments."""
+    def compute_miou(self, predictions: List[Any], ground_truths: List[Any]) -> float:
+        """Mean IoU over [start_frame, end_frame] temporal segments.
+
+        Frame segments are closed integer intervals (frames 6..14 = 9 frames),
+        so intersection and union both use inclusive lengths. A prediction
+        with no parseable interval scores 0.
+        """
         ious = []
         for pred, gt in zip(predictions, ground_truths):
-            ps, pe = pred.get('start_frame', 0), pred.get('end_frame', 0)
-            gs, ge = gt.get('start_frame', 0), gt.get('end_frame', 0)
-            inter = max(0, min(pe, ge) - max(ps, gs))
-            union = (pe - ps) + (ge - gs) - inter
+            if not pred or not gt:
+                ious.append(0.0)
+                continue
+            ps, pe = pred.get('start_frame'), pred.get('end_frame')
+            gs, ge = gt.get('start_frame'), gt.get('end_frame')
+            if ps is None or pe is None or gs is None or ge is None:
+                ious.append(0.0)
+                continue
+            inter = min(pe, ge) - max(ps, gs) + 1
+            if inter <= 0:
+                ious.append(0.0)
+                continue
+            union = (pe - ps + 1) + (ge - gs + 1) - inter
             ious.append(inter / union if union > 0 else 0.0)
         return float(np.mean(ious)) if ious else 0.0
 
@@ -250,7 +284,26 @@ class B4DLEvaluator:
         if not HAS_BERTSCORE or not predictions:
             return 0.0
         try:
-            _, _, F1 = bert_score_fn(predictions, ground_truths, lang='en', verbose=False)
+            # Resolve num_layers: if model_type is a local path, auto-detect from
+            # config.json; otherwise look up the known model registry.
+            from bert_score.utils import model2layers
+            model_type = self.bert_model_path
+            if model_type in model2layers:
+                num_layers = model2layers[model_type]
+            else:
+                # Local path — read config.json to get num_hidden_layers
+                import json as _json
+                _cfg_path = os.path.join(model_type, "config.json")
+                if os.path.isfile(_cfg_path):
+                    with open(_cfg_path) as _f:
+                        _cfg = _json.load(_f)
+                    num_layers = _cfg.get("num_hidden_layers", 17)
+                else:
+                    num_layers = 17  # fallback for roberta-large
+            _, _, F1 = bert_score_fn(predictions, ground_truths, lang='en',
+                                     model_type=model_type,
+                                     num_layers=num_layers,
+                                     verbose=False)
             return float(F1.mean().item())
         except Exception as e:
             print(f"BERTScore computation failed: {e}")
@@ -499,10 +552,13 @@ def main():
     parser.add_argument('--gpt_api_key', type=str, default=os.environ.get('OPENAI_API_KEY'))
     parser.add_argument('--gpt_model', type=str, default='gpt-4o')
     parser.add_argument('--demo', action='store_true', help='Run with sample data')
+    parser.add_argument('--bert_model', type=str, default=None,
+                        help='Path to local roberta-large model (default: auto-detect)')
     args = parser.parse_args()
 
     evaluator = B4DLEvaluator(use_gpt=args.use_gpt, gpt_api_key=args.gpt_api_key,
-                              gpt_model=args.gpt_model)
+                              gpt_model=args.gpt_model,
+                              bert_model_path=args.bert_model)
 
     print("=" * 50)
     print("B4DL Model Evaluation")

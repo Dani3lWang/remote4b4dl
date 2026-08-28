@@ -38,6 +38,8 @@ nuScenes 数据集（相机图像 + LiDAR 点云）
   │
   ├─ [encoders/lidarclip/] LiDAR 点云 → SST编码器 → CLIP 特征 (.npy)
   │     Stage1 特征：每帧独立 .npy，shape (1, 768)
+  │       - stage1_features/（旧，frame_id 键控，95k 数据用，保留给旧 checkpoint）
+  │       - stage1_features_sample/（新，sample_token 键控，对齐官方 162K 方案）
   │     Stage2 特征：每场景拼接 .npy，shape (N_frames, 768)
   │
   └─ [mllm/] 预提取特征 + QA 数据 → VTimeLLM → 训练 / 推理 / 评估
@@ -121,6 +123,20 @@ conda run -n wqlc python extract_pc_features.py \
 
 checkpoint 是 PyTorch Lightning 格式，加载时需 `weights_only=False` 且 `strict=False`（旧版含 bbox_head 的 key 会忽略）。
 
+**Stage1 官方对齐（162K 方案）特征**：`extract_pc_features_sample_token.py` 输出 `{sample_token}.npy`（键控与官方 stage1 数据一致，点云处理同 `with_path` loader）：
+
+```bash
+cd encoders/lidarclip
+conda run -n wqlc python extract_pc_features_sample_token.py \
+    --checkpoint ./lidarclip/checkpoint/vit_l_14.ckpt \
+    --scene-metadata /root/autodl-tmp/wql/mmb4dl/dataset/nuScenes-B4DL/metadata/scene_metadata.json \
+    --sample-json /root/autodl-tmp/Datasets/nuScenes/v1.0-trainval/sample.json \
+    --data-path /root/autodl-tmp/Datasets/nuScenes \
+    --save-dir ./b4dl/stage1_features_sample
+```
+
+只提取 `scene_metadata` 中 `split == 'train'`（700 scenes）的全部关键帧（28,130 帧）。配对的 stage1 数据由 `datageneration/tools/build_stage1_from_lidarllm.py` 生成（LiDAR-LLM 全量 161,845 条，scene_id=sample_token，与官方逻辑一致）。
+
 ### 训练
 
 ```bash
@@ -170,10 +186,12 @@ conda run -n wqlc python evaluation/test_b4dl.py \
     --metrics_output ./evaluation/evaluation_results.json
 
 # 加 --per_sequence 启用 per-sequence 模式（论文 Appendix C 对齐）：
-#   - 特征按问题帧号切片（feat[first:last+1]）
-#   - ego 数据按 per-sequence key 查找（fallback 到 per-scene）
+#   - 特征切片到 QA 的包含序列（item['feat_range'] > --sequence_metadata + 问题帧号）
+#   - metatoken：--frame_motion 时按 QA 引用帧渲染真实描述（与训练注入同源）
 #   ⚠️ 仅在模型用 per-sequence 数据训练后才启用，否则会有训练-评测不匹配
-conda run -n wqlc python evaluation/test_b4dl.py ... --per_sequence
+conda run -n wqlc python evaluation/test_b4dl.py ... --per_sequence \
+    --frame_motion ./b4dl_dataset/ego_frame_motion.json \
+    --sequence_metadata ../encoders/lidarclip/annotations/sequence_metadata.json
 
 # 一键脚本（数据划分 + 评测 + 指标）
 conda run -n wqlc bash scripts/run_b4dl_eval.sh
@@ -215,13 +233,15 @@ conda run -n wqlc python vtimellm/demo_gradio.py \
 - **LiDAR-CLIP checkpoint**：PyTorch Lightning 格式，含非 tensor 对象（scheduler 等），加载需 `weights_only=False`，且用 `strict=False`（忽略旧版 bbox_head 的 key）
 - **训练数据集容错**：`LazySupervisedDataset` 在特征文件缺失时返回随机其他样本（`random.choice(self)`），会导致静默的数据丢失，检查日志中的异常打印
 - **特征文件命名约定**：Stage2/3 训练时以 `scene_id` 查找 `{feat_folder}/{scene_id}.npy`，需确保 LiDAR-CLIP 提取时 stage2-save-dir 下的文件名与数据 JSON 中的 `scene_id` 一致
-- **Per-sequence 特征切片**（2026-08-12 新增）：论文 Appendix C 指出 metatoken 应描述"QA pair 中引用的首末帧"的 ego 状态，且输入 $S_L$ 是序列（5-19 帧）而非整个 scene（~40 帧）。代码已修改为支持 per-sequence 模式：
-  - `generate_ego_metadata.py`：同时生成 per-scene（`{scene_id}`）和 per-sequence（`{scene_id}_{first_idx}_{last_idx}`）条目，共 5950 条（850 + 5100）
-  - `inject_metatoken.py`：从问题文本解析 `frame XXX` 帧号，构造 per-seq key 查找 ego 数据，fallback 到 per-scene
-  - `dataset.py`：训练加载器按问题帧号切片特征（`feat[first:last+1]`）
-  - `test_b4dl.py`：加 `--per_sequence` 开关（默认 OFF）。OFF = 旧格式（全 scene 特征 + per-scene ego），ON = 新格式（切片特征 + per-seq ego）
-  - 训练数据：`stage2_full_train_seq.json` 为 per-seq 注入版，`stage2_full_train.json` 为旧 per-scene 版
-  - ⚠️ 训练和评测必须用相同格式：用旧数据训练的 checkpoint 评测时不要加 `--per_sequence`；用 `stage2_full_train_seq.json` 训练后评测时加 `--per_sequence`
+- **Per-sequence 特征切片**（2026-08-12 引入；2026-08-24 v2 对齐审计后升级）：论文 Appendix C 指出 metatoken 应描述"QA pair 中引用的首末帧"的 ego 状态，且输入 $S_L$ 是序列而非整个 scene。三层实现：
+  - `generate_ego_metadata.py`：per-scene（`{scene_id}`）+ per-sequence（`{scene_id}_{first}_{last}`）文本条目，以及 `--frame_motion` 输出的**逐帧运动表** `ego_frame_motion.json`（每 scene 全帧 `{x,y,z,yaw,spd/yaw/acc_next/prev}`）
+  - `scripts/ego_text.py`（2026-08-24 新增）：metatoken 文本渲染单一来源，`render_meta_texts()` 可对**任意** (first,last) 帧对渲染真实描述（单帧引用输出真实邻帧运动）；generate_ego_metadata / inject_metatoken / test_b4dl 三方共用
+  - `inject_metatoken.py --frame_motion + --sequence_metadata`（v2）：对 QA 引用帧渲染真实 metatoken（79,975 条有帧号 QA 零 per-scene 回退），并写入 `item["feat_indices"] = [i0,i1,...]`（序列**精确采样帧**，如 `[0,2,4,6,8]`）与 `item["feat_range"] = [s,e]`——训练 `dataset.py` 与评测 `test_b4dl.py` 优先按 feat_indices 选帧
+  - 训练数据：**两阶段（论文/官方方法，2026-08-25 起）**：`stage2_train_seqv3.json`（简单任务 68,695 条，含 TG 13,124 全部 GT 归属）→ merge → `stage3_train_seqv3.json`（复杂任务 79,576 条）。合并版 `stage2_full_train_seqv3_148k.json` 仅作对照
+  - **两阶段训练法（2026-08-25，遵循论文/官方 stage2.sh+stage3.sh）**：Phase A 用 stage2 简单任务训 LoRA（**2 epochs, lr 1e-4**, tf32, r64/α128, bs 8×16, 1074 步）→ `merge_stage2.py` 合并进 base → Phase B 用 stage3 复杂任务在 merged 模型上训**新 LoRA**（**3 epochs, lr 2e-5**, 1866 步）。评测用 `--stage2 <stage2-seqv3> --stage3 <stage3-seqv3>` 双 LoRA（builder 依次 merge_and_unload）。驱动器 `scripts/run_stage2_full_seqv3.sh` 幂等（merged 存在则跳过 Phase A，两阶段自动 checkpoint 续训），供守护 cron 安全重启
+  - **seqv3 --answer_frames（2026-08-25）**：发布的 benchmark 丢失每条 QA 的序列归属字段，TG 问题文本无帧号导致此前只能用整 scene 输入（模型坍缩为输出 (0,8)，占 87%）。现双侧回退解析 GT 答案帧范围恢复包含序列：训练侧 `inject_metatoken.py --answer_frames`（仅对 `task=='time_grounding'` 生效，build_stage2_full_train.py 已打 TG 标签 13,124 条），评测侧 `test_b4dl.py --answer_frames`（同样仅 TG）。TG feat_indices 覆盖 100%、GT 范围 100% ⊂ feat_range、训练/评测两侧 2783/2783 一致。⚠️ 评测侧用 GT 恢复归属是"还原论文原始评测设置"（oracle 输入选择），报告中须声明
+  - **数据划分（2026-08-24 对齐）**：HF 发布的 `dataset/nuScenes-B4DL/dataset/train/{stage2,stage3}.json`（148,271 条）**本身就是论文官方训练集**（700/150 划分的 train 部分，与官方 test_qa.json 的 150 scenes 零重叠），无需再划分。旧 `create_splits.py` 的 80/10/10 自创划分（seed 42）会把 850 scenes 混切、与官方测试集冲突，已废弃。一键重建：`python scripts/build_stage2_full_train.py --input_dir ../dataset/nuScenes-B4DL/dataset/train --output_dir ./b4dl_dataset` → 再跑 inject_metatoken 注入（seqv3 需 `--frame_motion --sequence_metadata --answer_frames`）
+  - ⚠️ 训练和评测必须用相同代际的格式：seqv2 模型评测时加 `--per_sequence --frame_motion --sequence_metadata`；seq 模型只加 `--per_sequence`；旧模型都不加。time_grounding 类无帧号问题两侧都用全 scene 特征（benchmark 未提供序列归属，属数据级限制）
 
 ## Git 提交规范
 

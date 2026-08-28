@@ -1,0 +1,50 @@
+[2026-08-28 22:53:12,023] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/lightning_fabric/connector.py:571: `precision=16` is supported for historical reasons but its usage is discouraged. Please set your precision to 16-mixed instead!
+Using 16bit Automatic Mixed Precision (AMP)
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+wandb: WARNING The anonymous setting has no effect and will be removed in a future version.
+wandb: Tracking run with wandb version 0.27.0
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in wandb/offline-run-20260828_225405-lidarclip_mm
+You are using a CUDA device ('NVIDIA GeForce RTX 5090') that has Tensor Cores. To properly utilize them, you should set `torch.set_float32_matmul_precision('medium' | 'high')` which will trade-off precision for performance. For more details, read https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/pytorch_lightning/utilities/model_summary/model_summary.py:242: Precision 16-mixed is not supported by the model summary.  Estimated model size in MB will not be accurate. Using 32 bits instead.
+clip_embedding_dim_is:  768
+======
+Loading NuScenes tables for version v1.0-trainval...
+23 category,
+8 attribute,
+4 visibility,
+64386 instance,
+12 sensor,
+10200 calibrated_sensor,
+2631083 ego_pose,
+68 log,
+850 scene,
+34149 sample,
+2631083 sample_data,
+1166187 sample_annotation,
+4 map,
+Done loading in 32.862 seconds.
+======
+Reverse indexing ...
+Done reverse indexing in 7.3 seconds.
+======
+ok_scene_tokens:  850
+ok_scene_tokens after filtering:  700
+┏━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━┓
+┃   ┃ Name          ┃ Type            ┃ Params ┃ Mode  ┃ FLOPs ┃
+┡━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━┩
+│ 0 │ lidar_encoder │ LidarEncoderSST │  8.5 M │ train │     0 │
+│ 1 │ clip          │ CLIP            │  427 M │ eval  │     0 │
+└───┴───────────────┴─────────────────┴────────┴───────┴───────┘
+Trainable params: 8.5 M                                                         
+Non-trainable params: 427 M                                                     
+Total params: 436 M                                                             
+Total estimated model params size (MB): 1,744.285                               
+Modules in train mode: 119                                                      
+Modules in eval mode: 335                                                       
+Total FLOPs: 0                                                                  
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/pytorch_lightning/loops/fit_loop.py:538: Found 335 module(s) in eval mode at the start of training. This may lead to unexpected behavior during training. If this is intentional, you can ignore this warning.
