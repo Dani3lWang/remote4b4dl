@@ -1,0 +1,39 @@
+[2026-08-25 16:16:18,209] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[2026-08-25 16:16:20,824] [WARNING] [runner.py:215:fetch_hostfile] Unable to find hostfile, will proceed with training with local resources only.
+[2026-08-25 16:16:20,824] [INFO] [runner.py:607:main] cmd = /root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python3.10 -u -m deepspeed.launcher.launch --world_info=eyJsb2NhbGhvc3QiOiBbMF19 --master_addr=127.0.0.1 --master_port=29571 --enable_each_rank_log=None vtimellm/train/train_mem.py --deepspeed ./scripts/zero3.json --model_name_or_path ./base_model/vicuna-v1-5-7b --version plain --data_path ./b4dl_dataset/stage1_train.json --feat_folder ../encoders/lidarclip/b4dl/stage1_features --tune_mm_mlp_adapter True --output_dir ./checkpoints/vtimellm-vicuna-v1-5-7b-stage1 --bf16 True --num_train_epochs 1 --per_device_train_batch_size 16 --gradient_accumulation_steps 8 --evaluation_strategy no --save_strategy steps --save_steps 200 --save_total_limit 1 --learning_rate 1e-3 --weight_decay 0. --warmup_ratio 0.03 --lr_scheduler_type cosine --logging_steps 1 --tf32 True --model_max_length 2048 --gradient_checkpointing True --dataloader_num_workers 4 --lazy_preprocess True --report_to none
+[2026-08-25 16:16:22,388] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[2026-08-25 16:16:24,955] [INFO] [launch.py:146:main] WORLD INFO DICT: {'localhost': [0]}
+[2026-08-25 16:16:24,955] [INFO] [launch.py:152:main] nnodes=1, num_local_procs=1, node_rank=0
+[2026-08-25 16:16:24,955] [INFO] [launch.py:163:main] global_rank_mapping=defaultdict(<class 'list'>, {'localhost': [0]})
+[2026-08-25 16:16:24,956] [INFO] [launch.py:164:main] dist_world_size=1
+[2026-08-25 16:16:24,956] [INFO] [launch.py:168:main] Setting CUDA_VISIBLE_DEVICES=0
+[2026-08-25 16:16:24,956] [INFO] [launch.py:256:main] process 584307 spawned with command: ['/root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python3.10', '-u', 'vtimellm/train/train_mem.py', '--local_rank=0', '--deepspeed', './scripts/zero3.json', '--model_name_or_path', './base_model/vicuna-v1-5-7b', '--version', 'plain', '--data_path', './b4dl_dataset/stage1_train.json', '--feat_folder', '../encoders/lidarclip/b4dl/stage1_features', '--tune_mm_mlp_adapter', 'True', '--output_dir', './checkpoints/vtimellm-vicuna-v1-5-7b-stage1', '--bf16', 'True', '--num_train_epochs', '1', '--per_device_train_batch_size', '16', '--gradient_accumulation_steps', '8', '--evaluation_strategy', 'no', '--save_strategy', 'steps', '--save_steps', '200', '--save_total_limit', '1', '--learning_rate', '1e-3', '--weight_decay', '0.', '--warmup_ratio', '0.03', '--lr_scheduler_type', 'cosine', '--logging_steps', '1', '--tf32', 'True', '--model_max_length', '2048', '--gradient_checkpointing', 'True', '--dataloader_num_workers', '4', '--lazy_preprocess', 'True', '--report_to', 'none']
+/root/autodl-tmp/wql/mmb4dl/mllm/vtimellm/train/../..
+[2026-08-25 16:16:28,214] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/transformers/training_args.py:1575: FutureWarning: `evaluation_strategy` is deprecated and will be removed in version 4.46 of 🤗 Transformers. Use `eval_strategy` instead
+  warnings.warn(
+[2026-08-25 16:16:29,214] [INFO] [comm.py:658:init_distributed] cdb=None
+[2026-08-25 16:16:29,214] [INFO] [comm.py:689:init_distributed] Initializing TorchBackend in DeepSpeed with backend nccl
+You are using a model of type llama to instantiate a model of type VTimeLLM. This is not supported for all configurations of models and can yield errors.
+[2026-08-25 16:16:29,500] [INFO] [config.py:734:__init__] Config mesh_device None world_size = 1
+[2026-08-25 16:16:54,987] [INFO] [partition_parameters.py:348:__exit__] finished initializing model - num_params = 291, num_elems = 6.74B
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:11<00:11, 11.38s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:15<00:00,  7.07s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:15<00:00,  7.72s/it]
+The new embeddings will be initialized from a multivariate normal distribution that has old embeddings' mean and covariance. As described in this article: https://nlp.stanford.edu/~johnhew/vocab-expansion.html. To disable this, use `mean_resizing=False`
+The new lm_head weights will be initialized from a multivariate normal distribution that has old embeddings' mean and covariance. As described in this article: https://nlp.stanford.edu/~johnhew/vocab-expansion.html. To disable this, use `mean_resizing=False`
+Registered 2 new B4DL special tokens: <4DLiDAR>, <meta>
+/root/autodl-tmp/wql/mmb4dl/mllm/vtimellm/train/train.py:439: FutureWarning: `tokenizer` is deprecated and will be removed in version 5.0.0 for `VTimeLLMTrainer.__init__`. Use `processing_class` instead.
+  trainer = VTimeLLMTrainer(model=model,
+ninja: no work to do.
+Time to load cpu_adam op: 3.3999311923980713 seconds
+Parameter Offload: Total persistent parameters: 270336 in 66 params
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/torch/distributed/distributed_c10d.py:4807: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+  0%|          | 0/742 [00:00<?, ?it/s]  0%|          | 1/742 [00:14<2:57:53, 14.40s/it]                                                 {'loss': 1.6925, 'grad_norm': 0.7459062337875366, 'learning_rate': 4.347826086956522e-05, 'epoch': 0.0}
+  0%|          | 1/742 [00:14<2:57:53, 14.40s/it]  0%|          | 2/742 [00:23<2:20:32, 11.39s/it]                                                 {'loss': 1.675, 'grad_norm': 0.7016791105270386, 'learning_rate': 8.695652173913044e-05, 'epoch': 0.0}
+  0%|          | 2/742 [00:23<2:20:32, 11.39s/it]  0%|          | 3/742 [00:33<2:09:27, 10.51s/it]                                                 {'loss': 1.6593, 'grad_norm': 0.6321291327476501, 'learning_rate': 0.00013043478260869564, 'epoch': 0.0}
+  0%|          | 3/742 [00:33<2:09:27, 10.51s/it]  1%|          | 4/742 [00:43<2:08:34, 10.45s/it]                                                 {'loss': 1.5392, 'grad_norm': 0.6555773019790649, 'learning_rate': 0.00017391304347826088, 'epoch': 0.01}
+  1%|          | 4/742 [00:43<2:08:34, 10.45s/it]  1%|          | 5/742 [00:53<2:05:25, 10.21s/it]                                                 {'loss': 1.5306, 'grad_norm': 0.8602123260498047, 'learning_rate': 0.0002173913043478261, 'epoch': 0.01}
+  1%|          | 5/742 [00:53<2:05:25, 10.21s/it]  1%|          | 6/742 [01:02<2:00:00,  9.78s/it]                                                 {'loss': 1.4709, 'grad_norm': 0.9769413471221924, 'learning_rate': 0.0002608695652173913, 'epoch': 0.01}
+  1%|          | 6/742 [01:02<2:00:00,  9.78s/it]  1%|          | 7/742 [01:09<1:50:14,  9.00s/it]                                                 {'loss': 1.4055, 'grad_norm': 0.712291419506073, 'learning_rate': 0.00030434782608695655, 'epoch': 0.01}
+  1%|          | 7/742 [01:09<1:50:14,  9.00s/it]  1%|          | 8/742 [01:16<1:40:07,  8.18s/it]                                                 {'loss': 1.4317, 'grad_norm': 0.8031586408615112, 'learning_rate': 0.00034782608695652176, 'epoch': 0.01}
+  1%|          | 8/742 [01:16<1:40:07,  8.18s/it]

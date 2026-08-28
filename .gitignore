@@ -37,6 +37,7 @@ mllm/checkpoints_backup_20260228/
 *.ckpt
 *.pt
 backup/
+backups/
 encoders/lidarclip/extract_pc_features.py
 encoders/lidarclip/README.md
 encoders/lidarclip/extract_pc_features.py

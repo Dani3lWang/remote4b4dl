@@ -1,0 +1,39 @@
+[2026-08-24 12:43:13,665] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[2026-08-24 12:43:19,698] [WARNING] [runner.py:215:fetch_hostfile] Unable to find hostfile, will proceed with training with local resources only.
+[2026-08-24 12:43:19,698] [INFO] [runner.py:607:main] cmd = /root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python3.10 -u -m deepspeed.launcher.launch --world_info=eyJsb2NhbGhvc3QiOiBbMF19 --master_addr=127.0.0.1 --master_port=29577 --enable_each_rank_log=None vtimellm/train/train_mem.py --deepspeed ./scripts/zero3.json --lora_enable True --model_name_or_path ./base_model/vicuna-v1-5-7b --version v1 --data_path ./b4dl_dataset/stage2_full_train_seqv2.json --feat_folder ../encoders/lidarclip/b4dl/stage2_features --pretrain_mm_mlp_adapter ./checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin --output_dir ./checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv2 --bf16 True --num_train_epochs 3 --per_device_train_batch_size 8 --gradient_accumulation_steps 16 --evaluation_strategy no --save_strategy steps --save_steps 200 --save_total_limit 3 --learning_rate 1e-4 --freeze_mm_mlp_adapter True --lora_r 64 --lora_alpha 128 --weight_decay 0. --warmup_ratio 0.03 --lr_scheduler_type cosine --logging_steps 1 --model_max_length 2048 --gradient_checkpointing True --dataloader_num_workers 4 --lazy_preprocess True --report_to wandb
+[2026-08-24 12:43:22,267] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+[2026-08-24 12:43:27,130] [INFO] [launch.py:146:main] WORLD INFO DICT: {'localhost': [0]}
+[2026-08-24 12:43:27,130] [INFO] [launch.py:152:main] nnodes=1, num_local_procs=1, node_rank=0
+[2026-08-24 12:43:27,130] [INFO] [launch.py:163:main] global_rank_mapping=defaultdict(<class 'list'>, {'localhost': [0]})
+[2026-08-24 12:43:27,130] [INFO] [launch.py:164:main] dist_world_size=1
+[2026-08-24 12:43:27,130] [INFO] [launch.py:168:main] Setting CUDA_VISIBLE_DEVICES=0
+[2026-08-24 12:43:27,131] [INFO] [launch.py:256:main] process 211772 spawned with command: ['/root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python3.10', '-u', 'vtimellm/train/train_mem.py', '--local_rank=0', '--deepspeed', './scripts/zero3.json', '--lora_enable', 'True', '--model_name_or_path', './base_model/vicuna-v1-5-7b', '--version', 'v1', '--data_path', './b4dl_dataset/stage2_full_train_seqv2.json', '--feat_folder', '../encoders/lidarclip/b4dl/stage2_features', '--pretrain_mm_mlp_adapter', './checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin', '--output_dir', './checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv2', '--bf16', 'True', '--num_train_epochs', '3', '--per_device_train_batch_size', '8', '--gradient_accumulation_steps', '16', '--evaluation_strategy', 'no', '--save_strategy', 'steps', '--save_steps', '200', '--save_total_limit', '3', '--learning_rate', '1e-4', '--freeze_mm_mlp_adapter', 'True', '--lora_r', '64', '--lora_alpha', '128', '--weight_decay', '0.', '--warmup_ratio', '0.03', '--lr_scheduler_type', 'cosine', '--logging_steps', '1', '--model_max_length', '2048', '--gradient_checkpointing', 'True', '--dataloader_num_workers', '4', '--lazy_preprocess', 'True', '--report_to', 'wandb']
+/root/autodl-tmp/wql/mmb4dl/mllm/vtimellm/train/../..
+[2026-08-24 12:43:32,863] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/transformers/training_args.py:1575: FutureWarning: `evaluation_strategy` is deprecated and will be removed in version 4.46 of 🤗 Transformers. Use `eval_strategy` instead
+  warnings.warn(
+[2026-08-24 12:43:34,867] [INFO] [comm.py:658:init_distributed] cdb=None
+[2026-08-24 12:43:34,867] [INFO] [comm.py:689:init_distributed] Initializing TorchBackend in DeepSpeed with backend nccl
+You are using a model of type llama to instantiate a model of type VTimeLLM. This is not supported for all configurations of models and can yield errors.
+[2026-08-24 12:43:35,798] [INFO] [config.py:734:__init__] Config mesh_device None world_size = 1
+[2026-08-24 12:44:16,253] [INFO] [partition_parameters.py:348:__exit__] finished initializing model - num_params = 291, num_elems = 6.74B
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:27<00:27, 27.89s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:36<00:00, 16.62s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:36<00:00, 18.31s/it]
+The new embeddings will be initialized from a multivariate normal distribution that has old embeddings' mean and covariance. As described in this article: https://nlp.stanford.edu/~johnhew/vocab-expansion.html. To disable this, use `mean_resizing=False`
+The new lm_head weights will be initialized from a multivariate normal distribution that has old embeddings' mean and covariance. As described in this article: https://nlp.stanford.edu/~johnhew/vocab-expansion.html. To disable this, use `mean_resizing=False`
+Registered 2 new B4DL special tokens: <4DLiDAR>, <meta>
+Adding LoRA adapters...
+Metatoken embeddings trainable: rows [32000, 32001] (other embedding rows gradient-masked)
+load mlp: ./checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin
+/root/autodl-tmp/wql/mmb4dl/mllm/vtimellm/train/train.py:439: FutureWarning: `tokenizer` is deprecated and will be removed in version 5.0.0 for `VTimeLLMTrainer.__init__`. Use `processing_class` instead.
+  trainer = VTimeLLMTrainer(model=model,
+ninja: no work to do.
+Time to load cpu_adam op: 2.5389351844787598 seconds
+Parameter Offload: Total persistent parameters: 270336 in 66 params
+/root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/torch/distributed/distributed_c10d.py:4807: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+wandb: WARNING The `run_name` is currently set to the same value as `TrainingArguments.output_dir`. If this was not intended, please specify a different run name by setting the `TrainingArguments.run_name` parameter.
+wandb: Tracking run with wandb version 0.27.0
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /root/autodl-tmp/wql/mmb4dl/mllm/wandb/offline-run-20260824_124653-kmzdhjsp
+  0%|          | 0/2781 [00:00<?, ?it/s][2026-08-24 12:47:27,052] [INFO] [launch.py:319:sigkill_handler] Killing subprocess 211772
+[2026-08-24 12:47:27,053] [ERROR] [launch.py:325:sigkill_handler] ['/root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python3.10', '-u', 'vtimellm/train/train_mem.py', '--local_rank=0', '--deepspeed', './scripts/zero3.json', '--lora_enable', 'True', '--model_name_or_path', './base_model/vicuna-v1-5-7b', '--version', 'v1', '--data_path', './b4dl_dataset/stage2_full_train_seqv2.json', '--feat_folder', '../encoders/lidarclip/b4dl/stage2_features', '--pretrain_mm_mlp_adapter', './checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin', '--output_dir', './checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv2', '--bf16', 'True', '--num_train_epochs', '3', '--per_device_train_batch_size', '8', '--gradient_accumulation_steps', '16', '--evaluation_strategy', 'no', '--save_strategy', 'steps', '--save_steps', '200', '--save_total_limit', '3', '--learning_rate', '1e-4', '--freeze_mm_mlp_adapter', 'True', '--lora_r', '64', '--lora_alpha', '128', '--weight_decay', '0.', '--warmup_ratio', '0.03', '--lr_scheduler_type', 'cosine', '--logging_steps', '1', '--model_max_length', '2048', '--gradient_checkpointing', 'True', '--dataloader_num_workers', '4', '--lazy_preprocess', 'True', '--report_to', 'wandb'] exits with return code = -9
