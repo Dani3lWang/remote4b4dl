@@ -38,6 +38,8 @@ nuScenes 数据集（相机图像 + LiDAR 点云）
   │
   ├─ [encoders/lidarclip/] LiDAR 点云 → SST编码器 → CLIP 特征 (.npy)
   │     Stage1 特征：每帧独立 .npy，shape (1, 768)
+  │       - stage1_features/（旧，frame_id 键控，95k 数据用，保留给旧 checkpoint）
+  │       - stage1_features_sample/（新，sample_token 键控，对齐官方 162K 方案）
   │     Stage2 特征：每场景拼接 .npy，shape (N_frames, 768)
   │
   └─ [mllm/] 预提取特征 + QA 数据 → VTimeLLM → 训练 / 推理 / 评估
@@ -120,6 +122,20 @@ conda run -n wqlc python extract_pc_features.py \
 ```
 
 checkpoint 是 PyTorch Lightning 格式，加载时需 `weights_only=False` 且 `strict=False`（旧版含 bbox_head 的 key 会忽略）。
+
+**Stage1 官方对齐（162K 方案）特征**：`extract_pc_features_sample_token.py` 输出 `{sample_token}.npy`（键控与官方 stage1 数据一致，点云处理同 `with_path` loader）：
+
+```bash
+cd encoders/lidarclip
+conda run -n wqlc python extract_pc_features_sample_token.py \
+    --checkpoint ./lidarclip/checkpoint/vit_l_14.ckpt \
+    --scene-metadata /root/autodl-tmp/wql/mmb4dl/dataset/nuScenes-B4DL/metadata/scene_metadata.json \
+    --sample-json /root/autodl-tmp/Datasets/nuScenes/v1.0-trainval/sample.json \
+    --data-path /root/autodl-tmp/Datasets/nuScenes \
+    --save-dir ./b4dl/stage1_features_sample
+```
+
+只提取 `scene_metadata` 中 `split == 'train'`（700 scenes）的全部关键帧（28,130 帧）。配对的 stage1 数据由 `datageneration/tools/build_stage1_from_lidarllm.py` 生成（LiDAR-LLM 全量 161,845 条，scene_id=sample_token，与官方逻辑一致）。
 
 ### 训练
 

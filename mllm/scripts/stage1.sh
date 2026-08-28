@@ -10,7 +10,7 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT vtimellm/train
     --model_name_or_path ./base_model/vicuna-v1-5-7b \
     --version plain \
     --data_path ./b4dl_dataset/stage1_train.json \
-    --feat_folder ../encoders/lidarclip/b4dl/stage1_features \
+    --feat_folder ../encoders/lidarclip/b4dl/stage1_features_sample \
     --tune_mm_mlp_adapter True \
     --output_dir ./checkpoints/vtimellm-$MODEL_VERSION-stage1 \
     --bf16 True \

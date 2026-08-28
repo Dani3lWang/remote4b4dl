@@ -478,12 +478,13 @@ ok_scene_tokens = filtered_ok_scene_tokens
 
 ### Step 4：准备 Stage 1 数据（LiDAR-LLM）
 
-从 LiDAR-LLM 官方仓库下载 **LiDAR-LLM-Nu-Caption**（162k QA，基于 nuScenes 静态单帧）。将其转换为 `stage1_lidarllm_mm.json`：
+从 LiDAR-LLM 官方仓库下载 **LiDAR-LLM-Nu-Caption**（162k QA，基于 nuScenes 静态单帧）。**官方仓库逻辑**（`datageneration/tools/build_stage1_from_lidarllm.py`）：
 
 ```json
 [
   {
-    "scene_id": "<frame_id，必须与 stage1_features 下的 npy 文件名一致>",
+    "scene_id": "<sample_token，必须与 stage1_features_sample 下的 npy 文件名一致>",
+    "scene_token": "<nuScenes scene_token>",
     "conversations": [
       {"from": "human", "value": "<video>\n问题文本"},
       {"from": "gpt",   "value": "答案文本"}
@@ -493,7 +494,29 @@ ok_scene_tokens = filtered_ok_scene_tokens
 ]
 ```
 
-要点：stage1 特征是**按帧**存的，所以这里的 `scene_id` 字段填的是 `frame_id`（即 sequence_metadata.json 里每帧的 `frame_id`）；首条 human 消息必须带 `<video>` 占位符。
+官方做法：直接读 HF `Senqiao/LiDAR-LLM-Nu-Caption` 全量数据，按 `assets/sample_token_to_scene.json` + `assets/train_scene_tokens.json`（699 个训练 scene）过滤，**不做帧映射**，conversation id 就是 sample_token 本身；特征由 `extract_pc_features_sample_token.py` 每帧一个 `{sample_token}.npy` 另提。
+
+本地复刻：用 `scene_metadata.json` 的 700 个 train scenes 近似官方 699 scenes（实测 0 泄漏、161,845 条全命中）。命令：
+
+```bash
+# 1) 生成 stage1_train.json（161,845 条，scene_id=sample_token）
+python3 datageneration/tools/build_stage1_from_lidarllm.py \
+    --llm_train /path/to/lidarllm_train.json \
+    --sample_json /path/to/nuScenes/v1.0-trainval/sample.json \
+    --scene_metadata /path/to/scene_metadata.json \
+    --output ./mllm/b4dl_dataset/stage1_train.json
+
+# 2) 提取特征（700 train scenes 全部关键帧，28,130 帧）
+cd encoders/lidarclip
+conda run -n wqlc python extract_pc_features_sample_token.py \
+    --checkpoint ./lidarclip/checkpoint/vit_l_14.ckpt \
+    --scene-metadata /root/autodl-tmp/wql/mmb4dl/dataset/nuScenes-B4DL/metadata/scene_metadata.json \
+    --sample-json /root/autodl-tmp/Datasets/nuScenes/v1.0-trainval/sample.json \
+    --data-path /root/autodl-tmp/Datasets/nuScenes \
+    --save-dir ./b4dl/stage1_features_sample
+```
+
+要点：`scene_id` 必须是 sample_token（dataset.py 用它拼 `{feat_folder}/{scene_id}.npy`）；旧 frame_id 键控方案（`convert_lidarllm_to_stage1.py` + `stage1_features/`，95k 条）仅保留给旧 checkpoint；`stage1_val.json` 的 42,597 条全在 test scenes，按官方逻辑会被过滤，只作监控用。
 
 ### Step 5：Stage 1 训练 —— 3D LiDAR Understanding（只训 projector）
 
