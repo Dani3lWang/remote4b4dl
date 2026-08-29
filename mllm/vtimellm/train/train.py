@@ -441,14 +441,29 @@ def train():
                     args=training_args,
                     **data_module)
 
-    # 检查是否存在可恢复的 checkpoint（必须有 trainer_state.json 才算完整）
-    checkpoints = list(pathlib.Path(training_args.output_dir).glob("checkpoint-*/trainer_state.json"))
-    if checkpoints:
-        resume_from = checkpoints[0].parent
-        rank0_print(f'Resuming from checkpoint: {resume_from}')
-        trainer.train(resume_from_checkpoint=str(resume_from))
+    # 断点续训：优先命令行 --resume_from_checkpoint；否则取 output_dir 下
+    # 步数最大的完整 checkpoint（必须含 trainer_state.json，否则 fail-fast，
+    # 不允许静默从头训练烧掉几十小时）。注意 checkpoint-900 字典序会排在
+    # checkpoint-3400 之后，必须按步数数值排序。
+    cli_resume = training_args.resume_from_checkpoint
+    if cli_resume and cli_resume not in ("false", "False"):
+        cli_path = pathlib.Path(cli_resume)
+        if not (cli_path / "trainer_state.json").is_file():
+            raise FileNotFoundError(
+                f"--resume_from_checkpoint={cli_path} 缺少 trainer_state.json，"
+                "是不完整 checkpoint，拒绝用它续训或静默从头训练")
+        resume_from = str(cli_path)
+        rank0_print(f'Resuming from checkpoint (CLI): {resume_from}')
     else:
-        trainer.train()
+        checkpoints = list(pathlib.Path(training_args.output_dir).glob("checkpoint-*/trainer_state.json"))
+        if checkpoints:
+            resume_from = str(max(checkpoints,
+                                  key=lambda p: int(p.parent.name.split('-')[-1])).parent)
+            rank0_print(f'Resuming from checkpoint: {resume_from}')
+        else:
+            resume_from = None
+            rank0_print('No resumable checkpoint found; training from scratch.')
+    trainer.train(resume_from_checkpoint=resume_from)
     trainer.save_state()
 
     model.config.use_cache = True

@@ -1,3 +1,4 @@
+import os
 import random
 import copy
 import json
@@ -410,6 +411,10 @@ def preprocess(
 class LazySupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
+    # 运行期特征加载累计失败超过该阈值即 fail-fast。原行为是静默
+    # random.choice 随机替换坏样本，会污染训练分布且不留任何记录。
+    MAX_FEATURE_FAILURES = 8
+
     def __init__(self, data_path: str,
                  tokenizer: transformers.PreTrainedTokenizer,
                  data_args: DataArguments):
@@ -418,6 +423,26 @@ class LazySupervisedDataset(Dataset):
         self.tokenizer = tokenizer
         self.list_data_dict = json.load(open(data_path, "r"))
         self.data_args = data_args
+        self._feature_failures = 0
+        self._preflight_check_features()
+
+    def _preflight_check_features(self):
+        """启动时校验数据里每个 scene_id 的特征文件都存在（纯 os.path，
+        秒级）。缺文件若拖到训练中途才暴露，代价是静默替换或无限重试。"""
+        feat_folder = getattr(self.data_args, "feat_folder", None)
+        if not feat_folder:
+            return
+        scene_ids = {item['scene_id'] for item in self.list_data_dict
+                     if 'scene_id' in item}
+        missing = sorted(sid for sid in scene_ids
+                         if not os.path.exists('{}/{}.npy'.format(feat_folder, sid)))
+        if missing:
+            raise FileNotFoundError(
+                f"特征预校验失败：{len(missing)}/{len(scene_ids)} 个 scene_id 在 "
+                f"{feat_folder} 下缺 .npy（如 {missing[:5]}）。"
+                "请先完成特征提取再训练；如确属有意跳过校验，检查 feat_folder 配置。")
+        print(f"[dataset] feature preflight OK: {len(scene_ids)} 个 scene_id 特征"
+              f"文件齐全（{feat_folder}）")
 
     def __len__(self):
         return len(self.list_data_dict)
@@ -444,7 +469,13 @@ class LazySupervisedDataset(Dataset):
             # See _select_features for the priority order.
             image = _select_features(image, source)
         except Exception as e:
-            print(e)
+            self._feature_failures += 1
+            print(f"[dataset] 特征加载失败 scene_id={source.get('scene_id')}: {e}"
+                  f"（累计失败 {self._feature_failures}）")
+            if self._feature_failures >= self.MAX_FEATURE_FAILURES:
+                raise RuntimeError(
+                    f"特征加载已累计失败 {self._feature_failures} 次，fail-fast 终止训练"
+                    "（原行为为静默随机替换样本，会无声污染训练数据）") from e
             return random.choice(self)
 
         if getattr(self.tokenizer, 'name', None) == 'GLMTokenizer':

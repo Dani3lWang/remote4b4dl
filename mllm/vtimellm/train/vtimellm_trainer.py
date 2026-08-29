@@ -29,14 +29,31 @@ class VTimeLLMTrainer(Trainer):
 
     def _save_checkpoint(self, model, trial, metrics=None):
         if getattr(self.args, 'tune_mm_mlp_adapter', False):
-            # Stage1 的权重统一由 train.py 中的 safe_save_model_for_hf_trainer 保存
-            # 跳过这里的 checkpoint 保存，避免 ZeRO-3 active_sub_modules 冲突
-            pass
+            # Stage1（只训 mm_projector）：全量 checkpoint 会触发 ZeRO-3
+            # active_sub_modules 冲突，因此不落全量；改为按步只存
+            # mm_projector.bin（约 6MB），中断后可从最近一次保存恢复
+            # （把该文件作为 --pretrain_mm_mlp_adapter 重新跑 stage1）。
+            # 注意：stage1 checkpoint 不含 trainer_state.json，不会被
+            # train.py 的续训 glob 误认成 stage2 断点。
+            output_dir = os.path.join(self.args.output_dir,
+                                      f"checkpoint-{self.state.global_step}")
+            adapter = get_mm_adapter_state_maybe_zero_3(
+                self._get_trainable_state_dict(), ['mm_projector'])
+            if self.args.local_rank in (-1, 0):
+                os.makedirs(output_dir, exist_ok=True)
+                torch.save(adapter, os.path.join(output_dir, 'mm_projector.bin'))
+                print(f"[stage1] saved mm_projector.bin at step {self.state.global_step}"
+                      f" -> {output_dir}")
         else:
             super(VTimeLLMTrainer, self)._save_checkpoint(model, trial)
 
+    def _get_trainable_state_dict(self):
+        return self.model.named_parameters()
+
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         if getattr(self.args, 'tune_mm_mlp_adapter', False):
+            # stage1 的最终产物由 train.py 的 safe_save_model_for_hf_trainer
+            # 落盘（output_dir/mm_projector.bin），这里保持不动作。
             pass
         else:
             super(VTimeLLMTrainer, self)._save(output_dir, state_dict)
