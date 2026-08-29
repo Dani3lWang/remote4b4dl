@@ -1,0 +1,33 @@
+[2026-08-29 20:27:59,499] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)
+Seed set to 0
+Loaded 119 params; missing=0 unexpected=0
+======
+Loading NuScenes tables for version v1.0-trainval...
+23 category,
+8 attribute,
+4 visibility,
+64386 instance,
+12 sensor,
+10200 calibrated_sensor,
+2631083 ego_pose,
+68 log,
+850 scene,
+34149 sample,
+2631083 sample_data,
+1166187 sample_annotation,
+4 map,
+Done loading in 32.045 seconds.
+======
+Reverse indexing ...
+Done reverse indexing in 7.1 seconds.
+======
+ok_scene_tokens:  850
+ok_scene_tokens after filtering:  15
+val probe: 3612 pairs, 113 batches (scenes<=15)
+drop_info is set to {0: {'max_tokens': 30, 'drop_range': (0, 30)}, 1: {'max_tokens': 60, 'drop_range': (30, 60)}, 2: {'max_tokens': 100, 'drop_range': (60, 100)}, 3: {'max_tokens': 200, 'drop_range': (100, 200)}, 4: {'max_tokens': 250, 'drop_range': (200, 100000)}}, in input_layer
+  batch 20: running mean 0.085857
+  batch 40: running mean 0.093524
+  batch 60: running mean 0.099439
+  batch 80: running mean 0.103193
+  batch 100: running mean 0.102756
+== val MSE: mean=0.106093 std=0.021162 over 113 batches (435s) ==

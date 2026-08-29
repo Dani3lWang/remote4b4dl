@@ -48,3 +48,4 @@ Modules in train mode: 119
 Modules in eval mode: 335                                                       
 Total FLOPs: 0                                                                  
 /root/autodl-tmp/.conda-stuff/envs/wqlc/lib/python3.10/site-packages/pytorch_lightning/loops/fit_loop.py:538: Found 335 module(s) in eval mode at the start of training. This may lead to unexpected behavior during training. If this is intentional, you can ignore this warning.
+drop_info is set to {0: {'max_tokens': 30, 'drop_range': (0, 30)}, 1: {'max_tokens': 60, 'drop_range': (30, 60)}, 2: {'max_tokens': 100, 'drop_range': (60, 100)}, 3: {'max_tokens': 200, 'drop_range': (100, 200)}, 4: {'max_tokens': 250, 'drop_range': (200, 100000)}}, in input_layer

@@ -57,6 +57,9 @@ class LidarClip(pl.LightningModule):
         self.batch_size = batch_size
         self.epoch_size = epoch_size
         self.scheduler_max_lr = scheduler_max_lr
+        # ckpt 携带超参（loss/batch_size/epoch_size/scheduler_max_lr），事后可
+        # 还原训练配置；模块参数不进 hparams，加载时仍由调用方显式传入。
+        self.save_hyperparameters(ignore=["lidar_encoder", "clip_model"])
         for param in self.clip.parameters():
             param.requires_grad = False
         if loss == "mse":

@@ -105,25 +105,30 @@ class NuscenesImageLidarDataset(Dataset):
         
         #################################### for 700 scenes only #########################################
         print("ok_scene_tokens: ", len(ok_scene_tokens))
-        seq_meta_path = osp.join(osp.dirname(__file__), "..", "annotations", "sequence_metadata.json")
-        with open(seq_meta_path, "r") as f:
-            seq_data = json.load(f)
-        filtered_scene_list = []
-        for seq in seq_data[-900:]:
-            filtered_scene_list.append(seq["scene_token"])
-        filtered_scene_list = list(set(filtered_scene_list))
-        
-        
-        filtered_ok_scene_tokens = [x for x in ok_scene_tokens if x not in filtered_scene_list]
+        # test/val 场景集合改用 metadata 的 split 字段（官方 700/150 划分）。
+        # 旧实现取 sequence_metadata.json 末尾 900 条序列（seq_data[-900:]）
+        # 推测试场景，依赖文件顺序——文件重排时会静默泄漏 150 个测试场景。
+        anno_dir = osp.join(osp.dirname(__file__), "..", "annotations")
+        with open(osp.join(anno_dir, "scene_metadata.json"), "r") as f:
+            scene_data = json.load(f)
+        test_scene_tokens = {s["scene_token"] for s in scene_data if s.get("split") == "test"}
+        train_scene_tokens = {s["scene_token"] for s in scene_data if s.get("split") == "train"}
+
+        filtered_ok_scene_tokens = [x for x in ok_scene_tokens if x not in test_scene_tokens]
 
 
         if val_mode:
-            # val 探针：只取被剔除的 150 个 val/test 场景（sorted 截断前 N 个，确定性子集）
-            ok_scene_tokens = sorted(filtered_scene_list)
+            # val 探针：只取 test/val 场景（sorted 截断前 N 个，确定性子集）
+            ok_scene_tokens = sorted(test_scene_tokens)
             if val_max_scenes > 0:
                 ok_scene_tokens = ok_scene_tokens[:val_max_scenes]
         else:
             ok_scene_tokens = filtered_ok_scene_tokens
+            # 断言：过滤后恰为 scene_metadata 的 train 集合（700 场景，零泄漏零缺失）
+            assert len(ok_scene_tokens) == 700, \
+                f"过滤后训练场景数 {len(ok_scene_tokens)} != 700，划分异常"
+            assert set(ok_scene_tokens) == train_scene_tokens, \
+                "过滤后训练场景与 scene_metadata 的 train 集合不一致（泄漏或缺失）"
         print("ok_scene_tokens after filtering: ", len(ok_scene_tokens))
         #################################### for 700 scenes only #########################################
         

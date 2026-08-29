@@ -42,10 +42,22 @@ def load_model(args):
         for k, v in ckpt["state_dict"].items()
         if k.startswith("lidar_encoder.")
     }
-    # strict=False: checkpoint may contain old bbox_head keys that our
-    # encoder-only SSTEncoder does not have.
-    lidar_encoder.load_state_dict(lidar_state, strict=False)
+    # strict=False 只用于兼容 checkpoint 中的历史残留键；missing_keys 意味着
+    # 模型参数未被完全覆盖，会静默产出垃圾特征，必须 fail-fast。
+    incompatible = lidar_encoder.load_state_dict(lidar_state, strict=False)
+    if incompatible.missing_keys:
+        raise RuntimeError(
+            f"checkpoint 缺少 {len(incompatible.missing_keys)} 个模型参数"
+            f"（如 {incompatible.missing_keys[:5]}），加载不完整，拒绝提特征")
+    if incompatible.unexpected_keys:
+        print(f"警告：checkpoint 含 {len(incompatible.unexpected_keys)} 个未被加载的"
+              f"残留键（不影响特征，仅提示）：{incompatible.unexpected_keys}")
     print(f"Loaded {len(lidar_state)} lidar_encoder parameters from checkpoint")
+
+    # 提特征必须走推理模式：DynamicVFE 的 BN 在 train 模式用 batch 统计并更新
+    # running stats，SST 走训练版 token 丢弃 → 特征随提取顺序漂移、不可复现。
+    # 2026-08-29 定稿：两脚本统一切 eval()（旧特征本就计划全量重提，无兼容问题）。
+    lidar_encoder.eval()
 
     # Wrap in a thin wrapper that exposes .lidar_encoder
     class _EncoderWrapper:
