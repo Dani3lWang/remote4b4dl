@@ -17,6 +17,18 @@ class Description:
         self.save_term = cfg.SAVE_TERM
         self.start_index = cfg.START_INDEX
         self.end_index = cfg.END_INDEX
+        self.scene_descriptions = self._load_scene_descriptions()
+
+    def _load_scene_descriptions(self):
+        """nuScenes scene.json 的人工场景描述（论文 §3.2 structured human
+        annotations 的数据来源），按 scene_token 索引，随每条描述记录写入
+        gt_caption，供 Step 2 注入 QA 生成 prompt（Table 8 末尾的
+        gt_description）。此前恒写 None，HA 注入实际断链。"""
+        scene_json = os.path.join(self.cfg.NUSCENES_ROOT,
+                                  self.cfg.NUSCENES_VERSION, "scene.json")
+        with open(scene_json, "r") as f:
+            scenes = json.load(f)
+        return {s["token"]: s.get("description", "") for s in scenes}
         
     def load_sequences(self):
         with open(self.metadata_path, "r") as f:
@@ -106,8 +118,9 @@ class Description:
         
         front_description = self.generate_description(front_images_base64, index, "FRONT")
         back_description = self.generate_description(back_images_base64, index, "BACK")
-        
-        generated_data = self.get_data_format(scene_token, sequence_id, front_description, back_description, None,index[0], index[-1])
+
+        gt_caption = self.scene_descriptions.get(scene_token, "")
+        generated_data = self.get_data_format(scene_token, sequence_id, front_description, back_description, gt_caption, index[0], index[-1])
             
         
         return generated_data

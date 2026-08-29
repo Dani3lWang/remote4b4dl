@@ -10,10 +10,20 @@ from config import Config
 from prompts import Prompts
 
 class GenerateDataset:
+    # --task 别名归一：config.TASKS 用 temporal_understanding/binary_qa 的地方
+    # 与 CLI 惯用的 temporal/binary 必须都能用（此前传 temporal_understanding
+    # 会直接 ValueError）。右侧为内部规范名（同时决定输出子目录名）。
+    TASK_ALIASES = {
+        'binary_qa': 'binary',
+        'binary': 'binary',
+        'temporal': 'temporal',
+        'temporal_understanding': 'temporal',
+    }
+
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.description_dir = cfg.GENERATED_DESCRIPTION_DIR
-        self.task = cfg.TASK
+        self.task = self.TASK_ALIASES.get(cfg.TASK, cfg.TASK)
         self.start = cfg.START_INDEX
         self.end = cfg.END_INDEX
         self.dataroot = cfg.DATAROOT
@@ -48,9 +58,13 @@ class GenerateDataset:
     
     def preprocessing(self, scene_id, scene_token, sequence_id, start_index, end_index, conversations):
         qa_pairs = self.get_qa_pairs(conversations)
-        
+
         new_data = []
         for qa_pair in qa_pairs:
+            # 论文 §3.2 post-processing：time grounding 样本必须保留
+            # "from frame A to frame B" 短语，否则丢弃（格式一致性过滤）。
+            if self.task == "time_grounding" and "from frame" not in qa_pair[1].lower():
+                continue
             q = {
                 "from": "human",
                 "value": qa_pair[0],
@@ -143,6 +157,42 @@ class GenerateDataset:
         
         return result.choices[0].message.content
     
+
+    def generate_time_grounding_dataset(self, front_description, back_description, gt_description, start_index, end_index):
+        client = OpenAI(
+            api_key=self.cfg.API_KEY,
+        )
+
+        content = self.prompts.generate_time_grounding_dataset_prompt(front_description, back_description, gt_description, start_index, end_index)
+
+        PROMPT_MESSAGES = [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type":"text", "text": "You are a helpful assistant that makes time-grounding question and answer pairs using the description of front and back view of multi-frame scenes.",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text", "text": content,
+                    },
+                ],
+            },
+        ]
+
+        params = {
+            "model": self.cfg.GENERATE_GPT_MODEL,
+            "max_tokens": self.cfg.MAX_TOKENS,
+            "messages": PROMPT_MESSAGES,
+        }
+
+        result = client.chat.completions.create(**params)
+
+        return result.choices[0].message.content
 
     def generate_temporal_understanding_dataset(self, front_description, back_description, gt_description, start_index, end_index):
         client = OpenAI(
@@ -277,6 +327,8 @@ class GenerateDataset:
                     conversations = self.generate_existence_dataset(front_description, back_description, gt_caption, frame_start_index, frame_end_index)
                 elif self.task == "binary":
                     conversations = self.generate_binary_dataset(front_description, back_description, gt_caption, frame_start_index, frame_end_index)
+                elif self.task == "time_grounding":
+                    conversations = self.generate_time_grounding_dataset(front_description, back_description, gt_caption, frame_start_index, frame_end_index)
                 elif self.task == "description":
                     conversations = self.generate_description_dataset(front_description, back_description, gt_caption, frame_start_index, frame_end_index)
                 elif self.task == "temporal":
@@ -294,7 +346,7 @@ class GenerateDataset:
 def parser_args():
     parser = argparse.ArgumentParser(description="Generate Dataset from Descriptions")
     parser.add_argument("--description_dir", type=str, default=Config.GENERATED_DESCRIPTION_DIR, help="Path to the directory containing generated descriptions", dest="GENERATED_DESCRIPTION_DIR")
-    parser.add_argument("--task", type=str, default=Config.TASK, help="Type of dataset to generate. Choose between 'caption', 'qna', 'temporal', 'existence', 'binary', or 'comprehensive'", dest="TASK")
+    parser.add_argument("--task", type=str, default=Config.TASK, help="Type of dataset to generate. Choose between 'existence', 'binary'(or 'binary_qa'), 'time_grounding', 'description', 'temporal'(or 'temporal_understanding'), or 'comprehensive'", dest="TASK")
     parser.add_argument("--start_index", type=int, default=Config.START_INDEX, help="Start index for processing descriptions", dest="START_INDEX")
     parser.add_argument("--end_index", type=int, default=Config.END_INDEX, help="End index for processing descriptions", dest="END_INDEX")
     parser.add_argument("--dataroot", type=str, default=Config.DATAROOT, help="Path to data root", dest="DATAROOT")
