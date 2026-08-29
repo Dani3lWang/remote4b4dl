@@ -16,16 +16,15 @@ B4DL（Benchmark for 4D LiDAR LLM）是 ACM Multimedia 2025 论文的官方 PyTo
 
 - **Conda 环境**：`wqlc`，Python 3.10
 - **核心依赖**：PyTorch 2.5.1 CUDA 12.4、transformers 4.31.0、deepspeed 0.16.4、peft 0.4.0、flash-attn 2.7.0
-- **权威依赖文件**：`requirements_sum/requirements_b4dl.txt`（不要用根目录的 `requirements.txt`，其版本过新且与 mllm 模块冲突）
+- **权威依赖文件**：`mllm/requirements.txt`（不要用根目录的 `requirements.txt`，其版本过新且与 mllm 模块冲突）。评测的 METEOR 走 pycocoevalcap Meteor-1.5 jar，需系统 java：`apt-get install -y --no-install-recommends default-jre-headless`
 - 所有 Python 命令必须在 `wqlc` 环境中执行
-- **RTX 5090 / CUDA 13 环境**：详见 `requirements_sum/RTX5090_CUDA13_ENV_SETUP.md`，需特殊处理 flash-attn 和 CUDA 版本兼容性
 - **数据集**：B4DL 数据集托管在 [HuggingFace](https://huggingface.co/datasets/ccho4702/nuScenes-B4DL)；nuScenes 需自行下载
 
 ```bash
 # 完整环境搭建
 conda create -n wqlc python=3.10 -y && conda activate wqlc
 pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
-pip install -r requirements_sum/requirements_b4dl.txt
+pip install -r mllm/requirements.txt
 ```
 
 ## 整体架构与数据流
