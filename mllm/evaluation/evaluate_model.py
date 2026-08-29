@@ -29,6 +29,7 @@ import os
 import re
 import json
 import argparse
+import threading
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
@@ -95,6 +96,48 @@ try:
 except ImportError:
     HAS_BERTSCORE = False
     print("Warning: bert-score not installed. BERTScore unavailable.")
+
+# pycocoevalcap corpus-level BLEU (pure Python) and Meteor-1.5 (java jar).
+# These are the fact-standard backends behind the paper's BLEU-4 / METEOR
+# numbers; the NLTK implementations below are documented fallbacks that
+# score systematically higher and are NOT comparable to the paper.
+try:
+    from pycocoevalcap.bleu.bleu import Bleu as _CocoBleu
+    HAS_COCO_BLEU = True
+except ImportError:
+    HAS_COCO_BLEU = False
+    print("Warning: pycocoevalcap not installed. BLEU-4 falls back to NLTK "
+          "sentence-level (not comparable to the paper).")
+
+try:
+    from pycocoevalcap.meteor.meteor import Meteor as _CocoMeteor
+
+    class _DrainedMeteor(_CocoMeteor):
+        """Meteor jar whose stderr is drained in a background thread.
+
+        The upstream class pipes stderr but never reads it; a chatty jar can
+        fill the 64KB pipe buffer and deadlock the EVAL round-trip.
+        """
+
+        def __init__(self):
+            super().__init__()
+            self._err_thread = threading.Thread(
+                target=lambda: self.meteor_p.stderr.read(), daemon=True)
+            self._err_thread.start()
+
+        def close(self):
+            try:
+                self.meteor_p.stdin.close()
+                self.meteor_p.terminate()
+                self.meteor_p.wait(timeout=10)
+            except Exception:
+                pass
+
+    HAS_COCO_METEOR = True
+except ImportError:
+    HAS_COCO_METEOR = False
+    print("Warning: pycocoevalcap Meteor unavailable (needs the package + java). "
+          "METEOR falls back to NLTK (not comparable to the paper).")
 
 try:
     from openai import OpenAI          # openai>=1.0 client API
@@ -171,6 +214,10 @@ class B4DLEvaluator:
         self._client = OpenAI(api_key=gpt_api_key) if (self.use_gpt and gpt_api_key) else None
         self.rouge_scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True) if HAS_ROUGE else None
 
+        # Backend bookkeeping, serialized alongside the metrics so every
+        # results file records which implementations produced its numbers.
+        self.metric_backend: Dict[str, Any] = {}
+
         # Resolve BERT model path: explicit arg → env var → default relative to repo
         if bert_model_path:
             self.bert_model_path = bert_model_path
@@ -182,6 +229,49 @@ class B4DLEvaluator:
             _repo_root = os.path.dirname(os.path.dirname(_this_dir))  # mllm/../ → repo root
             _candidate = os.path.join(_repo_root, self._DEFAULT_BERT_MODEL)
             self.bert_model_path = _candidate if os.path.isdir(_candidate) else "roberta-large"
+
+        # Resolve the canonical model name + scoring layer once.
+        # bert-score scores with a fixed layer per model (17 for roberta-large).
+        # A local-path model would otherwise fall back to its config's
+        # num_hidden_layers (24, the last layer), which inflates F1 by ~0.07
+        # and breaks comparability with the paper (0.897 @ L17).
+        self.bertscore_model_type, self.bertscore_num_layers = \
+            self._resolve_bertscore_model(self.bert_model_path)
+        self.metric_backend['bertscore'] = {
+            'model_type': self.bertscore_model_type,
+            'num_layers': self.bertscore_num_layers,
+            'rescale_with_baseline': False,
+        }
+        self.metric_backend['bleu4'] = ('pycocoevalcap-corpus' if HAS_COCO_BLEU
+                                        else 'nltk-sentence-smoothed')
+        self.metric_backend['meteor'] = ('pycocoevalcap-meteor-1.5' if HAS_COCO_METEOR
+                                         else 'nltk-meteor-1.0')
+
+    @staticmethod
+    def _resolve_bertscore_model(model_path: str) -> Tuple[str, int]:
+        """Map the configured model to (canonical_name, scoring_layer).
+
+        bert-score's registry (model2layers) fixes the embedding layer per
+        model; honor it instead of the HF config's num_hidden_layers.
+        """
+        from bert_score.utils import model2layers
+        name = model_path
+        cfg_model_type = None
+        cfg_path = os.path.join(model_path, "config.json")
+        if os.path.isfile(cfg_path):
+            try:
+                with open(cfg_path) as f:
+                    cfg_model_type = json.load(f).get("model_type")
+            except Exception:
+                cfg_model_type = None
+        # Prefer the config's declared architecture for local paths
+        # (e.g. models/roberta-large → "roberta-large" → registry layer 17).
+        for candidate in (cfg_model_type, name):
+            if candidate and candidate in model2layers:
+                return candidate, model2layers[candidate]
+        # Unknown model: keep the registry default for roberta-family rather
+        # than the config's total layer count (last layer hurts correlation).
+        return name, 17
 
     # ------------------------------------------------------------------ utils
     @classmethod
@@ -251,7 +341,24 @@ class B4DLEvaluator:
 
     # --------------------------------------------------------- complex metrics
     def compute_bleu4(self, predictions: List[str], ground_truths: List[str]) -> float:
-        if not HAS_NLTK or not predictions:
+        """Corpus-level BLEU-4 (the standard behind the paper's number).
+
+        Primary backend: pycocoevalcap Bleu (pure Python, corpus-level).
+        Fallback: NLTK sentence-level with method1 smoothing, averaged —
+        systematically ~15% higher and NOT comparable to the paper; the
+        backend actually used is recorded in metric_backend / results JSON.
+        """
+        if not predictions:
+            return 0.0
+        if HAS_COCO_BLEU:
+            try:
+                gts = {i: [gt] for i, gt in enumerate(ground_truths)}
+                res = {i: [p] for i, p in enumerate(predictions)}
+                score, _ = _CocoBleu(4).compute_score(gts, res)
+                return float(score[3])
+            except Exception as e:
+                print(f"pycocoevalcap BLEU failed ({e}); falling back to NLTK.")
+        if not HAS_NLTK:
             return 0.0
         smooth = SmoothingFunction().method1
         scores = []
@@ -264,7 +371,27 @@ class B4DLEvaluator:
         return float(np.mean(scores)) if scores else 0.0
 
     def compute_meteor(self, predictions: List[str], ground_truths: List[str]) -> float:
-        if not HAS_NLTK or not predictions:
+        """METEOR via the pycocoevalcap Meteor-1.5 jar (needs java).
+
+        Fallback: NLTK METEOR-1.0-style (no paraphrase table, different
+        parameters) — systematically higher and NOT comparable to the paper.
+        """
+        if not predictions:
+            return 0.0
+        if HAS_COCO_METEOR:
+            meteor = None
+            try:
+                meteor = _DrainedMeteor()
+                gts = {i: [gt] for i, gt in enumerate(ground_truths)}
+                res = {i: [p] for i, p in enumerate(predictions)}
+                score, _ = meteor.compute_score(gts, res)
+                return float(score)
+            except Exception as e:
+                print(f"pycocoevalcap METEOR failed ({e}); falling back to NLTK.")
+            finally:
+                if meteor is not None:
+                    meteor.close()
+        if not HAS_NLTK:
             return 0.0
         scores = []
         for pred, gt in zip(predictions, ground_truths):
@@ -284,37 +411,43 @@ class B4DLEvaluator:
         if not HAS_BERTSCORE or not predictions:
             return 0.0
         try:
-            # Resolve num_layers: if model_type is a local path, auto-detect from
-            # config.json; otherwise look up the known model registry.
-            from bert_score.utils import model2layers
-            model_type = self.bert_model_path
-            if model_type in model2layers:
-                num_layers = model2layers[model_type]
-            else:
-                # Local path — read config.json to get num_hidden_layers
-                import json as _json
-                _cfg_path = os.path.join(model_type, "config.json")
-                if os.path.isfile(_cfg_path):
-                    with open(_cfg_path) as _f:
-                        _cfg = _json.load(_f)
-                    num_layers = _cfg.get("num_hidden_layers", 17)
-                else:
-                    num_layers = 17  # fallback for roberta-large
+            # Layer resolved once in __init__ from bert-score's registry
+            # (17 for roberta-large), never the config's num_hidden_layers.
             _, _, F1 = bert_score_fn(predictions, ground_truths, lang='en',
-                                     model_type=model_type,
-                                     num_layers=num_layers,
+                                     model_type=self.bertscore_model_type,
+                                     num_layers=self.bertscore_num_layers,
                                      verbose=False)
             return float(F1.mean().item())
+        except RuntimeError as e:
+            # GPU busy/OOM: retry on CPU before giving up.
+            if 'out of memory' in str(e).lower() or 'CUDA' in str(e):
+                try:
+                    print(f"BERTScore on GPU failed ({e}); retrying on CPU.")
+                    _, _, F1 = bert_score_fn(predictions, ground_truths, lang='en',
+                                             model_type=self.bertscore_model_type,
+                                             num_layers=self.bertscore_num_layers,
+                                             device='cpu', verbose=False)
+                    return float(F1.mean().item())
+                except Exception as e2:
+                    print(f"BERTScore computation failed: {e2}")
+                    return 0.0
+            print(f"BERTScore computation failed: {e}")
+            return 0.0
         except Exception as e:
             print(f"BERTScore computation failed: {e}")
             return 0.0
 
     def compute_gpt_score(self, predictions: List[str], ground_truths: List[str],
                           questions: List[str], batch_size: int = 16,
-                          max_retries: int = 3) -> float:
-        """Reference-free GPT-4o scoring on a 0..100 scale (paper Table 9)."""
+                          max_retries: int = 3) -> Optional[float]:
+        """Reference-free GPT-4o scoring on a 0..100 scale (paper Table 9).
+
+        Returns None when scoring is disabled or impossible — a missing GPT
+        score must surface as null in the results, never as 0.0 (which reads
+        as a model collapse next to the paper's 59.513).
+        """
         if not self.use_gpt or not self._client or not predictions:
-            return 0.0
+            return None
         scores = []
         for pred, gt, q in zip(predictions, ground_truths, questions):
             prompt = GPT_EVAL_PROMPT.format(q=q, ref=gt, pred=pred)
@@ -335,7 +468,7 @@ class B4DLEvaluator:
                     print(f"GPT scoring failed for sample: {e}")
                     break
             scores.append(score if score is not None else 0.0)
-        return float(np.mean(scores)) if scores else 0.0
+        return float(np.mean(scores)) if scores else None
 
     # ----------------------------------------------------- per-task evaluate
     def evaluate_task(self, task_name: str, predictions: List[Any],
@@ -358,7 +491,9 @@ class B4DLEvaluator:
             metrics['rouge_l'] = self.compute_rouge_l(predictions, ground_truths)
             metrics['bertscore'] = self.compute_bertscore(predictions, ground_truths)
             if questions:
-                metrics['gpt_score'] = self.compute_gpt_score(predictions, ground_truths, questions)
+                gpt = self.compute_gpt_score(predictions, ground_truths, questions)
+                if gpt is not None:
+                    metrics['gpt_score'] = gpt
         else:
             raise ValueError(f"Unknown task: {task_name}")
         return metrics
@@ -379,7 +514,8 @@ class B4DLEvaluator:
                 all_metrics[task_name] = m
                 print(f"\n{task_name}:")
                 for k, v in m.items():
-                    print(f"  {k}: {v:.4f}")
+                    val = "n/a" if v is None else f"{v:.4f}"
+                    print(f"  {k}: {val}")
         return all_metrics
 
     # --------------------------------------------------- paper aggregation
@@ -402,17 +538,18 @@ class B4DLEvaluator:
         for t in self.COMPLEX_TASKS:
             if t in all_metrics:
                 for k, v in all_metrics[t].items():
-                    per_metric[k].append(v)
+                    if v is not None:
+                        per_metric[k].append(v)
         for k, vals in per_metric.items():
             final[k] = float(np.mean(vals))
 
         return final
 
-    @staticmethod
-    def save_results(all_metrics, final_scores, output_path):
+    def save_results(self, all_metrics, final_scores, output_path):
         with open(output_path, 'w') as f:
             json.dump({'per_task_metrics': all_metrics,
-                       'final_scores': final_scores}, f, indent=2)
+                       'final_scores': final_scores,
+                       'metric_backend': self.metric_backend}, f, indent=2)
         print(f"Results saved to {output_path}")
 
 
@@ -604,7 +741,7 @@ def main():
     print("Final Scores")
     print("=" * 50)
     for k, v in final_scores.items():
-        print(f"{k}: {v:.4f}")
+        print(f"{k}: " + ("n/a" if v is None else f"{v:.4f}"))
 
     evaluator.save_results(all_metrics, final_scores, args.output)
 

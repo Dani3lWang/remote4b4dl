@@ -656,7 +656,7 @@ def main():
     print("Final B4DL scores")
     print("=" * 50)
     for k, v in final.items():
-        print(f"{k:12s}: {v:.4f}")
+        print(f"{k:12s}: " + ("n/a" if v is None else f"{v:.4f}"))
 
     evaluator.save_results(per_task, final, args.metrics_output)
 

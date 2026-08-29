@@ -127,14 +127,16 @@ python evaluation/evaluate_model.py --demo
 
 ```bash
 pip install pycocoevalcap nltk rouge-score bert-score openai
+# METEOR 的 pycocoevalcap 后端是 Meteor-1.5 jar，需要系统 java：
+sudo apt-get install -y --no-install-recommends default-jre-headless
 ```
 
 首次运行时会自动下载 NLTK 数据（punkt、wordnet、omw-1.4）。
 
 | 依赖 | 说明 | 缺失时影响 |
 |------|------|-----------|
-| `pycocoevalcap` | BLEU-4、METEOR 计算后端 | BLEU-4 / METEOR 返回 0 |
-| `nltk` | 分词 + METEOR | BLEU-4 / METEOR 返回 0 |
+| `pycocoevalcap` | BLEU-4（语料级，纯 Python）与 METEOR（Meteor-1.5 jar，需 java）后端；GPT 评分 prompt 与论文 Table 9 对齐 | BLEU-4 回退 NLTK 句级、METEOR 回退 NLTK（两者均系统性偏高、与论文不可比），实际后端记录在结果 JSON 的 `metric_backend` |
+| `nltk` | 回退分词 + 回退 METEOR | 无语料级 BLEU/METEOR 时回退 NLTK 后端 |
 | `rouge-score` | ROUGE-L F1 | ROUGE-L 返回 0 |
-| `bert-score` | BERTScore F1（deberta-xlarge-mnli ~1.5GB） | BERTScore 返回 0 |
-| `openai` | GPT-4o 参考无关打分（需 API Key） | GPT Score 返回 0 |
+| `bert-score` | BERTScore F1，本地 `models/roberta-large`，按 bert-score 规范用第 **17** 层（勿用 config 的 num_hidden_layers=24，会虚高 ~0.07） | BERTScore 返回 0 |
+| `openai` | GPT-4o 参考无关打分（需 API Key + `--use_gpt`） | GPT Score 缺席（JSON 中为 null，不是 0） |
