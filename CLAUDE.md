@@ -123,6 +123,14 @@ conda run -n wqlc python extract_pc_features.py \
 
 checkpoint 是 PyTorch Lightning 格式，加载时需 `weights_only=False` 且 `strict=False`（旧版含 bbox_head 的 key 会忽略）。
 
+### LiDAR-CLIP 编码器训练与退火（2026-08-29）
+
+- `train.py` 新增 `--max-epochs`（默认 20）/`--scheduler-max-lr`（默认 1e-3）/`--seed`（默认不设）——默认值完全保持旧行为。
+- `val_mse_probe.py`：val/test 场景（编码器未训练的 150 个）确定性子集上的 LiDAR→CLIP MSE 探针，收敛/选型判据；lidar encoder 保持 train 模式（与提取约定一致），固定 seed + shuffle=False 保证跨 ckpt 可比。`loader.build_loader` 新增 `val_mode/val_max_scenes` 透传（默认关闭）。
+- **退火链** `run_anneal_chain.sh`（tmux `b4dlanneal`）：等高 LR 续训（`--name lidarclip_nuscenes`，v2 监控 step≥31,550 硬停）退出 → 基线 probe → 从 last.ckpt `--load-only-model` 短程退火（3 epoch、OneCycle 1e-4→0、seed 0、ckpt 存 `ckpt_anneal/`）→ 逐 ckpt probe。结果 `logs/val_mse_probe.csv`；每小时 cron 只读报告进度。
+- 现存全部特征（stage1_features_sample 28,130 / stage2_features 850）均为 ONCE 旧编码器产物——编码器定稿后必须**全量重提**，不可增量混提。
+
+
 **Stage1 官方对齐（162K 方案）特征**：`extract_pc_features_sample_token.py` 输出 `{sample_token}.npy`（键控与官方 stage1 数据一致，点云处理同 `with_path` loader）：
 
 ```bash

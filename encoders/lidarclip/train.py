@@ -49,12 +49,14 @@ class LidarClip(pl.LightningModule):
         batch_size: int,
         epoch_size: int,
         loss: str = "mse",
+        scheduler_max_lr: float = 1e-3,
     ):
         super().__init__()
         self.lidar_encoder = lidar_encoder
         self.clip = clip_model
         self.batch_size = batch_size
         self.epoch_size = epoch_size
+        self.scheduler_max_lr = scheduler_max_lr
         for param in self.clip.parameters():
             param.requires_grad = False
         if loss == "mse":
@@ -86,7 +88,7 @@ class LidarClip(pl.LightningModule):
         steps_per_epoch = epoch_size // self.trainer.accumulate_grad_batches
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            max_lr=1e-3,
+            max_lr=self.scheduler_max_lr,
             # total_steps=self.trainer.estimated_stepping_batches,
             pct_start=0.1,
             steps_per_epoch=steps_per_epoch,
@@ -110,8 +112,13 @@ def train(
     nuscenes_datadir="/proj/berzelius-2021-92/data/nuscenes",
     nuscenes_split="train",
     dataset_name="once",
+    max_epochs=20,
+    scheduler_max_lr=1e-3,
+    seed=None,
 ):
     """Train the model."""
+    if seed is not None:
+        pl.seed_everything(seed, workers=True)
     clip_model, clip_preprocess = clip.load(clip_model_name, jit=False)
     clip.model.convert_weights(clip_model)  # 本机 clip.load 不转 fp16，与 CLIP.self.dtype=fp16 保持一致
     clip_model.eval()
@@ -138,7 +145,8 @@ def train(
     wandb_id = "lidarclip_mm"
     wand_resume = False
     model = LidarClip(
-        lidar_encoder, clip_model, batch_size, len(train_loader) / devices, loss_function
+        lidar_encoder, clip_model, batch_size, len(train_loader) / devices, loss_function,
+        scheduler_max_lr=scheduler_max_lr,
     )
     if len(checkpoint_path) and resume_wandb_logging:
         wandb_id = checkpoint_path.split("/")[-2]
@@ -152,6 +160,7 @@ def train(
             batch_size=batch_size,
             epoch_size=len(train_loader) / devices,
             loss=loss_function,
+            scheduler_max_lr=scheduler_max_lr,
         )
         checkpoint_path = None
 
@@ -186,7 +195,7 @@ def train(
         accelerator=accelerator,
         devices=devices,
         limit_train_batches=None,
-        max_epochs=20,
+        max_epochs=max_epochs,
         logger=wandb_logger,
         callbacks=[
             checkpoint_callback,
@@ -223,6 +232,12 @@ def parse_args():
     parser.add_argument("--nuscenes-datadir", default="/proj/berzelius-2021-92/data/nuscenes")
     parser.add_argument("--nuscenes-split", default="train")
     parser.add_argument("--dataset-name", default="nuscenes")
+    parser.add_argument("--max-epochs", type=int, default=20,
+                        help="Trainer max_epochs（默认 20 保持旧行为；短程退火用 2-3）")
+    parser.add_argument("--scheduler-max-lr", type=float, default=1e-3,
+                        help="OneCycleLR max_lr（默认 1e-3 保持旧行为；退火用 1e-4）")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="随机种子（不传则不设种子，保持旧行为）")
     args = parser.parse_args()
     assert args.name, "Empty name is not allowed"
     return args
@@ -244,4 +259,7 @@ if __name__ == "__main__":
         nuscenes_datadir=args.nuscenes_datadir,
         nuscenes_split=args.nuscenes_split,
         dataset_name=args.dataset_name,
+        max_epochs=args.max_epochs,
+        scheduler_max_lr=args.scheduler_max_lr,
+        seed=args.seed,
     )

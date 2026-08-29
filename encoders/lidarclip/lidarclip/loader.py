@@ -55,6 +55,8 @@ class NuscenesImageLidarDataset(Dataset):
         img_transform,
         split: str = "train",
         min_dist: float = 0.5,
+        val_mode: bool = False,
+        val_max_scenes: int = 0,
     ) -> None:
         super().__init__()
         self._data_root = data_root
@@ -62,11 +64,11 @@ class NuscenesImageLidarDataset(Dataset):
         self._nusc = NuScenes(
             version=NUSCENES_SPLITS[split], dataroot=self._data_root, verbose=True
         )
-        self._frames = self._setup(split)
+        self._frames = self._setup(split, val_mode, val_max_scenes)
         self.min_dist = min_dist
         gc.collect()
 
-    def _setup(self, split: str) -> List[Tuple[str, str, str]]:
+    def _setup(self, split: str, val_mode: bool = False, val_max_scenes: int = 0) -> List[Tuple[str, str, str]]:
         splits = deepcopy(create_splits_scenes())
         if split == "train-only":
             split = "train"
@@ -113,9 +115,15 @@ class NuscenesImageLidarDataset(Dataset):
         
         
         filtered_ok_scene_tokens = [x for x in ok_scene_tokens if x not in filtered_scene_list]
-        
-        
-        ok_scene_tokens = filtered_ok_scene_tokens
+
+
+        if val_mode:
+            # val 探针：只取被剔除的 150 个 val/test 场景（sorted 截断前 N 个，确定性子集）
+            ok_scene_tokens = sorted(filtered_scene_list)
+            if val_max_scenes > 0:
+                ok_scene_tokens = ok_scene_tokens[:val_max_scenes]
+        else:
+            ok_scene_tokens = filtered_ok_scene_tokens
         print("ok_scene_tokens after filtering: ", len(ok_scene_tokens))
         #################################### for 700 scenes only #########################################
         
@@ -729,11 +737,16 @@ def build_loader(
     dataset_name="once",
     nuscenes_datadir=None,
     nuscenes_split="train",
+    val_mode=False,
+    val_max_scenes=0,
 ):
     if dataset_name == "once":
         dataset = OnceImageLidarDataset(datadir, img_transform=clip_preprocess, split=split)
     elif dataset_name == "nuscenes":
-        dataset = NuscenesImageLidarDataset(datadir, img_transform=clip_preprocess, split=split)
+        dataset = NuscenesImageLidarDataset(
+            datadir, img_transform=clip_preprocess, split=split,
+            val_mode=val_mode, val_max_scenes=val_max_scenes,
+        )
     elif dataset_name == "joint":
         dataset = JointImageLidarDataset(
             datadir,
