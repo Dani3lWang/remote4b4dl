@@ -65,7 +65,9 @@ WANDB_MODE=offline python train.py --name lidarclip_nuscenes \
 
 ## 六、后续（与问题清单联动）
 
-1. 监控 v5，2-3 epoch 后按 loss 平台早期停止（预计 08-29 内）；
-2. 用新编码器重提全部特征：28,130 stage2 + 162K stage1（与问题 #1 的补数据合并为一次提取）；
+1. ~~监控 v5，2-3 epoch 后按 loss 平台早期停止~~ → **已授权自动化（2026-08-29）**：训练自行跑到 step 19,000+（epoch 3.5，~2.2s/步，远超 2-3 epoch 计划）；`early_stop_monitor.py` 已部署，规则"loss 连续 500 步降幅 <1%"（连续 2 次检查确认 + 4 点均值抗噪，下限 1 epoch，step 26,375 硬保底）。**loss 数据源为 last.ckpt 的 ModelCheckpoint current_score（每 250 步）**——wandb offline 历史实测 0 行不可用（v1 的 2 行 vs v5 的 0 行，服务写入不稳定）。停止后状态写入 `logs/early_stop_state.json`；
+2. 用新编码器重提全部特征：28,130 stage2 + 28,130 stage1 关键帧（与问题 #1 的 162K 补数据合并为一次提取）；
 3. 重训 stage1 projector → seqv3-mixed 混合重训 → 评测，目标 mIoU ≥ 0.30；
 4. 若 mIoU 仍 <0.25：回到问题 #4/#5（解码策略与评测口径）。
+
+> 注：停止时 LR 处于 OneCycle(20 epoch) 前段（~72% max_lr），未完全退火——与 ONCE 官方权重停在 epoch 2 的形态一致（同为 20 epoch 计划的中途权重），对特征提取用途可接受。
