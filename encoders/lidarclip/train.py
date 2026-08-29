@@ -24,6 +24,23 @@ def l2norm(t):
     return F.normalize(t, dim=-1, p=2)
 
 
+class LossCSVCallback(pl.Callback):
+    """每 N 步把真值 train_loss 追加写入 CSV（wandb offline 历史与 ckpt current_score
+    均不可靠——前者刷盘为空、后者只在刷新最优时更新；2026-08-29 续训监控用）。"""
+
+    def __init__(self, path, every_n_steps=50):
+        self.path = path
+        self.n = every_n_steps
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        step = trainer.global_step
+        if step % self.n == 0:
+            loss = trainer.callback_metrics.get("train_loss")
+            if loss is not None:
+                with open(self.path, "a") as f:
+                    f.write(f"{step},{float(loss):.6f}\n")
+
+
 class LidarClip(pl.LightningModule):
     def __init__(
         self,
@@ -171,7 +188,11 @@ def train(
         limit_train_batches=None,
         max_epochs=20,
         logger=wandb_logger,
-        callbacks=[checkpoint_callback, learningrate_callback],
+        callbacks=[
+            checkpoint_callback,
+            learningrate_callback,
+            LossCSVCallback(os.path.join("logs", "train_loss.csv"), every_n_steps=50),
+        ],
     )
     if trainer.global_rank == 0:
         old_id = wandb_logger.experiment.config.get("slurm-id", "")
