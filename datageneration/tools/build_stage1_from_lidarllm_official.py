@@ -22,7 +22,11 @@ import json
 import argparse
 
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-MODALITY_TOKEN = "<image>"  # Stage-1 is single-frame (3D)
+# 键名与生产文件 mllm/b4dl_dataset/stage1_train.json 逐字段一致：dataset.py 按
+# item["scene_id"] 加载特征（{feat_folder}/{scene_id}.npy，stage1 特征按
+# sample_token 键控），此前只写 "id" 会触发 KeyError→随机样本兜底（审查 L2）。
+# <image> 由 dataset.py 归一为 <video>，与生产文件保持一致。
+MODALITY_TOKEN = "<image>"
 HF_DATASET = "Senqiao/LiDAR-LLM-Nu-Caption"
 
 
@@ -35,12 +39,16 @@ def load_rows(input_path):
     return load_dataset(name, split="train")
 
 
-def to_conversation(row):
+def to_conversation(row, scene_token, stats):
+    answer = row.get("answer_lidar") or row.get("answer") or ""
+    if not answer:
+        stats["empty_answer"] += 1
     return {
-        "id": row["sample_token"],
+        "scene_id": row["sample_token"],
+        "scene_token": scene_token,
         "conversations": [
             {"from": "human", "value": f"{MODALITY_TOKEN}\n{row['question']}"},
-            {"from": "gpt", "value": row["answer_lidar"]},
+            {"from": "gpt", "value": answer},
         ],
     }
 
@@ -56,10 +64,11 @@ def main():
 
     rows = load_rows(args.input)
     out, kept_scenes, dropped = [], set(), 0
+    stats = {"empty_answer": 0}
     for row in rows:
         scene = samp2scene.get(row["sample_token"])
         if scene in train_scenes:
-            out.append(to_conversation(row))
+            out.append(to_conversation(row, scene, stats))
             kept_scenes.add(scene)
         else:
             dropped += 1
@@ -67,7 +76,7 @@ def main():
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     json.dump(out, open(args.output, "w"))
     print(f"Saved {len(out)} samples over {len(kept_scenes)} train scenes to {args.output} "
-          f"(dropped {dropped} non-train-scene samples)")
+          f"(dropped {dropped} non-train-scene samples, empty_answer {stats['empty_answer']})")
 
 
 if __name__ == "__main__":
