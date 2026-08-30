@@ -75,7 +75,3 @@ python evaluation/test_b4dl.py ...
   year={2025}
 }
 ```
-
-## 致谢
-
-本工作部分由韩国政府（MSIT）资助的 IITP 资助（No.RS-2024-00439020、No.RS-2025-02283048）。架构基于 [VTimeLLM](https://github.com/HuangJulian/VTimeLLM)，编码器基于 [LiDAR-CLIP](https://github.com/divadiow/LiDAR-CLIP) 与 [SST](https://github.com/fanqi-no1/SST)（CVPR 2022）。
