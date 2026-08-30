@@ -7,7 +7,10 @@
 #   阶段4: 同口径评测 → eval_results/stage2_full_seqv3_mixed_b1/（显存门控 + HF offline）
 # 任一阶段硬失败即停链（cron 报告，人工决策），不做盲自动重启。
 # tmux 会话 b1pipeline 运行。
+# 用法: bash run_b1_pipeline.sh [起始阶段]，默认 1 全链；断点恢复示例: bash run_b1_pipeline.sh 2（特征已就绪，从阶段2 起）
 set -u
+START_STAGE=${1:-1}
+case "$START_STAGE" in 1|2|3|4) ;; *) echo "用法: bash $0 [1|2|3|4]，默认 1 全链"; exit 1 ;; esac
 cd /root/autodl-tmp/wql/mmb4dl/mllm
 eval "$(/root/autodl-tmp/miniconda3/bin/conda shell.bash hook)"
 conda activate wqlc
@@ -19,6 +22,7 @@ ENC=/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip
 CKPT=$ENC/ckpt_anneal/lidarclip_mm/last.ckpt
 [ -f "$CKPT" ] || { echo "错误: 编码器 $CKPT 不存在"; exit 1; }
 
+if [ "$START_STAGE" -le 1 ]; then
 echo "===== 阶段1a: stage1 sample_token 特征重提 ($(date '+%F %T')) ====="
 cd "$ENC"
 python extract_pc_features_sample_token.py \
@@ -51,15 +55,27 @@ echo "阶段1b rc=$rc"
 n2=$(ls b4dl/stage2_features | wc -l)
 echo "stage2 特征数: $n2（预期 850）"
 [ "$n2" -ne 850 ] && { echo "阶段1b 特征数异常，链停止"; exit 1; }
+fi
 
-echo "===== 阶段2: stage1 162K projector 重训 ($(date '+%F %T')) ====="
+if [ "$START_STAGE" -le 2 ]; then
 cd /root/autodl-tmp/wql/mmb4dl/mllm
+echo "===== 阶段2: stage1 162K projector 重训 ($(date '+%F %T')) ====="
+GATE_OK=0
+for i in $(seq 1 12); do
+    FREE_MB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)
+    if [ -n "$FREE_MB" ] && [ "$FREE_MB" -ge 28000 ]; then GATE_OK=1; break; fi
+    echo "[$(date '+%F %T')] 显存不足 (${FREE_MB}MB < 28GB)，10 分钟后重试..."
+    sleep 600
+done
+[ $GATE_OK -ne 1 ] && { echo "阶段2 显存门控 2 小时未放行，链停止"; exit 1; }
 bash scripts/stage1.sh > training_logs/stage1_162k_b1_$(date +%Y%m%d_%H%M%S).log 2>&1
 rc=$?
 echo "阶段2 rc=$rc"
 [ $rc -ne 0 ] && { echo "阶段2 失败，链停止"; exit 1; }
 [ -f checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin ] || { echo "阶段2 未产出 projector，链停止"; exit 1; }
+fi
 
+if [ "$START_STAGE" -le 3 ]; then
 echo "===== 阶段3: mixed-b1 混合重训 ($(date '+%F %T')) ====="
 OUT=checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-b1
 MIXED_OK=0
@@ -76,6 +92,7 @@ for attempt in 1 2 3; do
     sleep 600
 done
 [ $MIXED_OK -ne 1 ] && { echo "阶段3 三次尝试均失败，链停止"; exit 1; }
+fi
 
 echo "===== 阶段4: 同口径评测 b1 ($(date '+%F %T')) ====="
 EVAL_OUT=./eval_results/stage2_full_seqv3_mixed_b1
