@@ -18,6 +18,8 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 MODEL_VERSION=vicuna-v1-5-7b
 OUT=vtimellm-$MODEL_VERSION-stage2-full-seqv3-mixed-b1
+set -o pipefail
+LOG=./training_logs/stage2_full_seqv3_mixed_b1_$(date +%Y%m%d_%H%M%S).log
 
 RESUME=""
 LATEST=$(ls -d ./checkpoints/$OUT/checkpoint-* 2>/dev/null | sort -V | tail -1)
@@ -54,6 +56,6 @@ deepspeed --include localhost:0 --master_port 29581 vtimellm/train/train_mem.py 
     --lazy_preprocess True \
     --report_to wandb \
     $RESUME \
-    2>&1 | tee ./training_logs/stage2_full_seqv3_mixed_b1_$(date +%Y%m%d_%H%M%S).log
+    2>&1 | tee "$LOG"
 
-echo "End: $(date)"
+echo "End: $(date)" | tee -a "$LOG"
