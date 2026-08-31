@@ -670,8 +670,7 @@ def main():
     print(f"{'metric':12s} {'paper':<10} {'ours':<10}")
     for k, v in paper.items():
         got = final.get(k)
-        print(f"{k:12s} {v:<10.4f} "
-              f"{got:<10}" + ("(skipped)" if got is None else f"{got:.4f}"))
+        print(f"{k:12s} {v:<10.4f} " + ("n/a (skipped)" if got is None else f"{got:<10.4f}"))
 
 
 if __name__ == "__main__":
