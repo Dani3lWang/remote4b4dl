@@ -20,6 +20,15 @@ export WANDB_MODE=offline PYTHONUNBUFFERED=1
 if [ "$START_STAGE" -le 1 ]; then
 echo "===== 阶段1: mixed-b2 混合重训（整场景输入）($(date '+%F %T')) ====="
 OUT=checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-b2
+# 显存门控：训练需 ≥28GB 空闲（与 b1 pipeline 阶段2 同口径），最多等 2 小时
+GATE_OK=0
+for i in $(seq 1 12); do
+    FREE_MB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)
+    if [ -n "$FREE_MB" ] && [ "$FREE_MB" -ge 28000 ]; then GATE_OK=1; break; fi
+    echo "[$(date '+%F %T')] 显存不足 (${FREE_MB}MB < 28GB)，10 分钟后重试..."
+    sleep 600
+done
+[ $GATE_OK -ne 1 ] && { echo "阶段1 显存门控 2 小时未放行，链停止"; exit 1; }
 MIXED_OK=0
 for attempt in 1 2 3; do
     bash scripts/run_stage2_full_seqv3_mixed_b2.sh > /dev/null 2>&1
