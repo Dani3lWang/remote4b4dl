@@ -455,6 +455,13 @@ def main():
                              "the QA's sequence + metatoken from per-sequence/per-"
                              "frame ego data. Use ONLY with models trained on "
                              "per-sequence data (stage2_full_train_seq[v2].json).")
+    parser.add_argument("--whole_scene", action="store_true",
+                        help="B2 (paper-aligned): feed the whole scene features "
+                             "(39/40/41 frames) without any slicing, matching the "
+                             "official B4DL implementation. Metatoken anchoring "
+                             "(--per_sequence --answer_frames) is unaffected: the "
+                             "visual input and the <meta> range are decoupled. Use "
+                             "with models trained with --whole_scene (b2).")
     args = parser.parse_args()
 
     # Assemble the flat test item list
@@ -579,8 +586,11 @@ def main():
             # Feature slicing. per_sequence (paper): select the QA's containing
             # sequence frames — from item fields if present, else resolved via
             # --sequence_metadata + question frames. Otherwise full scene
-            # features (per-scene mode).
-            if getattr(args, 'per_sequence', False):
+            # features (per-scene mode). --whole_scene (B2) always feeds the
+            # whole scene, matching the official implementation.
+            if getattr(args, 'whole_scene', False):
+                feat_used = feat
+            elif getattr(args, 'per_sequence', False):
                 sel = resolve_feat_slice(
                     it, question, sequence_ranges,
                     gt=gt, answer_frames=getattr(args, 'answer_frames', False))
