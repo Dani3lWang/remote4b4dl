@@ -22,7 +22,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 MODEL_VERSION=vicuna-v1-5-7b
 OUT=vtimellm-$MODEL_VERSION-stage2-full-seqv3-mixed-b3
 set -o pipefail
-LOG=./training_logs/stage2_full_seqv3_mixed_b2_$(date +%Y%m%d_%H%M%S).log
+LOG=./training_logs/stage2_full_seqv3_mixed_b3_$(date +%Y%m%d_%H%M%S).log
 
 RESUME=""
 LATEST=$(ls -d ./checkpoints/$OUT/checkpoint-* 2>/dev/null | sort -V | tail -1)
