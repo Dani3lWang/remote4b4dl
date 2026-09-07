@@ -146,15 +146,22 @@ def render_meta_texts(frames: List[dict], first: int, last: int) -> Tuple[str, s
     `first`/`last` are indices into that list (scene-relative frame numbers as
     they appear in the QA text).
 
-    - first frame: motion relative to the NEXT frame (paper: "relative to
-      previous frames" — for the range start the informative direction is
-      forward-looking), position "at the starting position".
-    - last frame: motion relative to the PREVIOUS frame, position relative to
-      the first frame.
-    - first == last (single-frame QA reference): both descriptions use the
-      frame's real neighbouring motion instead of a degenerate "stationary"
-      text; the last-frame position then describes displacement from the
-      previous frame.
+    Paper §4.1 / Figure 6: metatoken converts sensor data into "relative
+    direction, position, velocity, and acceleration with respect to previous
+    frames". Both frame texts therefore describe the frame's motion RELATIVE
+    TO ITS PRECEDING SCENE FRAME (frame i vs frame i-1): position = displacement
+    direction from the previous frame, speed/turn/accel = prev-frame differences.
+    Figure 6's sample ("The ego vehicle is slightly ahead and to the right on
+    flat ground ...") confirms the position phrase varies per frame — it is
+    NOT a constant "at the starting position".
+
+    - first frame with a preceding frame (first > 0): prev-relative, like the
+      paper. first == 0 (scene's very first frame, no predecessor): fall back to
+      the forward-looking description (next-frame differences), position
+      "at the starting position".
+    - last frame: prev-relative motion (already the paper semantics).
+    - first == last (single-frame QA reference): prev-relative vs the previous
+      frame when one exists.
     """
     n = len(frames)
     if n == 0:
@@ -167,46 +174,37 @@ def render_meta_texts(frames: List[dict], first: int, last: int) -> Tuple[str, s
     f = frames[first]
     l = frames[last]
 
-    # --- first frame: forward-looking motion ---
-    f_speed = f.get("spd_next")
-    f_yaw = f.get("yaw_next")
-    f_acc = f.get("acc_next")
-    if f_speed is None:
-        f_speed = f.get("spd_prev")
-    if f_yaw is None:
-        f_yaw = f.get("yaw_prev")
+    def prev_motion(fr: dict, prev: Optional[dict]) -> Tuple[float, float, Optional[float], Optional[float], Optional[float], str]:
+        """(speed, yaw_change, accel, lon, lat, position_text) of fr vs prev frame."""
+        spd = fr.get("spd_prev")
+        yaw = fr.get("yaw_prev")
+        acc = fr.get("acc_prev")
+        if prev is None:
+            # Scene start frame: no predecessor — forward-looking fallback.
+            spd = fr.get("spd_next")
+            yaw = fr.get("yaw_next")
+            acc = fr.get("acc_next")
+            return spd, yaw, acc, 0.0, 0.0, "at the starting position"
+        lon, lat = _disp_in_frame(prev["x"], prev["y"], prev["yaw"],
+                                  fr["x"], fr["y"])
+        return spd, yaw, acc, lon, lat, describe_position(lat, lon, is_relative=True)
+
+    prev_f = frames[first - 1] if first > 0 else None
+    f_spd, f_yaw, f_acc, f_lon, f_lat, f_pos = prev_motion(f, prev_f)
     first_text = frame_text(
-        describe_position(0, 0, is_relative=False),
-        describe_terrain(f.get("z", 0.0)),
-        f_speed if f_speed is not None else 0.0,
+        f_pos,
+        describe_terrain(f.get("z", 0.0), z_ref=prev_f.get("z") if prev_f else None),
+        f_spd if f_spd is not None else 0.0,
         f_yaw if f_yaw is not None else 0.0,
         f_acc,
     )
 
-    # --- last frame: backward-looking motion, position relative to first ---
-    l_speed = l.get("spd_prev")
-    l_yaw = l.get("yaw_prev")
-    l_acc = l.get("acc_prev")
-    if l_speed is None:
-        l_speed = l.get("spd_next")
-    if l_yaw is None:
-        l_yaw = l.get("yaw_next")
-
-    if last == first and first > 0:
-        # Single-frame reference: describe real displacement vs previous frame
-        # so the text is informative (never a fabricated "stationary").
-        p = frames[first - 1]
-        lon, lat = _disp_in_frame(p["x"], p["y"], p["yaw"], f["x"], f["y"])
-        position = describe_position(lat, lon, is_relative=True)
-        terrain = describe_terrain(f.get("z", 0.0), z_ref=p.get("z"))
-    else:
-        lon, lat = _disp_in_frame(f["x"], f["y"], f["yaw"], l["x"], l["y"])
-        position = describe_position(lat, lon, is_relative=True)
-        terrain = describe_terrain(l.get("z", 0.0), z_ref=f.get("z"))
+    prev_l = frames[last - 1] if last > 0 else None
+    l_spd, l_yaw, l_acc, l_lon, l_lat, l_pos = prev_motion(l, prev_l)
     last_text = frame_text(
-        position,
-        terrain,
-        l_speed if l_speed is not None else 0.0,
+        l_pos,
+        describe_terrain(l.get("z", 0.0), z_ref=prev_l.get("z") if prev_l else None),
+        l_spd if l_spd is not None else 0.0,
         l_yaw if l_yaw is not None else 0.0,
         l_acc,
     )

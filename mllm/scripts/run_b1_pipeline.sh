@@ -81,9 +81,11 @@ OUT=checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-b1
 MIXED_OK=0
 for attempt in 1 2 3; do
     bash scripts/run_stage2_full_seqv3_mixed_b1.sh > /dev/null 2>&1
-    LATEST_LOG=$(ls -t training_logs/stage2_full_seqv3_mixed_b1_*.log 2>/dev/null | head -1)
-    if [ -f "$OUT/adapter_model.safetensors" ] && [ -n "$LATEST_LOG" ] \
-       && tail -5 "$LATEST_LOG" | grep -q "End:"; then
+    # 判据修复：以 trainer_state 的 epoch 跑满（≥2.99，即 3 epochs 完成）为准。
+    # 旧判据 tail 日志 grep "End:" 不可靠——脚本的 echo "End:" 在 tee 管道后输出到
+    # 脚本 stdout，被上面的 > /dev/null 吞掉，日志中永远不会出现 "End:"（2026-08-31 误报三次失败根因）。
+    if [ -f "$OUT/adapter_model.safetensors" ] && [ -f "$OUT/trainer_state.json" ] \
+       && python3 -c "import json,sys; d=json.load(open('$OUT/trainer_state.json')); sys.exit(0 if d.get('epoch',0) >= 2.99 else 1)"; then
         MIXED_OK=1
         echo "阶段3 完成（尝试 #$attempt）"
         break

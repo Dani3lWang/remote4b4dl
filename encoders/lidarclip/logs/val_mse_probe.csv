@@ -1,1 +1,5 @@
 2026-08-29 20:36:05,baseline,ckpt_nuscenes/lidarclip_mm/last.ckpt,113,3616,0.106093,0.021162
+2026-08-30 10:56:57,anneal/lidarclip_mm/epoch=1-step=7250,ckpt_anneal/lidarclip_mm/epoch=1-step=7250.ckpt,113,3616,0.102639,0.023761
+2026-08-30 11:05:08,anneal/lidarclip_mm/epoch=2-step=14750,ckpt_anneal/lidarclip_mm/epoch=2-step=14750.ckpt,113,3616,0.099170,0.023084
+2026-08-30 11:14:39,anneal/lidarclip_mm/epoch=2-step=15000,ckpt_anneal/lidarclip_mm/epoch=2-step=15000.ckpt,113,3616,0.099152,0.023128
+2026-08-30 11:24:47,anneal/lidarclip_mm/last,ckpt_anneal/lidarclip_mm/last.ckpt,113,3616,0.099166,0.023172

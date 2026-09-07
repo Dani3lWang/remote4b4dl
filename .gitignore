@@ -56,3 +56,6 @@ evaluation_results.json
 
 # 本地下载的模型文件
 models/
+
+# 本地代理配置
+.zcode/

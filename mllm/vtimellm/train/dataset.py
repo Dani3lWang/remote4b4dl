@@ -68,6 +68,12 @@ class DataArguments:
                            metadata={"help": "Path to the training data."})
     lazy_preprocess: bool = False
     feat_folder: Optional[str] = field(default=None)
+    # B2 (paper-aligned): feed the whole scene features (39/40/41 frames) to the
+    # model instead of slicing to the QA's containing sequence. The official
+    # B4DL implementation loads the per-scene .npy without any slicing; our
+    # seqv3 slicing made time-grounding learn sequence-local frame numbers that
+    # the global-numbered evaluation then penalizes (mIoU 0.265 vs paper 0.311).
+    whole_scene: bool = False
 
 def _tokenize_fn(strings: Sequence[str],
                  tokenizer: transformers.PreTrainedTokenizer) -> Dict:
@@ -467,7 +473,8 @@ class LazySupervisedDataset(Dataset):
             # Slice features to the QA's containing sequence (paper: the model
             # input S_L is the sequence the QA belongs to, not the whole scene).
             # See _select_features for the priority order.
-            image = _select_features(image, source)
+            if not self.data_args.whole_scene:
+                image = _select_features(image, source)
         except Exception as e:
             self._feature_failures += 1
             print(f"[dataset] 特征加载失败 scene_id={source.get('scene_id')}: {e}"

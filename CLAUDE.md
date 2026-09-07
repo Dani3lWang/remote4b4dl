@@ -16,7 +16,7 @@ B4DL（Benchmark for 4D LiDAR LLM）是 ACM Multimedia 2025 论文的官方 PyTo
 
 - **Conda 环境**：`wqlc`，Python 3.10
 - **核心依赖**：PyTorch 2.5.1 CUDA 12.4、transformers 4.31.0、deepspeed 0.16.4、peft 0.4.0、flash-attn 2.7.0
-- **权威依赖文件**：`mllm/requirements.txt`（不要用根目录的 `requirements.txt`，其版本过新且与 mllm 模块冲突）。评测的 METEOR 走 pycocoevalcap Meteor-1.5 jar，需系统 java：`apt-get install -y --no-install-recommends default-jre-headless`
+- **权威依赖文件**：`mllm/requirements.txt`（不要用根目录的 `requirements.txt`，其版本过新且与 mllm 模块冲突）。评测 METEOR 为**双后端**（`B4DLEvaluator(meteor_backend='dual')` 默认）：`meteor` 主口径 = NLTK-2005（论文引用 [2] Banerjee & Lavie 2005 参数 α0.9/β3.0/γ0.5，B3=0.3366 超论文 0.275），`meteor_pycocoevalcap` 参考口径 = Meteor-1.5 jar（需系统 java：`apt-get install -y --no-install-recommends default-jre-headless`，与 B0-B3 旧表衔接）。详见 `docs/learn docs/B4DL_METEOR双口径溯源与评测规则_20260907.md`
 - 所有 Python 命令必须在 `wqlc` 环境中执行
 - **数据集**：B4DL 数据集托管在 [HuggingFace](https://huggingface.co/datasets/ccho4702/nuScenes-B4DL)；nuScenes 需自行下载
 
