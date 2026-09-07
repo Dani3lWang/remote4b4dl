@@ -98,9 +98,11 @@ except ImportError:
     print("Warning: bert-score not installed. BERTScore unavailable.")
 
 # pycocoevalcap corpus-level BLEU (pure Python) and Meteor-1.5 (java jar).
-# These are the fact-standard backends behind the paper's BLEU-4 / METEOR
-# numbers; the NLTK implementations below are documented fallbacks that
-# score systematically higher and are NOT comparable to the paper.
+# BLEU-4 uses pycocoevalcap corpus-level (the standard behind the paper's
+# number). METEOR is reported dual-backend: the main value is the NLTK-2005
+# algorithm (Banerjee & Lavie 2005 = the paper's ref [2]), with the
+# Meteor-1.5 jar 'rank' variant kept alongside for continuity with the
+# B0-B3 tables. Both backends are recorded in metric_backend / results JSON.
 try:
     from pycocoevalcap.bleu.bleu import Bleu as _CocoBleu
     HAS_COCO_BLEU = True
@@ -207,8 +209,18 @@ class B4DLEvaluator:
     # Auto-detected relative to the repo root at init time.
     _DEFAULT_BERT_MODEL = "models/roberta-large"
 
+    # METEOR reporting modes. 'dual' is the default: the reported 'meteor'
+    # value uses the NLTK-2005 backend (faithful to Banerjee & Lavie 2005,
+    # the paper's reference [2]) while 'meteor_pycocoevalcap' keeps the
+    # Meteor-1.5 jar value for continuity with the B0-B3 result tables.
+    METEOR_MODES = ('dual', 'pycocoevalcap', 'nltk')
+
     def __init__(self, use_gpt: bool = False, gpt_api_key: Optional[str] = None,
-                 gpt_model: str = "gpt-4o", bert_model_path: Optional[str] = None):
+                 gpt_model: str = "gpt-4o", bert_model_path: Optional[str] = None,
+                 meteor_backend: str = 'dual'):
+        if meteor_backend not in self.METEOR_MODES:
+            raise ValueError(f"meteor_backend must be one of {self.METEOR_MODES}, got {meteor_backend!r}")
+        self._meteor_backend = meteor_backend
         self.use_gpt = use_gpt and HAS_OPENAI
         self.gpt_model = gpt_model
         self._client = OpenAI(api_key=gpt_api_key) if (self.use_gpt and gpt_api_key) else None
@@ -244,8 +256,33 @@ class B4DLEvaluator:
         }
         self.metric_backend['bleu4'] = ('pycocoevalcap-corpus' if HAS_COCO_BLEU
                                         else 'nltk-sentence-smoothed')
-        self.metric_backend['meteor'] = ('pycocoevalcap-meteor-1.5' if HAS_COCO_METEOR
-                                         else 'nltk-meteor-1.0')
+        # METEOR is reported dual-backend: NLTK-2005 (main; the algorithm &
+        # parameters of Banerjee & Lavie 2005, the paper's reference [2]) plus
+        # the Meteor-1.5 jar 'rank' variant (COCO convention, retuned in 2014;
+        # kept for continuity with the B0-B3 tables that used it exclusively).
+        self.metric_backend['meteor'] = {
+            'mode': self._meteor_backend,
+            'reported': ('pycocoevalcap-meteor-1.5'
+                         if self._meteor_backend == 'pycocoevalcap'
+                         else 'nltk-meteor-1.0'),
+            'nltk_2005': {
+                'implementation': 'nltk.translate.meteor_score (per-sample)',
+                'source': 'Banerjee & Lavie 2005 (B4DL paper ref [2])',
+                'params': {'alpha': 0.9, 'beta': 3.0, 'gamma': 0.5},
+                'modules': ['exact', 'porter-stem', 'wordnet-synonymy'],
+                'paraphrase': False,
+                'aggregation': 'per-sample-mean',
+                'nltk_version': getattr(nltk, '__version__', '?') if HAS_NLTK else None,
+            },
+            'pycocoevalcap_meteor_1_5': {
+                'implementation': 'pycocoevalcap Meteor-1.5 jar (java)',
+                'task': 'rank',
+                'params': {'alpha': 0.85, 'beta': 0.2, 'gamma': 0.6, 'delta': 0.75},
+                'modules': ['exact', 'stem', 'synonym', 'paraphrase'],
+                'weights': [1.0, 0.6, 0.8, 0.6],
+                'aggregation': 'EVAL corpus',
+            },
+        }
 
     @staticmethod
     def _resolve_bertscore_model(model_path: str) -> Tuple[str, int]:
@@ -370,35 +407,70 @@ class B4DLEvaluator:
                                         smoothing_function=smooth))
         return float(np.mean(scores)) if scores else 0.0
 
-    def compute_meteor(self, predictions: List[str], ground_truths: List[str]) -> float:
-        """METEOR via the pycocoevalcap Meteor-1.5 jar (needs java).
+    def _meteor_pycocoevalcap(self, predictions: List[str],
+                              ground_truths: List[str]) -> Optional[float]:
+        """Meteor-1.5 jar via pycocoevalcap ('rank' params, EVAL corpus).
 
-        Fallback: NLTK METEOR-1.0-style (no paraphrase table, different
-        parameters) — systematically higher and NOT comparable to the paper.
+        Returns None when the backend is unavailable or fails (the caller
+        decides the fallback), not a silent 0.0.
         """
-        if not predictions:
-            return 0.0
-        if HAS_COCO_METEOR:
-            meteor = None
-            try:
-                meteor = _DrainedMeteor()
-                gts = {i: [gt] for i, gt in enumerate(ground_truths)}
-                res = {i: [p] for i, p in enumerate(predictions)}
-                score, _ = meteor.compute_score(gts, res)
-                return float(score)
-            except Exception as e:
-                print(f"pycocoevalcap METEOR failed ({e}); falling back to NLTK.")
-            finally:
-                if meteor is not None:
-                    meteor.close()
-        if not HAS_NLTK:
-            return 0.0
+        if not predictions or not HAS_COCO_METEOR:
+            return None
+        meteor = None
+        try:
+            meteor = _DrainedMeteor()
+            gts = {i: [gt] for i, gt in enumerate(ground_truths)}
+            res = {i: [p] for i, p in enumerate(predictions)}
+            score, _ = meteor.compute_score(gts, res)
+            return float(score)
+        except Exception as e:
+            print(f"pycocoevalcap METEOR failed ({e}).")
+            return None
+        finally:
+            if meteor is not None:
+                meteor.close()
+
+    def _meteor_nltk_2005(self, predictions: List[str],
+                          ground_truths: List[str]) -> Optional[float]:
+        """NLTK METEOR — the algorithm and parameters of Banerjee & Lavie
+        2005 (the B4DL paper's reference [2]): alpha=0.9 / beta=3.0 /
+        gamma=0.5, exact+porter+WordNet-synonymy matching, no paraphrase
+        table, per-sample mean. This is the backend used for the reported
+        'meteor' value (unless mode='pycocoevalcap').
+
+        Returns None when NLTK is unavailable.
+        """
+        if not predictions or not HAS_NLTK:
+            return None
         scores = []
         for pred, gt in zip(predictions, ground_truths):
             pred_tokens = word_tokenize(pred.lower())
             gt_tokens = word_tokenize(gt.lower())
             scores.append(meteor_score([gt_tokens], pred_tokens))
         return float(np.mean(scores)) if scores else 0.0
+
+    def compute_meteor(self, predictions: List[str], ground_truths: List[str]) -> float:
+        """Reported METEOR per self._meteor_backend:
+          'nltk'           → NLTK-2005 (Banerjee & Lavie 2005 = paper ref [2])
+          'pycocoevalcap'  → Meteor-1.5 jar (COCO convention; B0-B3 tables)
+          'dual' (default) → NLTK-2005, with the jar value additionally
+                             reported as 'meteor_pycocoevalcap' by
+                             evaluate_task.
+        Falls back to the other backend when the selected one is missing.
+        """
+        if not predictions:
+            return 0.0
+        if self._meteor_backend == 'pycocoevalcap':
+            score = self._meteor_pycocoevalcap(predictions, ground_truths)
+            if score is None:
+                print("Warning: Meteor-1.5 jar unavailable; falling back to NLTK-2005.")
+                return self._meteor_nltk_2005(predictions, ground_truths) or 0.0
+            return score
+        score = self._meteor_nltk_2005(predictions, ground_truths)
+        if score is None:
+            print("Warning: NLTK METEOR unavailable; falling back to Meteor-1.5 jar.")
+            return self._meteor_pycocoevalcap(predictions, ground_truths) or 0.0
+        return score
 
     def compute_rouge_l(self, predictions: List[str], ground_truths: List[str]) -> float:
         if not HAS_ROUGE or not self.rouge_scorer or not predictions:
@@ -488,6 +560,10 @@ class B4DLEvaluator:
         elif task in self.COMPLEX_TASKS:
             metrics['bleu4'] = self.compute_bleu4(predictions, ground_truths)
             metrics['meteor'] = self.compute_meteor(predictions, ground_truths)
+            if self._meteor_backend == 'dual':
+                jar = self._meteor_pycocoevalcap(predictions, ground_truths)
+                if jar is not None:
+                    metrics['meteor_pycocoevalcap'] = jar
             metrics['rouge_l'] = self.compute_rouge_l(predictions, ground_truths)
             metrics['bertscore'] = self.compute_bertscore(predictions, ground_truths)
             if questions:
@@ -691,11 +767,17 @@ def main():
     parser.add_argument('--demo', action='store_true', help='Run with sample data')
     parser.add_argument('--bert_model', type=str, default=None,
                         help='Path to local roberta-large model (default: auto-detect)')
+    parser.add_argument('--meteor_backend', type=str, default='dual',
+                        choices=B4DLEvaluator.METEOR_MODES,
+                        help="'dual' (default): report NLTK-2005 meteor + "
+                             "meteor_pycocoevalcap (jar); 'nltk': NLTK-2005 "
+                             "only; 'pycocoevalcap': Meteor-1.5 jar only")
     args = parser.parse_args()
 
     evaluator = B4DLEvaluator(use_gpt=args.use_gpt, gpt_api_key=args.gpt_api_key,
                               gpt_model=args.gpt_model,
-                              bert_model_path=args.bert_model)
+                              bert_model_path=args.bert_model,
+                              meteor_backend=args.meteor_backend)
 
     print("=" * 50)
     print("B4DL Model Evaluation")

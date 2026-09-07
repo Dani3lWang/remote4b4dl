@@ -1,0 +1,17 @@
+[2026-08-29 19:35:52] 等待高 LR 训练退出（上限 12h）...
+[2026-08-29 20:25:54] 高 LR 训练已退出，等待 ckpt 落盘...
+-rw-r--r-- 1 root root 1033833961 Aug 29 20:18 ckpt_nuscenes/lidarclip_mm/last.ckpt
+[2026-08-29 20:27:54] 基线 val MSE probe...
+[2026-08-29 20:36:14] 启动短程退火: 3 epoch / OneCycle max_lr=1e-4→0 / seed=0 / load-only-model
+[2026-08-30 10:48:42] 退火训练退出 rc=0 日志: logs/train_anneal_0829_2036.log
+[2026-08-30 10:48:42] 对退火产物逐个 probe...
+[2026-08-30 10:48:42] probe ckpt_anneal/lidarclip_mm/epoch=1-step=7250.ckpt
+[2026-08-30 10:57:06] probe ckpt_anneal/lidarclip_mm/epoch=2-step=14750.ckpt
+[2026-08-30 11:05:18] probe ckpt_anneal/lidarclip_mm/epoch=2-step=15000.ckpt
+[2026-08-30 11:14:55] probe ckpt_anneal/lidarclip_mm/last.ckpt
+[2026-08-30 11:25:06] 链完成。val MSE 汇总（CSV 全部行）：
+2026-08-29 20:36:05,baseline,ckpt_nuscenes/lidarclip_mm/last.ckpt,113,3616,0.106093,0.021162
+2026-08-30 10:56:57,anneal/lidarclip_mm/epoch=1-step=7250,ckpt_anneal/lidarclip_mm/epoch=1-step=7250.ckpt,113,3616,0.102639,0.023761
+2026-08-30 11:05:08,anneal/lidarclip_mm/epoch=2-step=14750,ckpt_anneal/lidarclip_mm/epoch=2-step=14750.ckpt,113,3616,0.099170,0.023084
+2026-08-30 11:14:39,anneal/lidarclip_mm/epoch=2-step=15000,ckpt_anneal/lidarclip_mm/epoch=2-step=15000.ckpt,113,3616,0.099152,0.023128
+2026-08-30 11:24:47,anneal/lidarclip_mm/last,ckpt_anneal/lidarclip_mm/last.ckpt,113,3616,0.099166,0.023172
