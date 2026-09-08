@@ -34,7 +34,7 @@ python train.py --data-dir /path/to/nuScenes --name lidarclip_nuscenes \
 - `smoke_train.py`：3 batch × 1 epoch 冒烟测试；`early_stop_monitor_v2.py`：loss 连续 500 步降幅 <1% 则 SIGTERM 停训（基于 train_loss.csv 真值）
 - `validate_encoder_fit.py`：对比新训 nuScenes 编码器与旧 ONCE 权重的 MSE / 余弦结构 / 特征范数
 
-⚠️ **权重现状**：仓库原有的 `lidarclip/checkpoint/vit_l_14.ckpt` 是原版 LiDAR-CLIP 的 **ONCE 数据集**权重（非 nuScenes），存在 domain gap；官方 B4DL 从未发布编码器权重，必须用 nuScenes 自训。此前所有特征均为旧 ONCE 编码器产物，编码器定稿后需**全量重提**，不可增量混提。
+✅ **权重现状（2026-09-06 定稿）**：仓库原有 `lidarclip/checkpoint/vit_l_14.ckpt` 是原版 LiDAR-CLIP 的 **ONCE 数据集**权重（非 nuScenes），存在 domain gap，已废弃不用；官方 B4DL 从未发布编码器权重，只能 nuScenes 自训。定稿链 = nuScenes 高 LR 自训（step 26,550 判停，val MSE 0.1061）→ 短程退火 3ep（1e-4→0，**val MSE 0.0992**，−6.5%）→ `ckpt_anneal/lidarclip_mm/last.ckpt`（seed 0 可复现，探针记录 `logs/val_mse_probe.csv`）。B1 起全部下游特征已用该定稿编码器**全量重提**（stage1 28,130 帧 + stage2 850 场景，日志 `logs/extract_stage1_sample_token_b1.log`/`extract_stage2_b1.log`），旧 ONCE 特征备份在 `b4dl/stage1_features_once` 等 `*_once` 目录——新特征不可与旧特征增量混提。
 
 ## 特征提取
 
@@ -46,9 +46,9 @@ python train.py --data-dir /path/to/nuScenes --name lidarclip_nuscenes \
 | `extract_pc_features_sample_token.py`（新） | sample_token | stage1: `{sample_token}.npy` (1,768) | 配官方 162K stage1 方案（`build_stage1_from_lidarllm.py` 产出的数据 scene_id=sample_token） |
 
 ```bash
-# 官方 162K 对齐版
+# 官方 162K 对齐版（B1 起用退火定稿权重）
 python extract_pc_features_sample_token.py \
-    --checkpoint ./lidarclip/checkpoint/vit_l_14.ckpt \
+    --checkpoint ./ckpt_anneal/lidarclip_mm/last.ckpt \
     --scene-metadata /path/to/scene_metadata.json \
     --sample-json /path/to/nuScenes/v1.0-trainval/sample.json \
     --data-path /path/to/nuScenes \

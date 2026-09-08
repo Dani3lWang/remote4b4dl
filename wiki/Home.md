@@ -29,25 +29,31 @@ nuScenes 数据集（相机图像 + LiDAR 点云）
   └─ [mllm/] 预提取特征 + QA 数据 → VTimeLLM 三阶段训练 → 六任务评测
 ```
 
-## 复现状态速览（基线 B0，2026-08-29 锁定）
+## 复现状态速览（基线 B3，2026-09-06 起为当前最优）
 
-| 指标 | 复现 B0 | 论文 | 状态 |
+主指标已超论文，复现阶段闭环；改进阶段（B4a 等）进行中。B0→B4a 完整演进见 [[Reproduction-Log]]。
+
+| 指标 | 复现 B3 | 论文 | 状态 |
 |------|---------|------|------|
-| accuracy（existence+binary） | 0.7629 | 0.762 | ✅ 持平 |
-| mIoU（time_grounding） | 0.2696 | 0.311 | ❌ Δ-0.041 |
-| BLEU-4（语料级） | 0.0973 | 0.095 | ✅ |
-| BERTScore（roberta-large L17） | 0.8973 | 0.897 | ✅ 精确命中 |
-| ROUGE-L | 0.3244 | — | 口径一致 |
-| METEOR（Meteor-1.5 jar） | 0.1729 | 0.275 | ❌ 唯一遗留口径考证项 |
+| accuracy（existence+binary） | 0.7526 | 0.762 | ✅ 持平 |
+| mIoU（time_grounding） | **0.3467** | 0.311 | ✅ **超论文 +0.036** |
+| BLEU-4（语料级） | 0.0965 | 0.095 | ✅ |
+| METEOR（NLTK-2005 主口径） | 0.3366 | 0.275 | ✅ 超论文（09-07 溯源补算，详见 [[Inference-and-Evaluation]]） |
+| ROUGE-L | 0.3234 | 0.322 | ✅ |
+| BERTScore（roberta-large L17） | 0.8967 | 0.897 | ✅ 精确命中 |
 
-数据集产物已 100% 对齐（论文 Table 2 的 14 个数字精确吻合）；主要差距在编码器（官方未发布权重，自训中）与 time_grounding 定位精度。完整对照见 [[Paper-vs-Reproduction]]。
+- **官方对照（2026-09-02，决定性）**：官方发布 checkpoint 无 metatoken（mIoU 0.1737 ≈ 论文 Table 4"无 Metatoken"行）→ 论文 Table 3 完整模型从未发布；本仓库自研 metatoken 注入（meta2 relative-to-previous 语义）后为独立复现链中的**首个超论文结果**。编码器（官方未发布权重）已自训定稿，数据集产物 100% 对齐
+- **B4a 实验（2026-09-08 完结，负结果）**：B3 + TG 高帧段过采样（150,222 条）→ acc **0.7775**（existence 0.6761→0.7244）但 mIoU **0.3271** 显著回退（Δ-0.0196）——简单数据过采样不是 TG 定位瓶颈的解
+- **当前主差距**：TG 高帧段覆盖（GT start≥25 的测试样本预测落回该段仅 ~3%）与系统性 −3.9 帧偏早 → 病灶指向"输入无显式帧号信号"，下一步帧身份锚点消融 → RFT/DPO → GRPO（路线图见 [[Reproduction-Log]]）
+
+完整对照见 [[Paper-vs-Reproduction]]。
 
 ## 快速开始
 
 ```bash
-# 1. 环境（Python 3.10, PyTorch 2.5.1 cu124）
+# 1. 环境（Python 3.10；实测运行版本 torch 2.8.0+cu128 / transformers 4.47.0 / peft 0.13.2，版本锁定见 Installation）
 conda create -n wqlc python=3.10 -y && conda activate wqlc
-pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
+pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
 pip install -r mllm/requirements.txt   # ⚠️ 不要用根目录 requirements.txt
 
 # 2. 数据生成（需 OpenAI API key）
@@ -78,7 +84,7 @@ python evaluation/test_b4dl.py ...
 
 - [[Reproduction-Guide]] — 端到端复现实施指南（从零到 B0 基线）
 - [[Paper-vs-Reproduction]] — 与论文的逐项差异对照
-- [[Reproduction-Log]] — 复现时间线、基线 B0 锁定与文档索引
+- [[Reproduction-Log]] — 复现时间线、基线演进（B0→B4a）与文档索引
 
 **参考**
 

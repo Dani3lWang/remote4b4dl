@@ -43,6 +43,7 @@ python evaluation/test_b4dl.py \
 
 **关键参数**：
 
+- `--whole_scene`：B2 起的整场景模式（对齐官方 dataset.py）——视觉输入为该 scene 全部帧，不经切片；与 B2/B3/B4a 训练匹配，B0/B1（seqv3 切片）评测**不加**
 - `--per_sequence`：论文 Appendix C 对齐的 per-sequence 模式（特征切片到 QA 的包含序列）。⚠️ 仅在模型用 per-sequence 数据训练后才启用，否则训练-评测不匹配
 - `--frame_motion` + `--sequence_metadata`：配合 per_sequence，metatoken 按 QA 引用帧渲染真实描述（与训练注入同源）
 - `--answer_frames`：对 time_grounding 类问题用 GT 答案帧范围恢复包含序列（benchmark 丢失序列归属字段的双侧回退方案）。⚠️ 属 oracle 输入选择，报告中须声明
@@ -61,10 +62,10 @@ python evaluation/test_b4dl.py \
 | time_grounding | mIoU | 从答案正则提取 `from frame X to frame Y` 闭区间算交并比 |
 | description / temporal / comprehensive | BLEU-4、METEOR、ROUGE-L、BERTScore（可选 GPT-4o Score） | 三任务平均 |
 
-**指标口径（2026-08-29 修正后冻结）**：
+**指标口径（2026-08-29 修正冻结；METEOR 于 2026-09-07 双后端化）**：
 
 - BLEU-4：pycocoevalcap **语料级**（NLTK 句级偏高 ~15-17%，不可比）
-- METEOR：pycocoevalcap **Meteor-1.5 jar**（需系统 java；NLTK 1.0 式系统性偏高）——仓库修复了上游 stderr 管道死锁 bug
+- METEOR：默认 `meteor_backend='dual'` 双后端——**`meteor`（主口径）= NLTK-2005**（α0.9/β3.0/γ0.5、exact→Porter→WordNet、无 paraphrase，逐样本平均；即论文引用 [2] Banerjee & Lavie 2005 的忠实实现，2026-09-07 溯源结论）；`meteor_pycocoevalcap`（参考）= Meteor-1.5 jar（与 B0-B3 旧表衔接）。与论文对比一律用 `meteor`；jar 需系统 java，仓库修复过上游 stderr 管道死锁 bug
 - BERTScore：本地 roberta-large，**强制取第 17 层**（按 config 的 num_hidden_layers=24 取层会虚高 ~0.07）
 - GPT 缺失记 null 而非 0；实际使用的后端记录在结果 JSON 的 `metric_backend` 字段
 
@@ -81,6 +82,8 @@ python evaluation/test_b4dl.py \
 |------|------|
 | `scripts/run_b4dl_eval.sh` | 一键：建划分 → 评测 → 打印论文 Table 3 参考值；`--stage3`/`--no_meta` 等透传 |
 | `run_baseline_eval.sh` | baseline 版（无 per_sequence，stage2-full checkpoint） |
+| `evaluation/analyze_tg_regression.py` | TG 失败模式对比（`<runA_dir> <runB_dir>`）：复用评测同款区间正则 + 闭区间 IoU，按 GT start 分桶输出 mIoU/命中率/中心偏移，零 GPU |
+| `evaluation/recompute_dual_meteor.py` | 对已存 predictions 离线补算 dual METEOR（B0-B3 双口径补算用；B0 锚点断言 d=0.0000，零 GPU） |
 | `evaluation/build_test_split.py` | 把生成数据聚合为单文件 test_qa.json（优先 nuScenes 官方 val split 的 150 场景） |
 | `evaluation/split_dataset.py` | 划分校验：700/150 scene、各任务条数对齐论文 Table 2（test 六任务 3770/7525/2783/3770/4757/7540，合计 30,145） |
 | `evaluation/analyze_behavior.py` | 答案模式分布 / 混淆矩阵 / 模板复用度分析（诊断模型坍缩） |
@@ -102,7 +105,10 @@ python evaluation/test_b4dl.py \
 
 | 模型代际 | 评测参数 |
 |---------|---------|
-| seqv2 | `--per_sequence --frame_motion --sequence_metadata` |
-| seq（旧 per-sequence） | 只加 `--per_sequence` |
 | 旧模型（全 scene 输入） | 都不加 |
-| seqv3（当前） | `--per_sequence --frame_motion --sequence_metadata --answer_frames` |
+| seq（旧 per-sequence） | 只加 `--per_sequence` |
+| seqv2 | `--per_sequence --frame_motion --sequence_metadata` |
+| seqv3（B0/B1） | `--per_sequence --frame_motion --sequence_metadata --answer_frames` |
+| 整场景 B2/B3/B4a（当前） | `--whole_scene --per_sequence --answer_frames` |
+
+B 系列评测产物按代际归档在 `mllm/eval_results/stage2_full_seqv3_mixed{,_b1,_b2,_b3,_b4a}/`（predictions/metrics/日志，本地 gitignore 不入库），另有 `official_ckpt_nometa/`（官方权重对照）。
