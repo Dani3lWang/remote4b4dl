@@ -15,7 +15,7 @@ B4DL（Benchmark for 4D LiDAR LLM）是 ACM Multimedia 2025 论文的官方 PyTo
 ## 环境
 
 - **Conda 环境**：`wqlc`，Python 3.10
-- **核心依赖**：PyTorch 2.5.1 CUDA 12.4、transformers 4.31.0、deepspeed 0.16.4、peft 0.4.0、flash-attn 2.7.0
+- **核心依赖（2026-09-08 实测，此前记载的 4.31/0.4.0 已随 sm_120 SDPA 升级过期）**：PyTorch 2.8.0+cu128、transformers 4.47.0、deepspeed 0.16.4、peft 0.13.2、accelerate 1.3.0；flash-attn 未安装（2.x 不支持 RTX 5090 sm_120），训练/推理走 transformers 原生 SDPA
 - **权威依赖文件**：`mllm/requirements.txt`（不要用根目录的 `requirements.txt`，其版本过新且与 mllm 模块冲突）。评测 METEOR 为**双后端**（`B4DLEvaluator(meteor_backend='dual')` 默认）：`meteor` 主口径 = NLTK-2005（论文引用 [2] Banerjee & Lavie 2005 参数 α0.9/β3.0/γ0.5，B3=0.3366 超论文 0.275），`meteor_pycocoevalcap` 参考口径 = Meteor-1.5 jar（需系统 java：`apt-get install -y --no-install-recommends default-jre-headless`，与 B0-B3 旧表衔接）。详见 `docs/learn docs/B4DL_METEOR双口径溯源与评测规则_20260907.md`
 - 所有 Python 命令必须在 `wqlc` 环境中执行
 - **数据集**：B4DL 数据集托管在 [HuggingFace](https://huggingface.co/datasets/ccho4702/nuScenes-B4DL)；nuScenes 需自行下载
@@ -234,8 +234,8 @@ conda run -n wqlc python vtimellm/demo_gradio.py \
 - **Gradio 路径 bug**（已修复）：`demo_gradio.py` 改为使用脚本自身目录计算路径（`_script_dir`），不再依赖 CWD
 - **index 约束**：`start_index` / `end_index` 必须是 `SAVE_TERM`(10) 的倍数，否则脚本直接退出
 - **数据生成两步使用不同的数据加载方式**：`generate_description.py` 用 `ReadJson.readFiles()` 解析 metadata 并加载 nuScenes 图像；`generate_dataset.py` 直接读取已生成的描述 JSON，不再访问 nuScenes
-- **peft 版本锁定**：必须用 peft 0.4.0（旧式 API），Stage3 的 `merge_and_unload()` + 重新加 LoRA 的模式依赖此版本
-- **Flash Attention**：通过 monkey-patch（`llama_flash_attn_monkey_patch.py`）注入，锁定 transformers 4.31.0
+- **peft 版本**（2026-09 更新）：环境已升至 peft 0.13.2（旧文档称锁 0.4.0 已过期），Stage3 的 `merge_and_unload()` + 重新加 LoRA 模式在新版下验证可用（B4a 全链在跑为证）
+- **Flash Attention**：flash-attn 未安装（2.x 不支持 sm_120）；`train_mem.py` 尝试 monkey-patch 注入、ImportError 时静默回退 transformers 原生 SDPA（需 transformers ≥4.45，现环境 4.47.0 满足）
 - **DeepSpeed no_sync**：`train.py` 中对 `DeepSpeedEngine.no_sync` 做了 monkey-patch，原版在 ZeRO-3 梯度分区下会崩溃
 - **LiDAR-CLIP checkpoint**：PyTorch Lightning 格式，含非 tensor 对象（scheduler 等），加载需 `weights_only=False`，且用 `strict=False`（忽略旧版 bbox_head 的 key）
 - **训练数据集容错**：`LazySupervisedDataset` 在特征文件缺失时返回随机其他样本（`random.choice(self)`），会导致静默的数据丢失，检查日志中的异常打印
