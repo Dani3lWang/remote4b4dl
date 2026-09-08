@@ -40,14 +40,15 @@ mmb4dl/
 │
 ├── docs/
 │   ├── B4DL_复现方案.md          # 论文+官方仓库逐行解析的完整复现方案（71KB）
-│   ├── B4DL_训练评测报告_20260810.md
-│   ├── mmb4dl.pdf               # 论文原文
-│   ├── learn docs/              # 16 篇开发记录（审计、基线、分析，见 Reproduction-Log）
-│   └── 参考/                    # LiDAR-LLM 参考源码、训练手记
+│   ├── mmb4dl.pdf / mmb4dl-md/   # 论文原文 PDF 与 markdown 版
+│   ├── learn docs/               # 21 篇开发记录（审计/基线/评测/RL 分析，见 [[Reproduction-Log]]）
+│   └── 参考/                     # LiDAR-LLM 参考源码、训练手记
 │
-├── assets/                      # README 用的图示与 GIF
-├── Claude_record/               # 会话记录
-└── training_logs/               # 早期训练日志
+├── wiki/                         # 本 wiki 的页面源文件（与 docs/ 互链）
+├── backups/                      # 模型产物备份（B3_stage2_final_20260907.tar.gz + sha256 manifest；gitignore，仅存本机）
+├── assets/                       # README 用的图示与 GIF
+├── Claude_record/                # 会话记录
+└── training_logs/                # 早期训练日志
 ```
 
 ## mllm/scripts/ 速查
@@ -56,10 +57,13 @@ mmb4dl/
 |------|------|
 | `stage1.sh / stage2.sh / stage3.sh` | 标准三阶段（deepspeed zero3） |
 | `stage1_glm.sh / stage2_glm.sh` | ChatGLM backbone 版 |
-| `run_stage2_full_seqv3.sh` | 两阶段法驱动（Phase A → merge → Phase B，幂等） |
-| `run_stage2_full_seqv3_mixed.sh` | 混合法驱动（当前基线 B0 方案） |
-| `run_stage2_full_seqv3_mixed_b1.sh` | B1 变体（独立 output_dir 保 B0 可比） |
-| `run_b1_pipeline.sh` | B1 全流水线（重提特征 → stage1 162K → mixed-b1 → 评测） |
+| `run_stage2_full_seqv3.sh` | 两阶段法驱动（Phase A → merge → Phase B，幂等；已实测失败弃用） |
+| `run_stage2_full_seqv3_mixed.sh` | 混合法驱动（B0 方案） |
+| `run_stage2_full_seqv3_mixed_b1/b2/b3/b4a.sh` | B 系列变体（各代独立 output_dir；b2+ 内置 `--whole_scene`） |
+| `run_b1_pipeline.sh` | B1 全流水线（重提特征 → stage1 162K → mixed-b1 → 评测；支持 START_STAGE 断点恢复） |
+| `run_b2/b3/b4a_pipeline.sh` | 整场景系列两阶段链（28GB 显存门控 → 训练 → 冻结口径评测） |
+| `oversample_tg_highframe.py` | TG 高帧段（GT start≥25）×2 过采样（B4a 数据，150,222 条） |
+| `re_render_meta.py` | meta2：按 relative-to-previous 语义重渲染 meta 段（B3 数据） |
 | `merge_stage2.py` | LoRA merge 进 base 保存全量模型 |
 | `build_stage2_full_train.py` | HF 官方数据 → 训练格式（148,271 条 + TG 标签） |
 | `inject_metatoken.py` | metatoken + feat_indices/feat_range 注入 |
@@ -69,4 +73,4 @@ mmb4dl/
 
 ## 大文件存放约定
 
-预训练模型放 `mllm/base_model/`，checkpoint 放 `mllm/checkpoints/`，特征 `.npy` 放各 `b4dl/` 目录，评测数据放 `mllm/b4dl_dataset/` —— 均不入库（.gitignore），关键文件以 MD5 记录在 [[Reproduction-Log]]。
+预训练模型放 `mllm/base_model/`，checkpoint 放 `mllm/checkpoints/`，特征 `.npy` 放各 `b4dl/` 目录，评测数据放 `mllm/b4dl_dataset/`，评测产物（predictions/metrics）放 `mllm/eval_results/`（按代际子目录）——均不入库（.gitignore），关键文件以 MD5 记录在 [[Reproduction-Log]]；模型产物备份打 tar 放 `backups/`（B3 备份含 sha256 manifest）。
