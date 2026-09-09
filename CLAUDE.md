@@ -250,6 +250,11 @@ conda run -n wqlc python vtimellm/demo_gradio.py \
   - **数据划分（2026-08-24 对齐）**：HF 发布的 `dataset/nuScenes-B4DL/dataset/train/{stage2,stage3}.json`（148,271 条）**本身就是论文官方训练集**（700/150 划分的 train 部分，与官方 test_qa.json 的 150 scenes 零重叠），无需再划分。旧 `create_splits.py` 的 80/10/10 自创划分（seed 42）会把 850 scenes 混切、与官方测试集冲突，已废弃。一键重建：`python scripts/build_stage2_full_train.py --input_dir ../dataset/nuScenes-B4DL/dataset/train --output_dir ./b4dl_dataset` → 再跑 inject_metatoken 注入（seqv3 需 `--frame_motion --sequence_metadata --answer_frames`）
   - ⚠️ 训练和评测必须用相同代际的格式：seqv2 模型评测时加 `--per_sequence --frame_motion --sequence_metadata`；seq 模型只加 `--per_sequence`；旧模型都不加。time_grounding 类无帧号问题两侧都用全 scene 特征（benchmark 未提供序列归属，属数据级限制）
 
+## 规划与拆解文档
+
+- `docs/learn docs/B4DL_训练全流程分步详解_RL引进挂载点_20260907.md`：SFT 管线 A–E 阶段拆解 + RL（M1–M4）挂载点底稿
+- `docs/learn docs/B4DL_分割模块移植方案_AB路线_20260909.md`：动态目标分类/分割模块移植（Reason3D/MORE3D 方法），实验编号 **B5 系列**（B5-P0/P1 门控 + B5a 感知前端 + B5b token 解码头）；时序硬约束：B5b-4 输出接口冻结先于 RL M2
+
 ## Git 提交规范
 
 - 每次代码修改后自动 commit
