@@ -78,6 +78,10 @@ nuScenes 数据集（相机图像 + LiDAR 点云）
 
 - `<4DLiDAR>`：任务标记特殊 token（可训练 embedding 行）
 - `<video>`：视觉特征插入占位符
-- `<meta>`：后接 QA 所引用**首帧与末帧**的 ego 车辆运动状态自然语言描述（位置/地形/速度/转向/加速度），由 `mllm/scripts/ego_text.py` 统一渲染，训练与推理逐字符一致
+- `<meta>`：后接 QA 所引用帧段（整场景输入时为整段 0..N-1）ego 车辆运动状态自然语言描述（位置/地形/速度/转向/加速度），由 `mllm/scripts/ego_text.py` 统一渲染，训练与推理逐字符一致
+
+**metatoken 语义（2026-09-02 meta2 修复，[[Reproduction-Log]] 的 B3）**：早期实现把首帧恒渲染为 `at the starting position`、运动用**前向（next）差分**；对照论文 §4.1/Figure 6，正确语义为 **relative-to-previous**——每一帧描述其相对**前一帧**的方向/位移/速度/转向/加速度变化（样例 `slightly ahead and to the right`）。修复后帧 0 保留 fallback 描述，`re_render_meta.py` 对已注入 JSON 批量重渲染出 meta2 数据（113,053/148,271 条，无帧号的 35,218 条保留原样）。
+
+**输入构造两个代际**：B0/B1 为 per-sequence 切片（视觉输入只含 QA 引用的帧段）；B2 起（对齐官方 `dataset.py`）改为 `--whole_scene` **整场景输入**（39/40/41 帧全量喂入，QA 仍用 `--answer_frames` 做 meta 锚定与评测归属），见 [[Training]]。
 
 详见 [[Training]] 与 [[Inference-and-Evaluation]]。
