@@ -15,7 +15,7 @@
 
 - [[Reproduction-Guide]] — 端到端复现指南
 - [[Paper-vs-Reproduction]] — 与论文差异对照
-- [[Reproduction-Log]] — 复现记录与基线 B0
+- [[Reproduction-Log]] — 复现记录与基线演进（B0→B4a）
 
 **参考**
 

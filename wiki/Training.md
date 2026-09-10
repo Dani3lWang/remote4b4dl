@@ -57,7 +57,7 @@ bash scripts/stage3.sh [...]
 ```
 
 - **特征查找约定**：`{feat_folder}/{scene_id}.npy` —— 数据 JSON 的 `scene_id` 必须与特征文件名严格一致（stage1 新方案 scene_id=sample_token）
-- `feat_indices` 是 QA 所属序列的精确采样帧下标（论文输入 S_L），`feat_range` 是兼容闭区间；`<video>` token 位于 human 首条消息开头
+- `feat_indices` 是 QA 所属序列的精确采样帧下标（论文输入 S_L），`feat_range` 是兼容闭区间；`<video>` token 位于 human 首条消息开头；**B2 起整场景代际传 `--whole_scene`，跳过帧切片逻辑，视觉输入=该 scene 全部帧**（39/40/41 帧，与特征文件行数一致）
 - 数据源：HF `ccho4702/nuScenes-B4DL` 的 train 目录（stage2.json 68,695 + stage3.json 79,576 = **148,271 条**，本身就是论文官方训练集，700/150 划分，与官方 test 零重叠），由 `scripts/build_stage2_full_train.py` 转换并对 TG 答案打 `task="time_grounding"` 标签（13,124 条）
 
 ## Metatoken 注入
@@ -86,9 +86,22 @@ python scripts/inject_metatoken.py --input stage2_train.json --output stage2_tra
 
 ⚠️ **实测两阶段法失败**（2026-08-26）：简单任务格式漂移、exact match 归零（acc 0.0001），已回退混合法（见 [[Reproduction-Log]]）。
 
-### 混合法（当前基线 B0 采用）
+### 混合法（当前路线：整场景系列 B2/B3/B4a）
 
-148,271 条全部任务混合，**单 LoRA** 3 epochs lr 1e-4（r64/α128），`<4DLiDAR>`/`<meta>` 两个可训练 embedding 行，stage1 projector 用 95K nu-caption 数据重训。驱动脚本 `run_stage2_full_seqv3_mixed.sh`（B1 变体 `run_stage2_full_seqv3_mixed_b1.sh`，独立 output_dir 保 B0 可比）。
+148,271 条全任务混合、**单 LoRA** 3 epochs lr 1e-4（r64/α128）、`<4DLiDAR>`/`<meta>` 两个可训练 embedding 行的框架自 B0 沿用至今（stage1 projector 数据 B1 起升级为官方 162K 方案，见下）。B 系列每次只改一个上游变量：
+
+| 代号 | 数据/输入构造 | 唯一上游变量 | acc / mIoU |
+|------|--------------|--------------|-----------|
+| B0 | seqv3 切片 + 95K projector + 旧特征 | 基线锁定 | 0.7629 / 0.2696 |
+| B1 | 切片 + 162K projector + 新编码器特征 | projector 数据 + 特征 | 0.7787 / 0.2653 |
+| B2 | `--whole_scene` 整场景 + 旧 meta 语义 | 输入构造（对齐官方） | 0.7649 / 0.1992（TG 坍缩） |
+| B3 | 整场景 + **meta2**（relative-to-previous 语义） | meta 渲染语义 | 0.7526 / **0.3467** |
+| B4a | B3 配方 + TG 高帧段过采样 150,222 条 | 训练分布 | 0.7775 / 0.3271 |
+
+- **整场景输入**（B2+）：`dataset.py`/`test_b4dl.py` 加 `--whole_scene` 门控，视觉输入不再按 QA 序列切片、直接喂入整场景 39/40/41 帧（官方 dataset.py 同款），meta 锚定与 `--answer_frames` 归属逻辑不变
+- **meta2 数据**（B3）：`ego_text.py` 渲染改为论文 §4.1 relative-to-previous 语义；`re_render_meta.py` 对已注入 JSON 批量重渲染（113,053/148,271 条，35,218 条无帧号样本保留），产出 `stage2_full_train_seqv3_meta2_148k.json`
+- **B4a 数据**：`oversample_tg_highframe.py` 把 TG 中 GT start≥25 的 1,951 条样本 deepcopy 一份（150,222 = 148,271 + 1,951，断言校验），产出 `stage2_full_train_seqv3_meta2_oversampled_150k.json`
+- 驱动脚本：每代独立训练脚本 `run_stage2_full_seqv3_mixed{_b1,_b2,_b3,_b4a}.sh`（B0 为无后缀版）+ `run_b1/b2/b3/b4a_pipeline.sh` 两阶段链（28GB 显存门控 → 训练（成功判据 trainer_state epoch≥2.99，三次断点续训重试）→ 冻结口径评测）
 
 ### Stage1 数据（官方 162K 方案）
 
@@ -96,10 +109,13 @@ python scripts/inject_metatoken.py --input stage2_train.json --output stage2_tra
 
 ## 其他脚本
 
-- `run_b1_pipeline.sh`：B1 全流水线驱动（重提特征 → stage1 162K → mixed-b1 → 同口径评测）
+- `run_b1_pipeline.sh`：B1 全流水线驱动（重提特征 → stage1 162K → mixed-b1 → 同口径评测），支持 `START_STAGE` 起始阶段参数断点恢复
+- `run_b2/b3/b4a_pipeline.sh`：整场景系列训练→评测两阶段链（b4a 数据 = `oversample_tg_highframe.py` 产物）
+- `oversample_tg_highframe.py`：TG 高帧段（GT start≥25）×2 过采样数据构建（B4a 用，断言校验）
+- `re_render_meta.py`：meta2 批量重渲染（B3 用，见 [[Architecture]] 的 meta 语义）
 - `create_splits.py`：**已废弃**（80/10/10 自创划分会与官方测试集冲突），被 build_stage2_full_train.py 取代
 - `convert_lidarllm_to_stage1.py`：LiDAR-LLM 数据转 stage1 格式的旧版映射（frame_id 键控）
 - `eval_stage1_ppl.py` / `verify*.sh` / `verify_stage1_sample_data.py` / `verify_stage2.py`：评测与数据校验
 - `run_metatoken.sh` / `run_stage2_full*.sh` / `resume_stage2_full.sh`：各代际数据版本的训练驱动
 
-训练日志统一 tee 到 `mllm/training_logs/`。
+训练日志统一 tee 到 `mllm/training_logs/`（含 loss 曲线 PNG）。
