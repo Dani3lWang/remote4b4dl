@@ -59,3 +59,6 @@ models/
 
 # 本地代理配置
 .zcode/
+
+# 显存冒烟实测采样产物（mem_trace.csv / runner.log / train.log / beat 等，临时文件、不入库）
+mllm/_vram_smoke_*/
