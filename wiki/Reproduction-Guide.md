@@ -69,16 +69,19 @@ python scripts/build_stage2_full_train.py --input_dir <HF>/dataset/train --outpu
 # 5b. ego 运动元数据（从 nuScenes ego_pose 计算）
 python scripts/generate_ego_metadata.py --frame_motion ...
 
-# 5c. metatoken + 序列归属注入（seqv3 关键步骤）
-python scripts/inject_metatoken.py --input ./b4dl_dataset/stage2_train.json \
-    --output ./b4dl_dataset/stage2_train_seqv3.json \
+# 5c. metatoken + 序列归属注入（seqv3 关键步骤；输入用 5a 产出的合并基座）
+python scripts/inject_metatoken.py --input ./b4dl_dataset/stage2_full_train_148k.json \
+    --output ./b4dl_dataset/stage2_full_train_seqv3_148k.json \
+    --ego_meta ./b4dl_dataset/ego_metadata.json \
     --frame_motion ./b4dl_dataset/ego_frame_motion.json \
     --sequence_metadata ../encoders/lidarclip/annotations/sequence_metadata.json --answer_frames
-# stage3_train_seqv3.json 同理
+# 论文两阶段配方另用 5a 产出的 stage2_train.json / stage3_train.json 各跑一次（→ *_train_seqv3.json）
 
-# 5d.（B3+ 配方）按论文 relative-to-previous 语义重渲染 meta 段 → meta2 数据
-#     python scripts/re_render_meta.py（113,053/148,271 条被重渲染，35,218 条无帧号样本保留）
-#     B4a 配方再对 meta2 数据跑 scripts/oversample_tg_highframe.py（GT start≥25 ×2 → 150,222 条）
+# 5d.（B3+ 配方）按论文 relative-to-previous 语义重渲染 meta 段 → meta2 数据（B3 训练数据）
+python scripts/re_render_meta.py --data ./b4dl_dataset/stage2_full_train_seqv3_148k.json \
+    --frame_motion ./b4dl_dataset/ego_frame_motion.json \
+    --out ./b4dl_dataset/stage2_full_train_seqv3_meta2_148k.json   # 重渲染 113,053/148,271 条，35,218 条无帧号保留
+# B4a 配方再对 meta2 跑 scripts/oversample_tg_highframe.py（GT start≥25 ×2 → 150,222 条）
 ```
 
 **验收**：TG 条目的 feat_indices 覆盖 100%、GT 帧范围 100% ⊂ feat_range；训练/评测两侧 2783/2783 一致。
