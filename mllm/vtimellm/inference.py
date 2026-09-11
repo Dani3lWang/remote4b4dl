@@ -23,7 +23,15 @@ import numpy as np
 import clip
 
 
-def inference(model, image, query, tokenizer, do_sample=False, temperature=0.05):
+def inference(
+    model,
+    image,
+    query,
+    tokenizer,
+    do_sample=False,
+    temperature=0.05,
+    frame_indices=None,
+):
     conv = conv_templates["v1"].copy()
     conv.append_message(conv.roles[0], query)
     conv.append_message(conv.roles[1], None)
@@ -34,10 +42,16 @@ def inference(model, image, query, tokenizer, do_sample=False, temperature=0.05)
     keywords = [stop_str]
     stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
 
+    if frame_indices is None:
+        # Backward-compatible default for callers using a new checkpoint with
+        # a full scene tensor and no explicit metadata.
+        frame_indices = torch.arange(image.shape[-2], dtype=torch.long)
+
     with torch.inference_mode():
         gen_kwargs = dict(
             input_ids=input_ids,
             images=image[None,].cuda(),
+            frame_indices=[frame_indices],
             do_sample=do_sample,
             num_beams=1,
             # no_repeat_ngram_size=3,

@@ -22,6 +22,7 @@ deepspeed --include localhost:$gpu_vis --master_port $MASTER_PORT vtimellm/train
     --save_steps 200 \
     --save_total_limit 1 \
     --learning_rate 1e-3 \
+    --optim adamw_torch \
     --weight_decay 0. \
     --warmup_ratio 0.03 \
     --lr_scheduler_type "cosine" \
