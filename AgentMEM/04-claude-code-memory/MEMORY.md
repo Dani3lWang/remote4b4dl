@@ -1,1 +1,0 @@
-- [git-auto-commit](feedback_git_commit.md) — 每次代码修改后自动进行 git commit，使用中文提交信息

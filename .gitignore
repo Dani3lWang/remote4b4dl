@@ -62,3 +62,6 @@ models/
 
 # 显存冒烟实测采样产物（mem_trace.csv / runner.log / train.log / beat 等，临时文件、不入库）
 mllm/_vram_smoke_*/
+
+# Agent 记忆归档（2026-09-11 起取消 git 跟踪，仅本地保留）
+AgentMEM/
