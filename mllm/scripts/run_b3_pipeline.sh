@@ -8,12 +8,23 @@
 set -u
 START_STAGE=${1:-1}
 case "$START_STAGE" in 1|2) ;; *) echo "用法: bash $0 [1|2]"; exit 1 ;; esac
-cd /root/autodl-tmp/wql/mmb4dl/mllm
-eval "$(/root/autodl-tmp/miniconda3/bin/conda shell.bash hook)"
-conda activate wqlc
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+WQLC_PREFIX="${B4DL_ENV_PREFIX:-/root/autodl-tmp/.conda-stuff/envs/wqlc}"
+
+if [ ! -x "$WQLC_PREFIX/bin/python" ]; then
+    echo "错误: wqlc 环境不完整: $WQLC_PREFIX" >&2
+    echo "可通过 B4DL_ENV_PREFIX 指定环境目录。" >&2
+    exit 1
+fi
+
+export PATH="$WQLC_PREFIX/bin:$PATH"
+cd "$PROJECT_ROOT/mllm" || exit 1
 export HF_HUB_OFFLINE=1 HF_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export WANDB_MODE=offline PYTHONUNBUFFERED=1
+
+python scripts/preflight_b3.py --project-root "$PROJECT_ROOT" || exit 1
 
 if [ "$START_STAGE" -le 1 ]; then
 echo "===== 阶段1: mixed-b3 重训（整场景 + meta2）($(date '+%F %T')) ====="
@@ -53,7 +64,7 @@ for attempt in 1 2 3 4 5; do
         sleep 600
         continue
     fi
-    timeout 18000 /root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python -u evaluation/test_b4dl.py \
+    timeout 18000 "$WQLC_PREFIX/bin/python" -u evaluation/test_b4dl.py \
         --model_base ./base_model/vicuna-v1-5-7b \
         --pretrain_mm_mlp_adapter ./checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin \
         --stage2 ./checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-b3 \
