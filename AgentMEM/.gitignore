@@ -1,5 +1,0 @@
-# AgentMEM 默认 git 策略：记忆本体（01–04、08、09）可以提交；
-# 原始会话记录与含密钥的 agent 配置默认不提交。
-# 依据见 POTENTIAL_SECRETS.txt（由 tools/build_indexes.py 生成）。
-05-claude-code-sessions/
-07-agent-instructions/settings.local.json
