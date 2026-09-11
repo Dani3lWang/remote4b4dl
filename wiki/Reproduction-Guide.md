@@ -97,7 +97,7 @@ bash scripts/run_b3_pipeline.sh
 
 148,271 条全部任务混合（B4a 为过采样后 150,222 条），**单 LoRA**（r64/α128）3 epochs、lr 1e-4、bs 8×accum 16；`<4DLiDAR>`/`<meta>` 为可训练 embedding 行；B2 起驱动脚本传 `--whole_scene`（视觉输入 = 整场景 39/40/41 帧，对齐官方，见 [[Training]]）。
 
-> ⚠️ 不要用两阶段法（`run_stage2_full_seqv3.sh`，Phase A→merge→Phase B）：实测简单任务格式漂移、exact match 归零（acc 0.0001），已回退混合法，详见 [[Paper-vs-Reproduction]]。
+> ⚠️ 不要使用历史两阶段法（Phase A→merge→Phase B）：实测简单任务格式漂移、exact match 归零（acc 0.0001），已回退混合法，详见 [[Paper-vs-Reproduction]]。
 
 **产出**：`checkpoints/...-stage2-...-b3`（LoRA adapter + non_lora_trainables.bin）。断点续训由脚本自动处理（trainer_state.json 校验）。
 

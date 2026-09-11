@@ -57,8 +57,8 @@ mmb4dl/
 |------|------|
 | `stage1.sh / stage2.sh / stage3.sh` | 标准三阶段（deepspeed zero3） |
 | `stage1_glm.sh / stage2_glm.sh` | ChatGLM backbone 版 |
-| `run_stage2_full_seqv3.sh` | 两阶段法驱动（Phase A → merge → Phase B，幂等；已实测失败弃用） |
 | `run_stage2_full_seqv3_mixed.sh` | 混合法驱动（B0 方案） |
+| `run_stage2_full_seqv3_mixed_paper2ep.sh` / `run_stage2_full_seqv3_mixed_framepos2ep.sh` | 论文兼容 2-Epoch 基线 / 帧位置对照实验 |
 | `run_stage2_full_seqv3_mixed_b1/b2/b3/b4a.sh` | B 系列变体（各代独立 output_dir；b2+ 内置 `--whole_scene`） |
 | `run_b1_pipeline.sh` | B1 全流水线（重提特征 → stage1 162K → mixed-b1 → 评测；支持 START_STAGE 断点恢复） |
 | `run_b2/b3/b4a_pipeline.sh` | 整场景系列两阶段链（28GB 显存门控 → 训练 → 冻结口径评测） |
@@ -68,7 +68,6 @@ mmb4dl/
 | `build_stage2_full_train.py` | HF 官方数据 → 训练格式（148,271 条 + TG 标签） |
 | `inject_metatoken.py` | metatoken + feat_indices/feat_range 注入 |
 | `generate_ego_metadata.py` / `ego_text.py` | ego 运动元数据生成 / 文本渲染单一来源 |
-| `run_b4dl_eval.sh` | 一键评测（划分 + 评测 + 指标） |
 | `zero2.json / zero3.json / zero3_offload.json` | DeepSpeed 配置 |
 
 ## 大文件存放约定
