@@ -1,5 +1,6 @@
 import os
 import shutil
+import json
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
 import torch
@@ -37,6 +38,32 @@ def load_pretrained_model(args, stage2=None, stage3=None):
         if model.lm_head.weight.shape[0] != token_num:
             model.lm_head.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
             model.model.embed_tokens.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
+
+    # A stage-2 adapter may contain the optional frame-position module in its
+    # config. Read that config before constructing vision modules so the module
+    # exists when non_lora_trainables.bin is loaded below. Explicit inference
+    # arguments take precedence; old checkpoints remain disabled by default.
+    stage_config = {}
+    if stage2 is not None:
+        config_path = os.path.join(stage2, 'config.json')
+        if os.path.isfile(config_path):
+            with open(config_path, 'r', encoding='utf-8') as handle:
+                stage_config = json.load(handle)
+
+    use_frame_position_embedding = getattr(
+        args, 'use_frame_position_embedding', None
+    )
+    if use_frame_position_embedding is None:
+        use_frame_position_embedding = stage_config.get(
+            'use_frame_position_embedding', False
+        )
+    frame_position_max = getattr(args, 'frame_position_max', None)
+    if frame_position_max is None:
+        frame_position_max = stage_config.get('frame_position_max', 64)
+    setattr(args, 'use_frame_position_embedding', bool(use_frame_position_embedding))
+    setattr(args, 'frame_position_max', int(frame_position_max))
+    model.config.use_frame_position_embedding = bool(use_frame_position_embedding)
+    model.config.frame_position_max = int(frame_position_max)
 
     # ── Register B4DL special tokens at inference time (paper §4.1) ──
     # <4DLiDAR> and <meta> must be single tokens for the model to use

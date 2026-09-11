@@ -43,6 +43,7 @@ class VTimeLLMChatGLMForCausalLM(ChatGLMForConditionalGeneration, VTimeLLMMetaFo
         return_dict: Optional[bool] = None,
         return_last_logit: Optional[bool] = False,
         images: Optional[torch.FloatTensor] = None,
+        frame_indices=None,
         cache_position: Optional[torch.LongTensor] = None,
     ):
 
@@ -60,7 +61,8 @@ class VTimeLLMChatGLMForCausalLM(ChatGLMForConditionalGeneration, VTimeLLMMetaFo
                 attention_mask,
                 past_key_values,
                 labels,
-                images
+                images,
+                frame_indices,
             )
 
         return super().forward(
@@ -79,11 +81,14 @@ class VTimeLLMChatGLMForCausalLM(ChatGLMForConditionalGeneration, VTimeLLMMetaFo
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, inputs_embeds=None, **kwargs):
         images = kwargs.pop("images", None)
+        frame_indices = kwargs.pop("frame_indices", None)
         _inputs = super().prepare_inputs_for_generation(
             input_ids, past_key_values=past_key_values, inputs_embeds=inputs_embeds, **kwargs
         )
         if images is not None:
             _inputs['images'] = images
+        if frame_indices is not None:
+            _inputs['frame_indices'] = frame_indices
         return _inputs
 
 AutoConfig.register("VTimeLLM_ChatGLM", VTimeLLMChatGLMConfig)

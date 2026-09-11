@@ -379,9 +379,16 @@ def _save_checkpoint(results: dict, path: str):
     os.replace(tmp, path)  # atomic on POSIX
 
 
-def run_inference(model, tokenizer, features: torch.Tensor, query: str) -> str:
+def run_inference(model, tokenizer, features: torch.Tensor, query: str,
+                  frame_indices=None) -> str:
     """Run the B4DL autoregressive generation for one QA. Mirrors inference()."""
-    return inference(model, features, query, tokenizer)
+    return inference(
+        model,
+        features,
+        query,
+        tokenizer,
+        frame_indices=frame_indices,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -590,13 +597,24 @@ def main():
             # whole scene, matching the official implementation.
             if getattr(args, 'whole_scene', False):
                 feat_used = feat
+                frame_indices = list(range(int(feat.shape[0])))
             elif getattr(args, 'per_sequence', False):
                 sel = resolve_feat_slice(
                     it, question, sequence_ranges,
                     gt=gt, answer_frames=getattr(args, 'answer_frames', False))
-                feat_used = slice_features(feat, sel)
+                if sel:
+                    valid = [int(i) for i in sel if 0 <= int(i) < feat.shape[0]]
+                else:
+                    valid = []
+                if valid:
+                    feat_used = feat[valid]
+                    frame_indices = valid
+                else:
+                    feat_used = feat
+                    frame_indices = list(range(int(feat.shape[0])))
             else:
                 feat_used = feat
+                frame_indices = list(range(int(feat.shape[0])))
 
             query = build_query(
                 question,
@@ -611,7 +629,10 @@ def main():
                 task=it.get('task'),
             )
             try:
-                pred = run_inference(model, tokenizer, feat_used, query)
+                pred = run_inference(
+                    model, tokenizer, feat_used, query,
+                    frame_indices=frame_indices,
+                )
             except Exception as e:
                 skipped += 1
                 print(f"  ! inference failed for {scene_id}: {e}")

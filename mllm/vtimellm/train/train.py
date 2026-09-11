@@ -59,6 +59,17 @@ class ModelArguments:
     version: Optional[str] = field(default="v0")
     tune_mm_mlp_adapter: bool = field(default=False)
     pretrain_mm_mlp_adapter: Optional[str] = field(default=None)
+    use_frame_position_embedding: bool = field(
+        default=False,
+        metadata={
+            "help": "Add a learnable absolute scene-frame embedding to each "
+                    "projected LiDAR frame."
+        },
+    )
+    frame_position_max: int = field(
+        default=64,
+        metadata={"help": "Maximum supported absolute scene frame index."},
+    )
 
 
 @dataclass
@@ -251,6 +262,23 @@ def train():
     local_rank = training_args.local_rank
     compute_dtype = (torch.float16 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32))
 
+    rank0_print(
+        "[training-config] "
+        f"stage={training_args.training_stage} "
+        f"epochs={training_args.num_train_epochs} "
+        f"lr={training_args.learning_rate} "
+        f"micro_batch={training_args.per_device_train_batch_size} "
+        f"grad_accum={training_args.gradient_accumulation_steps} "
+        f"effective_batch={training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps} "
+        f"lora={training_args.lora_enable}(r={training_args.lora_r},alpha={training_args.lora_alpha},dropout={training_args.lora_dropout}) "
+        f"freeze_projector={training_args.freeze_mm_mlp_adapter} "
+        f"bf16={training_args.bf16} fp16={training_args.fp16} "
+        f"max_length={training_args.model_max_length} "
+        f"optimizer={training_args.optim} scheduler={training_args.lr_scheduler_type} "
+        f"warmup_ratio={training_args.warmup_ratio} weight_decay={training_args.weight_decay} "
+        f"frame_position={model_args.use_frame_position_embedding}(max={model_args.frame_position_max})"
+    )
+
     bnb_model_from_pretrained_args = {}
     if training_args.bits in [4, 8]:
         from transformers import BitsAndBytesConfig
@@ -279,6 +307,10 @@ def train():
             cache_dir=training_args.cache_dir,
             **bnb_model_from_pretrained_args
         )
+    model.config.use_frame_position_embedding = bool(
+        model_args.use_frame_position_embedding
+    )
+    model.config.frame_position_max = int(model_args.frame_position_max)
     model.config.use_cache = False
 
     if training_args.bits in [4, 8]:
@@ -417,6 +449,19 @@ def train():
         if training_args.freeze_mm_mlp_adapter:
             for p in model.get_model().mm_projector.parameters():
                 p.requires_grad = False
+
+        if model_args.use_frame_position_embedding:
+            position_embedding = model.get_model().frame_position_embedding
+            position_embedding.requires_grad_(True)
+            position_embedding.to(
+                dtype=compute_dtype,
+                device=training_args.device,
+            )
+            rank0_print(
+                "Frame position embedding trainable: "
+                f"{position_embedding.num_embeddings} x "
+                f"{position_embedding.embedding_dim} (zero initialized)"
+            )
 
     if training_args.bits in [4, 8]:
         model.get_model().mm_projector.to(dtype=compute_dtype, device=training_args.device)

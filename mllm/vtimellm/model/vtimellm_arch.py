@@ -8,8 +8,46 @@ class VTimeLLMMetaModel:
     def initialize_vision_modules(self, model_args):
         pretrain_mm_mlp_adapter = model_args.pretrain_mm_mlp_adapter
 
+        # Frame positions are an optional B4DL extension.  Keep the default
+        # disabled so checkpoints produced before this feature retain their
+        # original architecture and inference behaviour.
+        use_frame_position_embedding = getattr(
+            model_args,
+            'use_frame_position_embedding',
+            getattr(self.config, 'use_frame_position_embedding', False),
+        )
+        frame_position_max = getattr(
+            model_args,
+            'frame_position_max',
+            getattr(self.config, 'frame_position_max', 64),
+        )
+        frame_position_max = int(frame_position_max)
+        if frame_position_max <= 0:
+            raise ValueError(
+                f"frame_position_max must be positive, got {frame_position_max}"
+            )
+        self.config.use_frame_position_embedding = bool(
+            use_frame_position_embedding
+        )
+        self.config.frame_position_max = frame_position_max
+
         if not hasattr(self, 'mm_projector'):
             self.mm_projector = nn.Linear(768, self.config.hidden_size)
+
+        if self.config.use_frame_position_embedding:
+            if not hasattr(self, 'frame_position_embedding'):
+                self.frame_position_embedding = nn.Embedding(
+                    frame_position_max, self.config.hidden_size
+                )
+                # Zero initialization makes the pre-training forward pass
+                # exactly match the B3 baseline before position learning.
+                nn.init.zeros_(self.frame_position_embedding.weight)
+            elif self.frame_position_embedding.num_embeddings != frame_position_max:
+                raise ValueError(
+                    "Existing frame_position_embedding has "
+                    f"{self.frame_position_embedding.num_embeddings} entries, "
+                    f"but frame_position_max={frame_position_max}."
+                )
 
         if pretrain_mm_mlp_adapter is not None:
             mm_projector_weights = torch.load(pretrain_mm_mlp_adapter, map_location='cpu')
@@ -27,7 +65,14 @@ class VTimeLLMMetaForCausalLM(ABC):
         pass
 
     def prepare_inputs_labels_for_multimodal(
-        self, input_ids, position_ids, attention_mask, past_key_values, labels, images
+        self,
+        input_ids,
+        position_ids,
+        attention_mask,
+        past_key_values,
+        labels,
+        images,
+        frame_indices=None,
     ):
         # print(position_ids, attention_mask)
         # if past_key_values:
@@ -57,6 +102,68 @@ class VTimeLLMMetaForCausalLM(ABC):
             # image_features = [x.flatten(0, 1) for x in image_features]
         else:
             image_features = self.get_model().mm_projector(images)
+
+        # Normalize both supported image layouts to a per-sample list.  The
+        # collator uses a list for variable-length scenes, while inference
+        # commonly supplies a [B, N, 768] tensor.
+        if not isinstance(image_features, (list, tuple)):
+            if image_features.ndim == 2:
+                image_features = image_features.unsqueeze(0)
+            image_features = list(image_features)
+
+        if getattr(self.config, 'use_frame_position_embedding', False):
+            if frame_indices is None:
+                raise ValueError(
+                    "frame_indices is required when "
+                    "use_frame_position_embedding=True"
+                )
+            if torch.is_tensor(frame_indices):
+                if frame_indices.ndim == 1:
+                    frame_indices = [frame_indices]
+                elif frame_indices.ndim == 2:
+                    frame_indices = list(frame_indices)
+                else:
+                    raise ValueError(
+                        "frame_indices tensor must have shape [N] or [B, N], "
+                        f"got {tuple(frame_indices.shape)}"
+                    )
+            else:
+                frame_indices = list(frame_indices)
+
+            if len(frame_indices) != len(image_features):
+                raise ValueError(
+                    "frame_indices batch size does not match image features: "
+                    f"{len(frame_indices)} vs {len(image_features)}"
+                )
+
+            position_embedding = self.get_model().frame_position_embedding
+            max_position = position_embedding.num_embeddings
+            positioned_features = []
+            for sample_idx, (features, indices) in enumerate(
+                zip(image_features, frame_indices)
+            ):
+                indices = torch.as_tensor(
+                    indices, dtype=torch.long, device=features.device
+                )
+                if indices.ndim != 1:
+                    raise ValueError(
+                        f"frame_indices[{sample_idx}] must be one-dimensional, "
+                        f"got {tuple(indices.shape)}"
+                    )
+                if indices.numel() != features.shape[0]:
+                    raise ValueError(
+                        f"frame_indices[{sample_idx}] has {indices.numel()} entries "
+                        f"for {features.shape[0]} feature frames"
+                    )
+                if indices.numel() > 0 and (
+                    int(indices.min()) < 0 or int(indices.max()) >= max_position
+                ):
+                    raise ValueError(
+                        f"frame_indices[{sample_idx}] must be in [0, {max_position - 1}]"
+                    )
+                positions = position_embedding(indices).to(dtype=features.dtype)
+                positioned_features.append(features + positions)
+            image_features = positioned_features
         # print([image.shape for image in image_features])
         
         _labels = labels
