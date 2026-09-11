@@ -80,7 +80,6 @@ python evaluation/test_b4dl.py \
 
 | 脚本 | 用途 |
 |------|------|
-| `scripts/run_b4dl_eval.sh` | 一键：建划分 → 评测 → 打印论文 Table 3 参考值；`--stage3`/`--no_meta` 等透传 |
 | `run_baseline_eval.sh` | baseline 版（无 per_sequence，stage2-full checkpoint） |
 | `evaluation/analyze_tg_regression.py` | TG 失败模式对比（`<runA_dir> <runB_dir>`）：复用评测同款区间正则 + 闭区间 IoU，按 GT start 分桶输出 mIoU/命中率/中心偏移，零 GPU |
 | `evaluation/recompute_dual_meteor.py` | 对已存 predictions 离线补算 dual METEOR（B0-B3 双口径补算用；B0 锚点断言 d=0.0000，零 GPU） |

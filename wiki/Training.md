@@ -75,16 +75,14 @@ python scripts/inject_metatoken.py --input stage2_train.json --output stage2_tra
 
 ## 复现采用的训练方案
 
-### 两阶段法（论文/官方 stage2.sh+stage3.sh 流程）
+### 论文兼容 2-Epoch 实验
 
-`scripts/run_stage2_full_seqv3.sh` 幂等驱动器：
+当前对照实验使用两条完全同配置的 Stage2 入口：
 
-- **Phase A**：`stage2_train_seqv3.json`（简单任务）训 LoRA —— 2 epochs，lr 1e-4，bs 8×accum 16，r64/α128，tf32
-- **Merge**：`scripts/merge_stage2.py` 用 `load_pretrained_model` 加载 base+projector+LoRA 后 `merge_and_unload`，保存全量模型（并把 stage1 的 mm_projector.bin 复制进去）
-- **Phase B**：`stage3_train_seqv3.json`（复杂任务）在 merged 模型上训**新 LoRA** —— 3 epochs，lr 2e-5
-- 评测时 `--stage2 <stage2-seqv3> --stage3 <stage3-seqv3>` 双 LoRA 依次 merge
+- `scripts/run_stage2_full_seqv3_mixed_paper2ep.sh`：2-Epoch 无帧位置基线
+- `scripts/run_stage2_full_seqv3_mixed_framepos2ep.sh`：仅增加零初始化绝对帧位置 embedding
 
-⚠️ **实测两阶段法失败**（2026-08-26）：简单任务格式漂移、exact match 归零（acc 0.0001），已回退混合法（见 [[Reproduction-Log]]）。
+完整参数、归因规则和验收标准见 `mllm/docs/train_2ep_frame_position.md`。历史两阶段法已移除，避免误用。
 
 ### 混合法（当前路线：整场景系列 B2/B3/B4a）
 
@@ -113,9 +111,9 @@ python scripts/inject_metatoken.py --input stage2_train.json --output stage2_tra
 - `run_b2/b3/b4a_pipeline.sh`：整场景系列训练→评测两阶段链（b4a 数据 = `oversample_tg_highframe.py` 产物）
 - `oversample_tg_highframe.py`：TG 高帧段（GT start≥25）×2 过采样数据构建（B4a 用，断言校验）
 - `re_render_meta.py`：meta2 批量重渲染（B3 用，见 [[Architecture]] 的 meta 语义）
-- `create_splits.py`：**已废弃**（80/10/10 自创划分会与官方测试集冲突），被 build_stage2_full_train.py 取代
+- `build_stage2_full_train.py`：使用 HF 官方训练划分构建 Stage2 全量数据，替代已移除的自定义划分脚本
 - `convert_lidarllm_to_stage1.py`：LiDAR-LLM 数据转 stage1 格式的旧版映射（frame_id 键控）
-- `eval_stage1_ppl.py` / `verify*.sh` / `verify_stage1_sample_data.py` / `verify_stage2.py`：评测与数据校验
-- `run_metatoken.sh` / `run_stage2_full*.sh` / `resume_stage2_full.sh`：各代际数据版本的训练驱动
+- `eval_stage1_ppl.py` / `verify_stage1_sample_data.py` / `verify_stage2.py` / `verify_frame_position.py`：评测与数据校验
+- `run_metatoken.sh` / `stage1.sh` / `stage2.sh` / `stage3.sh`：数据准备与标准训练驱动
 
 训练日志统一 tee 到 `mllm/training_logs/`（含 loss 曲线 PNG）。

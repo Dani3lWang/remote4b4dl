@@ -9,7 +9,7 @@ HF 发布的 `ccho4702/nuScenes-B4DL` train 目录（stage2.json + stage3.json�
 本身就是论文的官方训练集：699 个 train scene 与官方 test_qa.json 的
 150 个 scene 零重叠，无需（也不应）再做任何额外划分。
 
-本脚本替代旧的 create_splits.py（80/10/10 自创划分会把 850 个 scene
+本脚本替代旧的自定义划分脚本（80/10/10 自创划分会把 850 个 scene
 混在一起切，切出的内部 test 与官方测试集冲突，导致训练数据被砍到
 118,722 条/559 scenes）：
 
