@@ -1,7 +1,8 @@
 import json, re
+from pathlib import Path
 from collections import Counter
 
-with open('/root/autodl-tmp/wql/mmb4dl/mllm/evaluation/predictions_full.json') as f:
+with (Path(__file__).resolve().parent / "predictions_full.json").open() as f:
     data = json.load(f)
 
 print("=" * 60)

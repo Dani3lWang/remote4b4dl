@@ -10,10 +10,12 @@ import os
 import signal
 import subprocess
 import time
+from pathlib import Path
 
-CSV = "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip/logs/train_loss.csv"
-LOG = "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip/logs/early_stop_monitor_v2.log"
-STATE = "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip/logs/early_stop_state_v2.json"
+LIDARCLIP_ROOT = Path(__file__).resolve().parent
+CSV = LIDARCLIP_ROOT / "logs" / "train_loss.csv"
+LOG = LIDARCLIP_ROOT / "logs" / "early_stop_monitor_v2.log"
+STATE = LIDARCLIP_ROOT / "logs" / "early_stop_state_v2.json"
 INTERVAL = 600
 WINDOW = 500
 THRESH = 0.01

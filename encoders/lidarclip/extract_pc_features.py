@@ -3,6 +3,7 @@ import argparse
 import os, json
 import numpy as np
 import shutil
+from pathlib import Path
 
 from tqdm import tqdm
 
@@ -19,10 +20,15 @@ def create_clean_directory(directory_path):
     os.makedirs(directory_path)  # Create a fresh directory
 
 
+PROJECT_ROOT = Path(os.environ.get("B4DL_ROOT", Path(__file__).resolve().parents[2])).resolve()
+DEFAULT_NUSCENES_ROOT = str(
+    Path(os.environ.get("B4DL_NUSCENES_ROOT", PROJECT_ROOT.parent / "nuScenes")).resolve()
+)
+
 DEFAULT_DATA_PATHS = {
     "once": "/proj/nlp4adas/datasets/once",
-    "nuscenes": "/root/autodl-tmp/Datasets/nuScenes/",
-    "with_path": "/root/autodl-tmp/Datasets/nuScenes/"
+    "nuscenes": DEFAULT_NUSCENES_ROOT,
+    "with_path": DEFAULT_NUSCENES_ROOT,
 }
 
 

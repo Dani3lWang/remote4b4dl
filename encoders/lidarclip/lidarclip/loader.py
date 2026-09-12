@@ -4,6 +4,7 @@ import os
 import os.path as osp
 from copy import deepcopy
 from os.path import join
+from pathlib import Path
 from typing import List, Tuple
 
 import cv2
@@ -87,7 +88,6 @@ class NuscenesImageLidarDataset(Dataset):
         
         #################################### for 750 scenes only #########################################
 #         print("ok_scene_tokens: ", len(ok_scene_tokens))
-#         with open("/home/youngwoo.shin/lidarclip/annotations/sequence_metadata.json", "r") as f:
 #             seq_data = json.load(f)
 #         filtered_scene_list = []
 #         for seq in seq_data[-600:]:
@@ -796,8 +796,11 @@ def demo_dataset():
 
     _, clip_preprocess = clip.load("ViT-B/32")
 
-    nuscenes_datadir = "/home/s0001396/Documents/phd/datasets/nuscenes"
-    datadir = "/home/s0001396/Documents/phd/datasets/once"
+    project_root = Path(os.environ.get("B4DL_ROOT", Path(__file__).resolve().parents[3])).resolve()
+    nuscenes_datadir = os.environ.get(
+        "B4DL_NUSCENES_ROOT", str(project_root.parent / "nuScenes")
+    )
+    datadir = os.environ.get("B4DL_ONCE_ROOT", str(project_root.parent / "once"))
     loader = build_loader(
         datadir,
         clip_preprocess,

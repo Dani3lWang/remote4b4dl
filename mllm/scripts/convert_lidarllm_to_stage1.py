@@ -18,7 +18,7 @@
 
 用法:
     python convert_lidarllm_to_stage1.py \
-        --nuscenes_root /root/autodl-tmp/Datasets/nuScenes \
+        --nuscenes_root /path/to/nuScenes \
         --metadata ./b4dl_dataset/metadata/sequence_metadata.json \
         --feat_folder ../encoders/lidarclip/b4dl/stage1_features \
         --output_dir ./b4dl_dataset

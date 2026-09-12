@@ -17,6 +17,7 @@ token 随机丢弃）——与 extract_pc_features.py 的提取约定一致，�
 import argparse
 import os
 import time
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
@@ -26,11 +27,16 @@ from pytorch_lightning import seed_everything
 from lidarclip.loader import build_loader
 from lidarclip.model.sst import LidarEncoderSST
 
+PROJECT_ROOT = Path(os.environ.get("B4DL_ROOT", Path(__file__).resolve().parents[2])).resolve()
+DEFAULT_NUSCENES_ROOT = Path(
+    os.environ.get("B4DL_NUSCENES_ROOT", PROJECT_ROOT.parent / "nuScenes")
+).resolve()
+
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", required=True)
-    p.add_argument("--data-dir", default="/root/autodl-tmp/Datasets/nuScenes")
+    p.add_argument("--data-dir", default=str(DEFAULT_NUSCENES_ROOT))
     p.add_argument("--clip-model", default="ViT-L/14")
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--workers", type=int, default=8)

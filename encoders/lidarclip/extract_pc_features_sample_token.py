@@ -17,17 +17,23 @@
     conda run -n wqlc python extract_pc_features_sample_token.py \
         --checkpoint ./lidarclip/checkpoint/vit_l_14.ckpt \
         --scene_metadata ./annotations/scene_metadata.json \
-        --sample_json /root/autodl-tmp/Datasets/nuScenes/v1.0-trainval/sample.json \
-        --data_path /root/autodl-tmp/Datasets/nuScenes \
+        --sample_json /path/to/nuScenes/v1.0-trainval/sample.json \
+        --data_path /path/to/nuScenes \
         --save_dir ./b4dl/stage1_features_sample
 """
 import os
 import json
 import argparse
 import shutil
+from pathlib import Path
 
 import numpy as np
 import torch
+
+PROJECT_ROOT = Path(os.environ.get("B4DL_ROOT", Path(__file__).resolve().parents[2])).resolve()
+DEFAULT_NUSCENES_ROOT = Path(
+    os.environ.get("B4DL_NUSCENES_ROOT", PROJECT_ROOT.parent / "nuScenes")
+).resolve()
 from tqdm import tqdm
 
 import clip
@@ -150,11 +156,11 @@ def parse_args():
                         default="./lidarclip/checkpoint/vit_l_14.ckpt")
     parser.add_argument("--clip-version", type=str, default="ViT-L/14")
     parser.add_argument("--data-path", type=str,
-                        default="/root/autodl-tmp/Datasets/nuScenes/")
+                        default=str(DEFAULT_NUSCENES_ROOT))
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--sample-json", type=str,
-                        default="/root/autodl-tmp/Datasets/nuScenes/v1.0-trainval/sample.json")
+                        default=str(DEFAULT_NUSCENES_ROOT / "v1.0-trainval" / "sample.json"))
     parser.add_argument("--max-batches", type=int, default=0,
                         help="冒烟测试: 只跑前 N 个 batch (0 = 全量)")
     parser.add_argument("--scene-metadata", type=str,

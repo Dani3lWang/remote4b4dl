@@ -6,9 +6,19 @@
 # 但预测仅 4% 落在高帧段、30+ 帧为 0；测试集同分布，补齐先验后 mIoU 有直接上升空间。
 # 其余（整场景输入、meta2、162K projector、3ep、lr 1e-4、LoRA r64/α128、ZeRO-3）与 B3 完全一致。
 # 断点续训：mllm train.py 已按步数数值排序取最新（e8639e2），此处 sort -V 与其对齐。
-cd /root/autodl-tmp/wql/mmb4dl/mllm
-eval "$(/root/autodl-tmp/miniconda3/bin/conda shell.bash hook)"
-conda activate wqlc
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
+[ -x "$WQLC_PREFIX/bin/deepspeed" ] || { echo "Error: wqlc environment not found: $WQLC_PREFIX" >&2; exit 1; }
+export PATH="$WQLC_PREFIX/bin:$PATH"
+cd "$PROJECT_ROOT/mllm" || exit 1
+
+"$WQLC_PREFIX/bin/python" scripts/preflight_b3.py \
+    --project-root "$PROJECT_ROOT" \
+    --train-data stage2_full_train_seqv3_meta2_oversampled_150k.json \
+    --expected-train-count 150222 \
+    --run-label B4a \
+    --require-cuda || exit 1
 
 echo "===== B4a MIXED TRAINING (TG high-frame oversampled data) ====="
 echo "Start: $(date)"

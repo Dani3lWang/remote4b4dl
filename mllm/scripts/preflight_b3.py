@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the complete local data/model closure required by B3 training."""
+"""Verify the local data/model closure required by a B3/B4-style run."""
 
 from __future__ import annotations
 
@@ -67,6 +67,13 @@ def main() -> int:
         default=Path(__file__).resolve().parents[2],
     )
     parser.add_argument("--require-cuda", action="store_true")
+    parser.add_argument(
+        "--train-data",
+        default="stage2_full_train_seqv3_meta2_148k.json",
+        help="Training JSON filename under mllm/b4dl_dataset",
+    )
+    parser.add_argument("--expected-train-count", type=int, default=EXPECTED["b3_train"])
+    parser.add_argument("--run-label", default="B3")
     args = parser.parse_args()
 
     root = args.project_root.resolve()
@@ -86,18 +93,25 @@ def main() -> int:
     check_feature_shapes(feature_root / "stage1_features_sample", stage1_ids, True)
     del stage1_ids
 
-    b3 = load_json(dataset_dir / "stage2_full_train_seqv3_meta2_148k.json")
-    if len(b3) != EXPECTED["b3_train"]:
-        raise RuntimeError(f"B3 train: {len(b3):,} 条，预期 {EXPECTED['b3_train']:,}")
-    b3_ids = check_feature_coverage(b3, feature_root / "stage2_features", "B3 train")
-    del b3
+    train_records = load_json(dataset_dir / args.train_data)
+    if len(train_records) != args.expected_train_count:
+        raise RuntimeError(
+            f"{args.run_label} train: {len(train_records):,} 条，"
+            f"预期 {args.expected_train_count:,}"
+        )
+    train_ids = check_feature_coverage(
+        train_records, feature_root / "stage2_features", f"{args.run_label} train"
+    )
+    del train_records
 
     test = load_json(dataset_dir / "test_qa.json")
     if len(test) != EXPECTED["test"]:
         raise RuntimeError(f"test_qa: {len(test):,} 条，预期 {EXPECTED['test']:,}")
-    test_ids = check_feature_coverage(test, feature_root / "stage2_features", "B3 test")
+    test_ids = check_feature_coverage(
+        test, feature_root / "stage2_features", f"{args.run_label} test"
+    )
     del test
-    check_feature_shapes(feature_root / "stage2_features", b3_ids | test_ids, False)
+    check_feature_shapes(feature_root / "stage2_features", train_ids | test_ids, False)
 
     base = mllm / "base_model" / "vicuna-v1-5-7b"
     index_path = base / "pytorch_model.bin.index.json"
@@ -139,11 +153,11 @@ def main() -> int:
 
         print(f"[OK] torch: {torch.__version__}; CUDA available={torch.cuda.is_available()}")
         if args.require_cuda and not torch.cuda.is_available():
-            raise RuntimeError("未检测到 CUDA GPU，不能启动 B3 训练")
+            raise RuntimeError(f"未检测到 CUDA GPU，不能启动 {args.run_label} 训练")
     except ImportError as exc:
         raise RuntimeError("当前 Python 环境缺少 torch") from exc
 
-    print("[PASS] B3 训练与评测数据闭包完整")
+    print(f"[PASS] {args.run_label} 训练与评测数据闭包完整")
     return 0
 
 

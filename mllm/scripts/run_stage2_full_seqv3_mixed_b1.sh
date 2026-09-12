@@ -3,9 +3,12 @@
 # 仅两处不同——① stage1 projector 换 162K 重训版（同一路径，重训后自动生效）；
 # ② 独立 output_dir -mixed-b1，B0 的 checkpoint 与评测产物保持原封不动。
 # 断点续训：mllm train.py 已按步数数值排序取最新（e8639e2），此处 sort -V 与其对齐。
-cd /root/autodl-tmp/wql/mmb4dl/mllm
-eval "$(/root/autodl-tmp/miniconda3/bin/conda shell.bash hook)"
-conda activate wqlc
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
+[ -x "$WQLC_PREFIX/bin/deepspeed" ] || { echo "Error: wqlc environment not found: $WQLC_PREFIX" >&2; exit 1; }
+export PATH="$WQLC_PREFIX/bin:$PATH"
+cd "$PROJECT_ROOT/mllm" || exit 1
 
 echo "===== B1 MIXED TRAINING (seqv3 data + 162K projector) ====="
 echo "Start: $(date)"

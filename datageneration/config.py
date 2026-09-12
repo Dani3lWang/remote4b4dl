@@ -1,5 +1,8 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+PROJECT_ROOT = Path(os.environ.get("B4DL_ROOT", Path(__file__).resolve().parent.parent)).resolve()
 
 @dataclass
 class Config:
@@ -31,10 +34,14 @@ class Config:
     END_INDEX = 1000
     SAVE_TERM = 10
 
-    NUSCENES_ROOT = "/root/autodl-tmp/Datasets/nuScenes/"
+    NUSCENES_ROOT = str(
+        Path(os.environ.get("B4DL_NUSCENES_ROOT", PROJECT_ROOT.parent / "nuScenes")).resolve()
+    )
     NUSCENES_VERSION = "v1.0-trainval" #v1.0-mini
 
-    DATAROOT = "./data"
+    DATAROOT = str(
+        Path(os.environ.get("B4DL_DATA_ROOT", PROJECT_ROOT / "datageneration" / "data")).resolve()
+    )
     
     METADATA_DIR = DATAROOT + "/metadata"
     SEQUENCE_METADATA_PATH = METADATA_DIR + "/sequence_metadata.json"    
