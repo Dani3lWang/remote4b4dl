@@ -63,8 +63,8 @@ def main():
     input_ids = torch.tensor([[1, IMAGE_TOKEN_INDEX, 2]], dtype=torch.long)
     attention_mask = torch.ones_like(input_ids)
     labels = torch.full_like(input_ids, IGNORE_INDEX)
-    images = torch.tensor(
-        [[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]], dtype=torch.float32
+    images = (
+        torch.arange(2 * 768, dtype=torch.float32).reshape(1, 2, 768) / 768.0
     )
 
     _, _, _, _, baseline_embeds, _ = model.prepare_inputs_labels_for_multimodal(
