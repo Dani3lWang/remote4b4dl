@@ -32,7 +32,7 @@ B3_MIOU=0.3467
 B3_ACC=0.7526
 SIGMA=0.013
 MIN_FREE_GB=8
-EVAL_WAIT_SECS=21600
+EVAL_WAIT_SECS=32400
 
 avail_gb() { local a; a=$(df -BG --output=avail "$PROJECT_ROOT" 2>/dev/null | tail -1 | tr -dc '0-9'); echo "${a:-999}"; }
 
@@ -94,6 +94,7 @@ elif pgrep -f "test_b4dl.py.*$(basename "$B3_DIR")" > /dev/null 2>&1; then
         pgrep -f "test_b4dl.py.*$(basename "$B3_DIR")" > /dev/null 2>&1 || {
             echo "在跑的评测已退出但没有产出 metrics.json，链停止（避免重复占卡）"; exit 1; }
         sleep 120; WAITED=$((WAITED+120))
+        [ $((WAITED % 600)) -eq 0 ] && echo "[$(date '+%F %T')] 仍在等待 migration_b3/metrics.json（已等 ${WAITED}s）"
     done
     echo "[$(date '+%F %T')] 等到 metrics.json（等待 ${WAITED}s）"
 else
