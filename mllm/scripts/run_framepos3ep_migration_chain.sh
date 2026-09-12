@@ -64,9 +64,10 @@ report() {   # $1=结果目录名
     METRICS="./eval_results/$1/metrics.json" LABEL="$1" REF="$B3_MIOU" "$PY" -c "
 import json, os
 f = json.load(open(os.environ['METRICS']))['final_scores']
+g = lambda k: f.get(k, float('nan'))
 print(f\"  {os.environ['LABEL']:14s} acc={f['accuracy']:.4f} mIoU={f['miou']:.4f} \"
-      f\"(Δvs B3 {f['miou']-float(os.environ['REF']):+.4f}) bleu4={f['bleu4']:.4f} \"
-      f\"rouge_l={f['rouge_l']:.4f} meteor={f.get('meteor',0):.4f} bertscore={f.get('bertscore',0):.4f}\")"
+      f\"(Δvs B3 {f['miou']-float(os.environ['REF']):+.4f}) bleu4={g('bleu4'):.4f} \"
+      f\"rouge_l={g('rouge_l'):.4f} meteor={g('meteor'):.4f} bertscore={g('bertscore'):.4f}\")"
 }
 
 gate_vs_b3() {   # $1=结果目录名 $2=展示标签；ΔmIoU 超过显著阈值 → 返回非 0

@@ -1,5 +1,10 @@
 # 2-Epoch Frame-Position Experiments
 
+> **已弃用（2026-09-12）**：下面这对 2ep 脚本需要各训一轮（合计 ~24h）。实际改用的实验是
+> `scripts/run_stage2_full_seqv3_mixed_framepos3ep.sh`，直接以已训完的 B3（整场景+meta2, 3ep）
+> 作无帧位置对照，只多训一组；由 `scripts/run_framepos3ep_migration_chain.sh` 编排。
+> 本文档下述超参说明对 3ep 脚本同样适用。
+
 These two Stage2 entries use the same B3 mixed-data recipe and differ only in
 the optional frame-position module:
 
