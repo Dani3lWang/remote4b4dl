@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Small CPU smoke test for the optional frame-position path.
 
-Run from ``mllm/`` in the training environment:
+Run in the training environment (any working directory):
 
-    python scripts/verify_frame_position.py
+    python mllm/scripts/verify_frame_position.py
 
 The test deliberately uses a tiny dummy multimodal model, so it does not
 load Vicuna, a checkpoint, or LiDAR features.
@@ -11,8 +11,14 @@ load Vicuna, a checkpoint, or LiDAR features.
 
 from types import SimpleNamespace
 
+import os
+import sys
+
 import torch
 import torch.nn as nn
+
+# vtimellm is not pip-installed in this repo; every entry point adds mllm/ itself.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vtimellm.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX
 from vtimellm.model.vtimellm_arch import (
