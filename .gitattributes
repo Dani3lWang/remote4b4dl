@@ -1,2 +1,5 @@
 mllm/data/*.json filter=lfs diff=lfs merge=lfs -text
 mllm/b4dl_dataset/*.json filter=lfs diff=lfs merge=lfs -text
+
+# Windows 工作副本也必须保持 LF：这些脚本只在 Linux 服务器上执行
+*.sh text eol=lf
