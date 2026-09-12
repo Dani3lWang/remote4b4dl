@@ -1,6 +1,7 @@
 import json
 import os
 from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 from PIL import ImageOps
@@ -177,8 +178,8 @@ def demo_dataset():
 
     _, clip_preprocess = clip.load("ViT-B/32")
 
-    # datadir = "/home/s0001396/Documents/phd/datasets/once"
-    datadir = "/Users/s0000960/data/once"
+    project_root = Path(os.environ.get("B4DL_ROOT", Path(__file__).resolve().parents[3])).resolve()
+    datadir = os.environ.get("B4DL_ONCE_ROOT", str(project_root.parent / "once"))
     loader = build_anno_loader(datadir, clip_preprocess, num_workers=0, batch_size=2, split="val")
     images, lidars, annos, metas = next(iter(loader))
 

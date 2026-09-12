@@ -1,10 +1,12 @@
 import torch
 import os
+from pathlib import Path
 
 # ================= 配置区域 =================
-MODEL_PATH = "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip/pretrained/ViT-L-14.pt"          # 你的模型文件路径
-WEIGHT_PATH = "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip/lidarclip/checkpoint/vit_l_14.ckpt"       # 你的权重文件路径
-OUTPUT_PATH = "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip/pretrained/ViT-L-14-mer.pt"  # 整合后保存的新模型路径
+LIDARCLIP_ROOT = Path(__file__).resolve().parents[1]
+MODEL_PATH = LIDARCLIP_ROOT / "pretrained" / "ViT-L-14.pt"
+WEIGHT_PATH = LIDARCLIP_ROOT / "lidarclip" / "checkpoint" / "vit_l_14.ckpt"
+OUTPUT_PATH = LIDARCLIP_ROOT / "pretrained" / "ViT-L-14-mer.pt"
 # ==========================================
 
 print("🚀 开始加载模型与权重...")

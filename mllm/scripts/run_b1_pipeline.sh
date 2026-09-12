@@ -11,25 +11,34 @@
 set -u
 START_STAGE=${1:-1}
 case "$START_STAGE" in 1|2|3|4) ;; *) echo "用法: bash $0 [1|2|3|4]，默认 1 全链"; exit 1 ;; esac
-cd /root/autodl-tmp/wql/mmb4dl/mllm
-eval "$(/root/autodl-tmp/miniconda3/bin/conda shell.bash hook)"
-conda activate wqlc
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
+NUSCENES_ROOT="${B4DL_NUSCENES_ROOT:-$(dirname "$PROJECT_ROOT")/nuScenes}"
+[ -x "$WQLC_PREFIX/bin/python" ] || { echo "错误: wqlc 环境不存在: $WQLC_PREFIX" >&2; exit 1; }
+export PATH="$WQLC_PREFIX/bin:$PATH"
+cd "$PROJECT_ROOT/mllm" || exit 1
 export HF_HUB_OFFLINE=1 HF_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export WANDB_MODE=offline PYTHONUNBUFFERED=1
 
-ENC=/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip
+ENC="$PROJECT_ROOT/encoders/lidarclip"
 CKPT=$ENC/ckpt_anneal/lidarclip_mm/last.ckpt
 [ -f "$CKPT" ] || { echo "错误: 编码器 $CKPT 不存在"; exit 1; }
 
 if [ "$START_STAGE" -le 1 ]; then
+[ -f "$NUSCENES_ROOT/v1.0-trainval/sample.json" ] || {
+    echo "错误: nuScenes 未完整迁移到 $NUSCENES_ROOT（缺少 v1.0-trainval/sample.json）" >&2
+    echo "可通过 B4DL_NUSCENES_ROOT 指定完整数据集目录。" >&2
+    exit 1
+}
 echo "===== 阶段1a: stage1 sample_token 特征重提 ($(date '+%F %T')) ====="
 cd "$ENC"
 python extract_pc_features_sample_token.py \
     --checkpoint "$CKPT" \
-    --scene-metadata /root/autodl-tmp/wql/mmb4dl/dataset/nuScenes-B4DL/metadata/scene_metadata.json \
-    --sample-json /root/autodl-tmp/Datasets/nuScenes/v1.0-trainval/sample.json \
-    --data-path /root/autodl-tmp/Datasets/nuScenes \
+    --scene-metadata "$PROJECT_ROOT/dataset/nuScenes-B4DL/metadata/scene_metadata.json" \
+    --sample-json "$NUSCENES_ROOT/v1.0-trainval/sample.json" \
+    --data-path "$NUSCENES_ROOT" \
     --save-dir ./b4dl/stage1_features_sample \
     > logs/extract_stage1_sample_token_b1.log 2>&1
 rc=$?
@@ -43,7 +52,7 @@ echo "===== 阶段1b: stage2 per-scene 特征重提 ($(date '+%F %T')) ====="
 python extract_pc_features.py \
     --checkpoint "$CKPT" \
     --dataset-name with_path \
-    --data-path /root/autodl-tmp/Datasets/nuScenes \
+    --data-path "$NUSCENES_ROOT" \
     --scene-json-path ./annotations/scene_metadata.json \
     --frame-json-path ./annotations/sequence_metadata.json \
     --stage1-save-dir ./b4dl/stage1_features \
@@ -58,7 +67,7 @@ echo "stage2 特征数: $n2（预期 850）"
 fi
 
 if [ "$START_STAGE" -le 2 ]; then
-cd /root/autodl-tmp/wql/mmb4dl/mllm
+cd "$PROJECT_ROOT/mllm" || exit 1
 echo "===== 阶段2: stage1 162K projector 重训 ($(date '+%F %T')) ====="
 GATE_OK=0
 for i in $(seq 1 12); do

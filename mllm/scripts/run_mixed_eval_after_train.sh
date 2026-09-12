@@ -4,7 +4,10 @@
 # 用法: bash scripts/run_mixed_eval_after_train.sh  （nohup/后台运行）
 set -u
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
+cd "$PROJECT_ROOT/mllm" || exit 1
 
 TRAIN_PID=885593
 CKPT_DIR=./checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed
@@ -34,8 +37,8 @@ mkdir -p "$EVAL_OUT"
 
 # 评测主命令（与 stage23_seqv3 同参数，仅单 --stage2；GPU 若被 CoRViD 占满则每 30 分钟重试）
 PY=python3.10
-if [ -x /root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python3.10 ]; then
-    PY=/root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python3.10
+if [ -x "$WQLC_PREFIX/bin/python3.10" ]; then
+    PY="$WQLC_PREFIX/bin/python3.10"
 fi
 
 # 关键：HF Hub 网络在本机被卡死（curl huggingface.co 无响应），

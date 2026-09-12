@@ -14,12 +14,14 @@ import re
 import signal
 import subprocess
 import time
+from pathlib import Path
 
 import torch
 
-CKPT_DIR = "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip/ckpt_nuscenes/lidarclip_mm"
-LOG = "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip/logs/early_stop_monitor.log"
-STATE = "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip/logs/early_stop_state.json"
+LIDARCLIP_ROOT = Path(__file__).resolve().parent
+CKPT_DIR = LIDARCLIP_ROOT / "ckpt_nuscenes" / "lidarclip_mm"
+LOG = LIDARCLIP_ROOT / "logs" / "early_stop_monitor.log"
+STATE = LIDARCLIP_ROOT / "logs" / "early_stop_state.json"
 INTERVAL = 600          # 检查间隔（秒）
 WINDOW = 500            # 规则窗口（步）
 THRESH = 0.01           # 降幅阈值 1%

@@ -5,9 +5,12 @@
 # 真实帧 metatoken + feat_indices 精确采样帧）
 # projector: 95K nu-caption 重训版（stage1 2026-08-25）
 # 超参对齐 seqv2-148k（acc 0.7647 的配置）：3 epochs lr 1e-4，无 tf32。
-cd /root/autodl-tmp/wql/mmb4dl/mllm
-eval "$(/root/autodl-tmp/miniconda3/bin/conda shell.bash hook)"
-conda activate wqlc
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
+[ -x "$WQLC_PREFIX/bin/deepspeed" ] || { echo "Error: wqlc environment not found: $WQLC_PREFIX" >&2; exit 1; }
+export PATH="$WQLC_PREFIX/bin:$PATH"
+cd "$PROJECT_ROOT/mllm" || exit 1
 
 echo "===== MIXED TRAINING (paper §4.2 simple+complex, seqv3 data) ====="
 echo "Start: $(date)"

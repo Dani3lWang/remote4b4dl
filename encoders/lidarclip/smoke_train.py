@@ -3,14 +3,20 @@ import os
 import sys
 import time
 import importlib.util
+from pathlib import Path
 
 import torch
 
-sys.path.insert(0, "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip")
-os.chdir("/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip")
+LIDARCLIP_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(os.environ.get("B4DL_ROOT", LIDARCLIP_ROOT.parents[1])).resolve()
+DATA_DIR = Path(
+    os.environ.get("B4DL_NUSCENES_ROOT", PROJECT_ROOT.parent / "nuScenes")
+).resolve()
+sys.path.insert(0, str(LIDARCLIP_ROOT))
+os.chdir(LIDARCLIP_ROOT)
 
 spec = importlib.util.spec_from_file_location(
-    "lc_train", "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip/train.py"
+    "lc_train", LIDARCLIP_ROOT / "train.py"
 )
 train_mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(train_mod)
@@ -18,7 +24,6 @@ spec.loader.exec_module(train_mod)
 import clip
 from lidarclip.loader import build_loader
 
-DATA_DIR = "/root/autodl-tmp/Datasets/nuScenes"
 BATCH = 8
 
 print("== loading CLIP ViT-L/14 ==", flush=True)

@@ -3,11 +3,13 @@ import os
 import sys
 import time
 import importlib.util
+from pathlib import Path
 
 import torch
 
-sys.path.insert(0, "/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip")
-os.chdir("/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip")
+LIDARCLIP_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(LIDARCLIP_ROOT))
+os.chdir(LIDARCLIP_ROOT)
 
 spec = importlib.util.spec_from_file_location("lc_train", "train.py")
 m = importlib.util.module_from_spec(spec)
@@ -68,7 +70,11 @@ from lidarclip.loader import build_loader
 clip_model, pre = clip.load("ViT-L/14", jit=False)
 clip.model.convert_weights(clip_model); clip_model.eval()
 enc = m.LidarEncoderSST("lidarclip/model/sst_encoder_only_config.py", 768).cuda().train()
-loader = build_loader("/root/autodl-tmp/Datasets/nuScenes", pre, batch_size=8, num_workers=8, split="trainval", dataset_name="nuscenes")
+PROJECT_ROOT = Path(os.environ.get("B4DL_ROOT", LIDARCLIP_ROOT.parents[1])).resolve()
+NUSCENES_ROOT = Path(
+    os.environ.get("B4DL_NUSCENES_ROOT", PROJECT_ROOT.parent / "nuScenes")
+).resolve()
+loader = build_loader(str(NUSCENES_ROOT), pre, batch_size=8, num_workers=8, split="trainval", dataset_name="nuscenes")
 it = iter(loader)
 opt = torch.optim.Adam(enc.parameters(), lr=1e-5)
 for trial in range(3):

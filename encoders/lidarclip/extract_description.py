@@ -6,6 +6,13 @@ from nuscenes.utils.data_classes import Box
 from pyquaternion import Quaternion
 from tqdm import tqdm
 import argparse
+from pathlib import Path
+
+PROJECT_ROOT = Path(os.environ.get("B4DL_ROOT", Path(__file__).resolve().parents[2])).resolve()
+LIDARCLIP_ROOT = Path(__file__).resolve().parent
+DEFAULT_NUSCENES_ROOT = str(
+    Path(os.environ.get("B4DL_NUSCENES_ROOT", PROJECT_ROOT.parent / "nuScenes")).resolve()
+)
 import random
 
 
@@ -600,11 +607,8 @@ NUSCENES_SPLITS = {
 }
 
 DEFAULT_DATA_PATHS = {
-    # "train": "/mnt/nfs_shared_data/dataset/nuScenes/",
-    # "train-only": "/mnt/nfs_shared_data/dataset/nuScenes/",
-    # "val": "/mnt/nfs_shared_data/dataset/nuScenes/",
-    "trainval": "/mnt/nfs_shared_data/dataset/cch/nuScenes/",
-    "test": "/mnt/nfs_shared_data/dataset/nuScenes/v1.0-test/",
+    "trainval": DEFAULT_NUSCENES_ROOT,
+    "test": DEFAULT_NUSCENES_ROOT,
     "mini": "./v1.0-mini/",
 }
 
@@ -617,7 +621,7 @@ def create_clean_directory(directory_path):
 ### 4️⃣ PROCESS SCENE-BY-SCENE TO AVOID MEMORY OVERFLOW ###
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--save-dir", type=str, default="/home/youngwoo.shin/lidarclip/GT_annotations_old_and_new/")
+    parser.add_argument("--save-dir", type=str, default=str(LIDARCLIP_ROOT / "GT_annotations_old_and_new"))
     parser.add_argument("--split", type=str, default="trainval", choices=["mini", "trainval", "test"])
     args = parser.parse_args()
     

@@ -9,8 +9,13 @@
 #     3) 对退火产物逐个 val probe → 以 val MSE 最低者为最终编码器候选
 #   tmux 会话 b4dlanneal 内运行。只读等待当前训练，绝不杀进程。
 set -u
-cd /root/autodl-tmp/wql/mmb4dl/encoders/lidarclip
-PY=/root/autodl-tmp/.conda-stuff/envs/wqlc/bin/python
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
+NUSCENES_ROOT="${B4DL_NUSCENES_ROOT:-$(dirname "$PROJECT_ROOT")/nuScenes}"
+PY="$WQLC_PREFIX/bin/python"
+[ -x "$PY" ] || { echo "错误: Python 环境不存在: $WQLC_PREFIX" >&2; exit 1; }
+cd "$SCRIPT_DIR" || exit 1
 export WANDB_MODE=offline
 
 PAT="train.py --name lidarclip_nuscenes"
@@ -45,7 +50,7 @@ mv logs/train_loss.csv "logs/train_loss_highlr_$(date +%m%d_%H%M).csv" 2>/dev/nu
 echo "[$(date '+%F %T')] 启动短程退火: 3 epoch / OneCycle max_lr=1e-4→0 / seed=0 / load-only-model"
 ANNEAL_LOG="logs/train_anneal_$(date +%m%d_%H%M).log"
 $PY train.py --name lidarclip_anneal --checkpoint-save-dir ./ckpt_anneal \
-    --batch-size 32 --workers 16 --data-dir /root/autodl-tmp/Datasets/nuScenes \
+    --batch-size 32 --workers 16 --nuscenes-datadir "$NUSCENES_ROOT" \
     --clip-model ViT-L/14 --dataset-name nuscenes \
     --checkpoint "$BASE_CKPT" --load-only-model \
     --max-epochs 3 --scheduler-max-lr 1e-4 --seed 0 \

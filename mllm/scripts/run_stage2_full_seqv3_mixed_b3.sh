@@ -8,7 +8,7 @@
 # 断点续训：mllm train.py 已按步数数值排序取最新（e8639e2），此处 sort -V 与其对齐。
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-WQLC_PREFIX="${B4DL_ENV_PREFIX:-/root/autodl-tmp/.conda-stuff/envs/wqlc}"
+WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
 
 if [ ! -x "$WQLC_PREFIX/bin/python" ] || [ ! -x "$WQLC_PREFIX/bin/deepspeed" ]; then
     echo "错误: wqlc 环境不完整: $WQLC_PREFIX" >&2

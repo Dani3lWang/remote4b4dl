@@ -8,11 +8,17 @@ import os
 import sys
 import time
 import importlib.util
+from pathlib import Path
 
 import numpy as np
 import torch
 
-os.chdir("/root/autodl-tmp/wql/mmb4dl/encoders/lidarclip")
+LIDARCLIP_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(os.environ.get("B4DL_ROOT", LIDARCLIP_ROOT.parents[1])).resolve()
+NUSCENES_ROOT = Path(
+    os.environ.get("B4DL_NUSCENES_ROOT", PROJECT_ROOT.parent / "nuScenes")
+).resolve()
+os.chdir(LIDARCLIP_ROOT)
 sys.path.insert(0, os.getcwd())
 spec = importlib.util.spec_from_file_location("lc_train", "train.py")
 m = importlib.util.module_from_spec(spec)
@@ -44,7 +50,7 @@ enc_new = load_encoder("ckpt_nuscenes/lidarclip_mm/epoch=3-step=19500.ckpt")
 enc_old = load_encoder("lidarclip/checkpoint/vit_l_14.ckpt")
 
 print("== 数据（与训练同分布，shuffle=False） ==", flush=True)
-loader = build_loader("/root/autodl-tmp/Datasets/nuScenes", pre, batch_size=BATCH,
+loader = build_loader(str(NUSCENES_ROOT), pre, batch_size=BATCH,
                       num_workers=8, split="trainval", dataset_name="nuscenes")
 
 

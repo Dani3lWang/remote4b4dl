@@ -10,7 +10,7 @@ START_STAGE=${1:-1}
 case "$START_STAGE" in 1|2) ;; *) echo "用法: bash $0 [1|2]"; exit 1 ;; esac
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-WQLC_PREFIX="${B4DL_ENV_PREFIX:-/root/autodl-tmp/.conda-stuff/envs/wqlc}"
+WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
 
 if [ ! -x "$WQLC_PREFIX/bin/python" ]; then
     echo "错误: wqlc 环境不完整: $WQLC_PREFIX" >&2

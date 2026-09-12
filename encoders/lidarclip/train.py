@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 
 os.environ["WANDB_MODE"] = "offline"  # wandb 离线模式
 
@@ -18,6 +19,11 @@ from clip.model import CLIP
 
 from lidarclip.loader import build_loader
 from lidarclip.model.sst import LidarEncoderSST
+
+PROJECT_ROOT = Path(os.environ.get("B4DL_ROOT", Path(__file__).resolve().parents[2])).resolve()
+DEFAULT_NUSCENES_ROOT = str(
+    Path(os.environ.get("B4DL_NUSCENES_ROOT", PROJECT_ROOT.parent / "nuScenes")).resolve()
+)
 
 
 def l2norm(t):
@@ -112,7 +118,7 @@ def train(
     resume_wandb_logging=False,
     clip_model_name="ViT-B/32",
     loss_function="mse",
-    nuscenes_datadir="/proj/berzelius-2021-92/data/nuscenes",
+    nuscenes_datadir=DEFAULT_NUSCENES_ROOT,
     nuscenes_split="train",
     dataset_name="once",
     max_epochs=20,
@@ -232,7 +238,7 @@ def parse_args():
         help="which loss function to use",
         choices=("cosine", "mse"),
     )
-    parser.add_argument("--nuscenes-datadir", default="/proj/berzelius-2021-92/data/nuscenes")
+    parser.add_argument("--nuscenes-datadir", default=DEFAULT_NUSCENES_ROOT)
     parser.add_argument("--nuscenes-split", default="train")
     parser.add_argument("--dataset-name", default="nuscenes")
     parser.add_argument("--max-epochs", type=int, default=20,

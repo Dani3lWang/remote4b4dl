@@ -10,9 +10,12 @@
 set -u
 START_STAGE=${1:-1}
 case "$START_STAGE" in 1|2) ;; *) echo "用法: bash $0 [1|2]，默认 1 全链"; exit 1 ;; esac
-cd /root/autodl-tmp/wql/mmb4dl/mllm
-eval "$(/root/autodl-tmp/miniconda3/bin/conda shell.bash hook)"
-conda activate wqlc
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
+[ -x "$WQLC_PREFIX/bin/python" ] || { echo "错误: wqlc 环境不存在: $WQLC_PREFIX" >&2; exit 1; }
+export PATH="$WQLC_PREFIX/bin:$PATH"
+cd "$PROJECT_ROOT/mllm" || exit 1
 export HF_HUB_OFFLINE=1 HF_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export WANDB_MODE=offline PYTHONUNBUFFERED=1
