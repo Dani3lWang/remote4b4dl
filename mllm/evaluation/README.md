@@ -32,11 +32,15 @@
 
 仓库已提供现成的测试集：`mllm/b4dl_dataset/test_qa.json`（30,145 条，6 任务合并）。
 
-如需从 HF 原始数据重新构建：
+如需从 `datageneration/` 生成的各任务文件重新构建：
 
 ```bash
-cd mllm/b4dl_dataset
-python convert_raw_to_conversations.py
+cd mllm
+python evaluation/build_test_split.py \
+    --predictions_dir ../datageneration/data/generated_dataset \
+    --nuscenes_root /path/to/nuScenes \
+    --scene_metadata ../encoders/lidarclip/annotations/scene_metadata.json \
+    --output ./b4dl_dataset/test_qa.json
 ```
 
 ### 2. 确保特征文件就位

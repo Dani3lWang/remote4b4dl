@@ -81,21 +81,20 @@ python scripts/inject_metatoken.py --input ./b4dl_dataset/stage2_full_train_148k
 python scripts/re_render_meta.py --data ./b4dl_dataset/stage2_full_train_seqv3_148k.json \
     --frame_motion ./b4dl_dataset/ego_frame_motion.json \
     --out ./b4dl_dataset/stage2_full_train_seqv3_meta2_148k.json   # 重渲染 113,053/148,271 条，35,218 条无帧号保留
-# B4a 配方再对 meta2 跑 scripts/oversample_tg_highframe.py（GT start≥25 ×2 → 150,222 条）
 ```
 
 **验收**：TG 条目的 feat_indices 覆盖 100%、GT 帧范围 100% ⊂ feat_range；训练/评测两侧 2783/2783 一致。
 
-## Step 6 — 混合训练（当前 B3/B4a 配方）
+## Step 6 — 混合训练（当前 B3 配方）
 
 ```bash
-# B3（整场景 + meta2，当前基线）；B0/B1/B2/B4a 用对应变体脚本
+# B3（整场景 + meta2，当前基线）
 bash scripts/run_stage2_full_seqv3_mixed_b3.sh
 # 或走两阶段链（28GB 显存门控 + 断点续训 + 自动评测）：
 bash scripts/run_b3_pipeline.sh
 ```
 
-148,271 条全部任务混合（B4a 为过采样后 150,222 条），**单 LoRA**（r64/α128）3 epochs、lr 1e-4、bs 8×accum 16；`<4DLiDAR>`/`<meta>` 为可训练 embedding 行；B2 起驱动脚本传 `--whole_scene`（视觉输入 = 整场景 39/40/41 帧，对齐官方，见 [[Training]]）。
+148,271 条全部任务混合，**单 LoRA**（r64/α128）3 epochs、lr 1e-4、bs 8×accum 16；`<4DLiDAR>`/`<meta>` 为可训练 embedding 行；驱动脚本传 `--whole_scene`（视觉输入 = 整场景 39/40/41 帧，对齐官方，见 [[Training]]）。B0/B1/B2/B4a 属于已完成的历史实验，结果与方法差异保留在 [[Reproduction-Log]]，一次性脚本已清理。
 
 > ⚠️ 不要使用历史两阶段法（Phase A→merge→Phase B）：实测简单任务格式漂移、exact match 归零（acc 0.0001），已回退混合法，详见 [[Paper-vs-Reproduction]]。
 

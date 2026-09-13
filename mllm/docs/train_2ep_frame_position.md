@@ -1,56 +1,19 @@
-# 2-Epoch Frame-Position Experiments
+# Frame-Position Experiment Notes
 
-> **已弃用（2026-09-12）**：下面这对 2ep 脚本需要各训一轮（合计 ~24h）。实际改用的实验是
-> `scripts/run_stage2_full_seqv3_mixed_framepos3ep.sh`，直接以已训完的 B3（整场景+meta2, 3ep）
-> 作无帧位置对照，只多训一组；由 `scripts/run_framepos3ep_migration_chain.sh` 编排。
-> 本文档下述超参说明对 3ep 脚本同样适用。
+> 原两套 2-Epoch 对照脚本已于 2026-09-13 删除：它们需要重复训练无帧位置与有帧位置两组，合计约 24 小时，且论文没有明确披露 epoch 数。需要复核旧参数时请查看 Git 历史。
 
-These two Stage2 entries use the same B3 mixed-data recipe and differ only in
-the optional frame-position module:
+当前实验直接复用已训练完成的 B3（整场景 + meta2，3 epochs）作为无帧位置对照，只训练一组零初始化绝对场景帧位置 embedding：
 
 ```bash
 cd mllm
 
-# 2-Epoch baseline: frame position disabled
-bash scripts/run_stage2_full_seqv3_mixed_paper2ep.sh
-
-# 2-Epoch improvement: zero-initialized absolute scene-frame embedding
-bash scripts/run_stage2_full_seqv3_mixed_framepos2ep.sh
-```
-
-Both commands use 148,271 mixed QA pairs, whole-scene input, BF16, LoRA
-`r=64/alpha=128/dropout=0.05`, micro-batch 8, gradient accumulation 16,
-learning rate `1e-4`, cosine decay, 3% warmup, zero weight decay, sequence
-length 2048, gradient checkpointing, and ZeRO-3 CPU offload. The only
-experiment variable is `--use_frame_position_embedding`.
-
-The frame-position run stores `use_frame_position_embedding=true` and
-`frame_position_max=64` in its checkpoint config. Evaluation reads those
-fields automatically and restores the extra non-LoRA parameter from
-`non_lora_trainables.bin`.
-
-Before a GPU run, use the CPU smoke test in the training environment:
-
-```bash
+# CPU 结构校验
 python scripts/verify_frame_position.py
+
+# 完整迁移验收、训练冒烟、3ep 训练与同口径评测
+bash scripts/run_framepos3ep_migration_chain.sh
 ```
 
-Evaluate either output with the same frozen B3 protocol; only change the
-`--stage2` directory and output directory between the two runs:
+训练入口为 `scripts/run_stage2_full_seqv3_mixed_framepos3ep.sh`。它与 B3 的 148,271 条混合 QA、whole-scene 输入、BF16、LoRA `r=64/alpha=128/dropout=0.05`、batch/梯度累积、学习率、调度器和 ZeRO-3 配置一致，唯一实验变量是 `--use_frame_position_embedding True`。
 
-```bash
-python evaluation/test_b4dl.py \
-  --model_base ./base_model/vicuna-v1-5-7b \
-  --pretrain_mm_mlp_adapter ./checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin \
-  --stage2 ./checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-framepos2ep \
-  --feat_folder ../encoders/lidarclip/b4dl/stage2_features \
-  --test_data ./b4dl_dataset/test_qa.json \
-  --ego_meta ./b4dl_dataset/ego_metadata.json \
-  --frame_motion ./b4dl_dataset/ego_frame_motion.json \
-  --whole_scene --per_sequence --answer_frames \
-  --output ./eval_results/framepos2ep/predictions.json \
-  --metrics_output ./eval_results/framepos2ep/metrics.json
-```
-
-The 2-epoch value is an official-code-compatible setting; the paper itself
-does not explicitly disclose its epoch count.
+该分支会把 `use_frame_position_embedding=true` 与 `frame_position_max=64` 写入 checkpoint config，并将额外的非 LoRA 参数保存到 `non_lora_trainables.bin`；评测加载器会自动恢复这些参数。

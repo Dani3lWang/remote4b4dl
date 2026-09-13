@@ -516,7 +516,7 @@ conda run -n wqlc python extract_pc_features_sample_token.py \
     --save-dir ./b4dl/stage1_features_sample
 ```
 
-要点：`scene_id` 必须是 sample_token（dataset.py 用它拼 `{feat_folder}/{scene_id}.npy`）；旧 frame_id 键控方案（`convert_lidarllm_to_stage1.py` + `stage1_features/`，95k 条）仅保留给旧 checkpoint；`stage1_val.json` 的 42,597 条全在 test scenes，按官方逻辑会被过滤，只作监控用。
+要点：`scene_id` 必须是 sample_token（dataset.py 用它拼 `{feat_folder}/{scene_id}.npy`）；旧 frame_id 键控的 95k 方案已淘汰，转换脚本仅可从 Git 历史恢复给旧 checkpoint 使用；`stage1_val.json` 的 42,597 条全在 test scenes，按官方逻辑会被过滤，只作监控用。
 
 ### Step 5：Stage 1 训练 —— 3D LiDAR Understanding（只训 projector）
 

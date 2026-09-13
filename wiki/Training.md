@@ -75,16 +75,11 @@ python scripts/inject_metatoken.py --input stage2_train.json --output stage2_tra
 
 ## 复现采用的训练方案
 
-### 论文兼容 2-Epoch 实验
+### 帧位置 3-Epoch 实验
 
-当前对照实验使用两条完全同配置的 Stage2 入口：
+当前直接复用已训练完成的 B3 作为无帧位置对照，只训练 `scripts/run_stage2_full_seqv3_mixed_framepos3ep.sh`。完整迁移验收、训练冒烟、断点续训与评测由 `scripts/run_framepos3ep_migration_chain.sh` 编排。原两套 2-Epoch 脚本已删除，历史参数见 `mllm/docs/train_2ep_frame_position.md`。
 
-- `scripts/run_stage2_full_seqv3_mixed_paper2ep.sh`：2-Epoch 无帧位置基线
-- `scripts/run_stage2_full_seqv3_mixed_framepos2ep.sh`：仅增加零初始化绝对帧位置 embedding
-
-完整参数、归因规则和验收标准见 `mllm/docs/train_2ep_frame_position.md`。历史两阶段法已移除，避免误用。
-
-### 混合法（当前路线：整场景系列 B2/B3/B4a）
+### 混合法（当前路线：B3）
 
 148,271 条全任务混合、**单 LoRA** 3 epochs lr 1e-4（r64/α128）、`<4DLiDAR>`/`<meta>` 两个可训练 embedding 行的框架自 B0 沿用至今（stage1 projector 数据 B1 起升级为官方 162K 方案，见下）。B 系列每次只改一个上游变量：
 
@@ -98,8 +93,8 @@ python scripts/inject_metatoken.py --input stage2_train.json --output stage2_tra
 
 - **整场景输入**（B2+）：`dataset.py`/`test_b4dl.py` 加 `--whole_scene` 门控，视觉输入不再按 QA 序列切片、直接喂入整场景 39/40/41 帧（官方 dataset.py 同款），meta 锚定与 `--answer_frames` 归属逻辑不变
 - **meta2 数据**（B3）：`ego_text.py` 渲染改为论文 §4.1 relative-to-previous 语义；`re_render_meta.py` 对已注入 JSON 批量重渲染（113,053/148,271 条，35,218 条无帧号样本保留），产出 `stage2_full_train_seqv3_meta2_148k.json`
-- **B4a 数据**：`oversample_tg_highframe.py` 把 TG 中 GT start≥25 的 1,951 条样本 deepcopy 一份（150,222 = 148,271 + 1,951，断言校验），产出 `stage2_full_train_seqv3_meta2_oversampled_150k.json`
-- 驱动脚本：每代独立训练脚本 `run_stage2_full_seqv3_mixed{_b1,_b2,_b3,_b4a}.sh`（B0 为无后缀版）+ `run_b1/b2/b3/b4a_pipeline.sh` 两阶段链（28GB 显存门控 → 训练（成功判据 trainer_state epoch≥2.99，三次断点续训重试）→ 冻结口径评测）
+- **B4a 历史实验**：曾将 TG 高帧段样本过采样到 150,222 条，结果 mIoU 0.3271 低于 B3；数据构建与训练脚本已清理，结果保留在 [[Reproduction-Log]]
+- 当前驱动：`run_stage2_full_seqv3_mixed_b3.sh`；需要显存门控、断点续训和自动评测时使用 `run_b3_pipeline.sh`
 
 ### Stage1 数据（官方 162K 方案）
 
@@ -107,13 +102,11 @@ python scripts/inject_metatoken.py --input stage2_train.json --output stage2_tra
 
 ## 其他脚本
 
-- `run_b1_pipeline.sh`：B1 全流水线驱动（重提特征 → stage1 162K → mixed-b1 → 同口径评测），支持 `START_STAGE` 起始阶段参数断点恢复
-- `run_b2/b3/b4a_pipeline.sh`：整场景系列训练→评测两阶段链（b4a 数据 = `oversample_tg_highframe.py` 产物）
-- `oversample_tg_highframe.py`：TG 高帧段（GT start≥25）×2 过采样数据构建（B4a 用，断言校验）
+- `run_b3_pipeline.sh`：当前 B3 训练→评测链
+- `run_framepos3ep_migration_chain.sh` / `smoke_framepos_train.sh`：帧位置实验迁移验收、冒烟与编排
 - `re_render_meta.py`：meta2 批量重渲染（B3 用，见 [[Architecture]] 的 meta 语义）
 - `build_stage2_full_train.py`：使用 HF 官方训练划分构建 Stage2 全量数据，替代已移除的自定义划分脚本
-- `convert_lidarllm_to_stage1.py`：LiDAR-LLM 数据转 stage1 格式的旧版映射（frame_id 键控）
 - `eval_stage1_ppl.py` / `verify_stage1_sample_data.py` / `verify_stage2.py` / `verify_frame_position.py`：评测与数据校验
-- `run_metatoken.sh` / `stage1.sh` / `stage2.sh` / `stage3.sh`：数据准备与标准训练驱动
+- `stage1.sh` / `stage2.sh` / `stage3.sh`：标准训练驱动
 
 训练日志统一 tee 到 `mllm/training_logs/`（含 loss 曲线 PNG）。

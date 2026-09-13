@@ -1,10 +1,9 @@
 #!/bin/bash
-# B2 混合训练（整场景输入，对齐官方 B4DL）：与 B1（run_stage2_full_seqv3_mixed_b1.sh）唯一差异
-# 是 --whole_scene True——视觉输入不再按 QA 序列切片，而是喂整场景 (39/40/41, 768) 特征，
-# 与官方实现（ccho4702/B4DL，dataset.py 对 np.load 结果直接用）一致。
-# 动机：seqv3 的序列切片使 time_grounding 学会"序列局部帧编号"，评测按场景全局编号解析，
-# mIoU 被系统性压低（B1 0.2653 vs 论文 0.311）；整场景输入下模型学到全局编号。
-# 其余（数据 148k、162K projector、3ep、lr 1e-4、LoRA r64/α128、ZeRO-3）与 B1 完全一致。
+# B3 当前基线：整场景输入 + relative-to-previous 语义的 meta2 数据。
+# --whole_scene True 直接喂整场景 (39/40/41, 768) 特征，与官方实现
+# （ccho4702/B4DL，dataset.py 对 np.load 结果直接用）一致。
+# 数据 148k、162K projector、3ep、lr 1e-4、LoRA r64/α128、ZeRO-3；
+# meta2 修复旧元数据渲染语义后，B3 达到 mIoU 0.3467。
 # 断点续训：mllm train.py 已按步数数值排序取最新（e8639e2），此处 sort -V 与其对齐。
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
