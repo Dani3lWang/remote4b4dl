@@ -203,6 +203,25 @@ conda run -n wqlc python evaluation/test_b4dl.py ... --per_sequence \
 # 官方训练数据已按 scene 划分；直接使用上面的 evaluation/test_b4dl.py 命令评测指定 checkpoint。
 ```
 
+### TG 失败模式诊断（零训练成本，只看 predictions.json）
+
+```bash
+cd mllm
+# 两次评测的分桶失败模式对比（GT start 分桶 / 中心偏移 / 众数坍缩）
+python evaluation/analyze_tg_regression.py eval_results/migration_b3 eval_results/framepos3ep --labels B3 FP
+# 解码端校正探测：把预测中心做移位/仿射/分位数映射后还能涨多少
+python evaluation/tg_decode_probe.py eval_results/migration_b3 eval_results/framepos3ep \
+    --labels B3 FP --prior eval_results/tg_prior_train.json
+# 生成训练集 TG 先验（centers/lengths/starts/ends），供上面 --prior 做无泄漏参照
+python evaluation/tg_prior_from_train.py \
+    --data b4dl_dataset/stage2_full_train_seqv3_meta2_148k.json \
+    --out  eval_results/tg_prior_train.json
+```
+
+三个脚本都复用 `evaluate_model` 的区间正则与闭区间 IoU，所以输出的 mIoU 与 `metrics.json` 同口径、可逐位对上。
+
+2026-09-13 结论：任何**不用测试集标签**的解码端校正（分位数映射 / 均值方差匹配 / 中位长度 / 全局移位）对 B3 与 framepos3ep 都是**负的**，中心展开系数扫描的峰值恰好在 k=1.0；用训练集先验挑出的单一常数区间 `[06-26]` 在测试集上就有 mIoU **0.2998**。因此 TG 的任何改进都必须对着这条先验地板报告，提升只能来自目标函数侧（见 `docs/` 与 RL 计划），而不是采样/后处理。
+
 ### Gradio Web Demo
 
 ```bash
