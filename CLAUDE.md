@@ -92,6 +92,26 @@ bash run_baseline_eval.sh
 
 METEOR 默认使用双后端；与论文对比采用 NLTK-2005 主口径。
 
+## GRPO 强化学习（仅 `rf-grpo`）
+
+GRPO 代码位于 `mllm/vtimellm/rl/`，训练入口为 `mllm/scripts/run_grpo_tg.sh`。RL-LoRA 叠加在当前 B3 adapter 合并后的模型上，参考策略通过同一模型的 `disable_adapter()` 获得，不常驻第二份基础模型。
+
+```bash
+cd mllm
+python -m vtimellm.rl.smoke_m2
+bash scripts/run_grpo_tg.sh m31
+bash scripts/run_grpo_tg.sh m32
+bash scripts/run_grpo_tg.sh full
+bash scripts/run_grpo_tg.sh eval
+```
+
+- 奖励必须复用 `evaluation.evaluate_model` 的解析与指标实现。
+- 训练数据只允许 `b4dl_dataset/rl_tg_train.jsonl`，测试集不可进入训练或调参。
+- old/ref/actor log-probability 统一走 `logprob.forward_sequence`。
+- rollout 使用 `--gen-max-batch` 分块生成，RL-LoRA 使用 fp32 参数与优化器更新。
+- `eval` 通过 `test_b4dl.py --stage2 <B3> --stage3 <RL-LoRA>` 做同口径双合并评测。
+- 历史 M2、M3.1、M3.2 的验证结果基于旧 3-epoch B3 checkpoint；换成新 2-epoch B3 后必须重新运行门控和全量评测。
+
 ## 关键实现
 
 - `mllm/vtimellm/model/vtimellm_arch.py`：将 `<video>` token 替换为投影后的 LiDAR 特征。

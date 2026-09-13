@@ -13,11 +13,14 @@ logp_old, logp_ref and logp_actor are ALL recomputed with path B
 tokens, never as log-probabilities. See smoke_m2 G2.4 (path B == path C, the
 model's own CE, to 1e-7) and diag_logprob_dtype for why.
 
-Precision: LoRA weights live in bf16 so every forward (including `generate`)
-runs natively, but a fp32 master copy is what AdamW updates, then casts back to
-bf16 each step. At lr=1e-5 a pure-bf16 update is below the bf16 ULP of a ~1e-2
-weight and would silently round to zero; the fp32 master accumulates those
-sub-ULP steps. This is the standard mixed-precision master-weight pattern.
+Precision: peft's `get_peft_model` autocasts the freshly-created LoRA weights to
+fp32 (`autocast_adapter_dtype` defaults True), so the trainable RL-LoRA already
+lives in fp32; the fp32 master copy AdamW updates and the live weights stay in
+lock-step (the per-step cast-back is fp32->fp32, a no-op kept for symmetry). The
+merged B3 base stays bf16 and frozen, and peft casts the activation to the
+adapter dtype inside each LoRA forward, so `generate` and the scored forwards run
+natively. Training the LoRA in fp32 is what makes lr=1e-5 work at all: a pure-bf16
+update is below the bf16 ULP of a ~1e-2 weight and would silently round to zero.
 """
 
 import argparse
@@ -164,7 +167,8 @@ def train_one_step(model, master, optimizer, named_trainable, prompts,
             cf_num += float(cf.sum())
             cf_den += float(km.sum())
 
-    # bf16 grads -> fp32 master, step, cast master back to bf16.
+    # grads (fp32, matching the autocast LoRA) -> fp32 master, clip, AdamW step,
+    # copy master back into the live weights (fp32->fp32, kept for symmetry).
     for n, p in named_trainable:
         master[n].grad = (p.grad.detach().float() if p.grad is not None
                           else torch.zeros_like(master[n]))
@@ -277,7 +281,7 @@ def main():
             import safetensors.torch
             sd = safetensors.torch.load_file(os.path.join(ck, 'adapter_model.safetensors'))
             set_peft_model_state_dict(model, sd)
-            # rebuild the fp32 master from the resumed bf16 weights; Adam moments
+            # rebuild the fp32 master from the resumed fp32 weights; Adam moments
             # restart from zero (they are not checkpointed -- a minor approximation
             # that costs a few steps of momentum after a resume, not correctness).
             master = {n: p.detach().clone().float() for n, p in named_trainable}
@@ -391,7 +395,12 @@ def main():
             global_step += 1
             if a.save_steps and global_step % a.save_steps == 0 and global_step < total_steps:
                 d = os.path.join(a.out_dir, f'rl_lora_step{global_step}')
-                model.save_pretrained(d)
+                # save_embedding_layers=False: peft's 'auto' would bundle the
+                # frozen embed_tokens + lm_head (262M params, ~62% of the file)
+                # just because B3's vocab was resized for <4DLiDAR>/<meta>. RL
+                # never trains those rows -- they equal the merged-B3 embeddings
+                # the eval already has after the stage2 merge -- so save LoRA only.
+                model.save_pretrained(d, save_embedding_layers=False)
                 with open(os.path.join(a.out_dir, 'trainer_state.json'), 'w') as fh:
                     json.dump({'global_step': global_step, 'epoch': epoch}, fh)
                 print(f'  [save] {d}', flush=True)
@@ -399,7 +408,7 @@ def main():
         epoch += 1
 
     final = os.path.join(a.out_dir, f'rl_lora_step{global_step}')
-    model.save_pretrained(final)
+    model.save_pretrained(final, save_embedding_layers=False)
     with open(os.path.join(a.out_dir, 'trainer_state.json'), 'w') as fh:
         json.dump({'global_step': global_step, 'epoch': epoch,
                    'total_steps': total_steps}, fh)
