@@ -1,5 +1,5 @@
 #!/bin/bash
-# 最新基线评测入口：B3 whole-scene + meta2，同 run_b3_pipeline.sh 的阶段 2。
+# 最新基线评测入口：B3 whole-scene + meta2，同 run_b3.sh 的阶段 2。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

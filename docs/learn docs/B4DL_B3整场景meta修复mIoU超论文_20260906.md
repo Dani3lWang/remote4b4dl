@@ -29,7 +29,7 @@ meta2 修复了旧元数据把首帧恒定渲染为 starting position、并错�
 
 ```bash
 cd mllm
-bash scripts/run_b3_pipeline.sh
+bash scripts/run_b3.sh
 ```
 
 当前脚本训练 2 epochs，以 `epoch >= 1.99` 为完成判据。新 2-epoch checkpoint 必须重新进行 30,145 条全量评测后才能形成正式结果，不能直接继承上表。

@@ -13,7 +13,7 @@ wiki/                 精简使用文档
 
 关键入口：
 
-- `mllm/scripts/run_b3_pipeline.sh`：B3 2-epoch 训练与评测。
-- `mllm/scripts/run_stage2_full_seqv3_mixed_b3.sh`：仅训练 B3。
+- `mllm/scripts/run_b3.sh`：B3 2-epoch 训练与评测。
+- `mllm/scripts/train_b3.sh`：仅训练 B3。
 - `mllm/run_baseline_eval.sh`：仅评测最新 B3。
 - `mllm/evaluation/analyze_tg_regression.py`：B3 与更新模型的 TG 回归分析。

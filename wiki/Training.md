@@ -16,7 +16,7 @@ B3 是 `main` 上唯一维护的实验配方：
 
 ```bash
 cd mllm
-bash scripts/run_b3_pipeline.sh
+bash scripts/run_b3.sh
 ```
 
 训练完成判据为最终 adapter 存在且 `trainer_state.json` 中 `epoch >= 1.99`。脚本会从编号最大的 checkpoint 恢复。

@@ -33,14 +33,14 @@ B3 是 `main` 上唯一维护的实验版本：
 - 元数据：relative-to-previous 语义的 meta2
 - LoRA：r=64，alpha=128
 - 训练：统一为 **2 epochs**，lr=1e-4，batch 8，gradient accumulation 16，ZeRO-3
-- 训练入口：`mllm/scripts/run_b3_pipeline.sh`
+- 训练入口：`mllm/scripts/run_b3.sh`
 - 单独评测：`mllm/run_baseline_eval.sh`
 
 历史 3-epoch B3 checkpoint 的 mIoU 0.3467 / accuracy 0.7526 只作为历史结果；不能将它当作新 2-epoch 配方的已验证结果。
 
 ```bash
 cd mllm
-bash scripts/run_b3_pipeline.sh
+bash scripts/run_b3.sh
 ```
 
 流水线以最终 adapter 和 `trainer_state.json` 中 `epoch >= 1.99` 共同判定完成，并支持从最新 checkpoint 恢复。

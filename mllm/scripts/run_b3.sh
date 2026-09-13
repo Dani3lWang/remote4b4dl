@@ -1,6 +1,6 @@
 #!/bin/bash
 # B3 两阶段链（2026-09-02）：整场景输入 + 修复版 metatoken（relative-to-previous，meta2 数据）。
-#   阶段1: stage2 混合重训（run_stage2_full_seqv3_mixed_b3.sh，148k meta2 × 2 epochs）
+#   阶段1: B3 混合重训（train_b3.sh，148k meta2 × 2 epochs）
 #          —— 论文完整配置（整场景视觉 + 论文语义 meta）的最忠实复现
 #   阶段2: 同口径评测（--whole_scene --per_sequence --answer_frames，meta 走修复版渲染）
 # 显存门控窗口 72h（CoRViD/xmuda 共用 GPU）；断点续训（sort -V）兜底。
@@ -40,7 +40,7 @@ done
 [ $GATE_OK -ne 1 ] && { echo "阶段1 显存门控 72h 未放行，链停止"; exit 1; }
 MIXED_OK=0
 for attempt in 1 2 3; do
-    bash scripts/run_stage2_full_seqv3_mixed_b3.sh > /dev/null 2>&1
+    bash scripts/train_b3.sh > /dev/null 2>&1
     if [ -f "$OUT/adapter_model.safetensors" ] && [ -f "$OUT/trainer_state.json" ] \
        && python3 -c "import json,sys; d=json.load(open('$OUT/trainer_state.json')); sys.exit(0 if d.get('epoch',0) >= 1.99 else 1)"; then
         MIXED_OK=1
