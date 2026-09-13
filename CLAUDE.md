@@ -120,6 +120,7 @@ bash scripts/run_grpo_tg.sh eval
 - `mllm/vtimellm/train/train.py`：训练参数、LoRA、DeepSpeed 和 checkpoint 恢复。
 - `mllm/evaluation/test_b4dl.py`：六任务推理及统一评测入口。
 - `mllm/evaluation/analyze_tg_regression.py`：B3 与后续模型的 TG 失败模式对比。
+- `mllm/evaluation/tg_decode_probe.py`：TG 解码端零成本探针，判定"信号被先验压住（走解码校正）"还是"瓶颈在目标函数（走 RL）"；配套 `tg_prior_from_train.py` 导出训练集先验。除 `--prior` 一行外，所有校正行都拟合了评测集 GT，只是上界，不可当作可报分数。
 
 ## 约束
 
