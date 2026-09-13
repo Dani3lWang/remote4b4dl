@@ -70,6 +70,11 @@ For training, check out here(mllm/README.md).
 
 ## Demo
 
+An interactive Gradio viewer for nuScenes is available at
+[`mllm/docs/lidar_gradio_demo.md`](mllm/docs/lidar_gradio_demo.md). It provides
+3D/BEV LiDAR views, six camera views, ground-truth boxes, historical tracks,
+timeline playback, and optional B4DL scene chat.
+
 <table align="center">
   <tr>
     <td colspan="2" align="center"><b>Example of Generated Dataset</b></td>

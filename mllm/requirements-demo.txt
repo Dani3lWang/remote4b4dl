@@ -1,0 +1,5 @@
+# Extends the existing inference environment without changing its pinned file.
+# Model chat and `python -m vtimellm.demo_gradio` use the project runtime below.
+-r requirements.txt
+plotly>=5.24,<7
+nuscenes-devkit==1.1.11
