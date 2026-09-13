@@ -216,11 +216,18 @@ python evaluation/tg_decode_probe.py eval_results/migration_b3 eval_results/fram
 python evaluation/tg_prior_from_train.py \
     --data b4dl_dataset/stage2_full_train_seqv3_meta2_148k.json \
     --out  eval_results/tg_prior_train.json
+# M1 奖励离线审计：同口径复算 + 先验地板 + 奖励黑客面 + GRPO 组内退化率模拟
+python evaluation/reward_audit_m1.py \
+    --run eval_results/migration_b3 --run eval_results/framepos3ep \
+    --out eval_results/reward_baseline.json \
+    > training_logs/reward_audit_m1.log 2>&1   # 不要管道接 head，SIGPIPE 会截断日志
 ```
 
-三个脚本都复用 `evaluate_model` 的区间正则与闭区间 IoU，所以输出的 mIoU 与 `metrics.json` 同口径、可逐位对上。
+四个脚本都复用 `evaluate_model` 的区间正则与闭区间 IoU，所以输出的 mIoU 与 `metrics.json` 同口径、可逐位对上。
 
-2026-09-13 结论：任何**不用测试集标签**的解码端校正（分位数映射 / 均值方差匹配 / 中位长度 / 全局移位）对 B3 与 framepos3ep 都是**负的**，中心展开系数扫描的峰值恰好在 k=1.0；用训练集先验挑出的单一常数区间 `[06-26]` 在测试集上就有 mIoU **0.2998**。因此 TG 的任何改进都必须对着这条先验地板报告，提升只能来自目标函数侧（见 `docs/` 与 RL 计划），而不是采样/后处理。
+2026-09-13 结论：任何**不用测试集标签**的解码端校正（分位数映射 / 均值方差匹配 / 中位长度 / 全局移位）对 B3 与 framepos3ep 都是**负的**，中心展开系数扫描的峰值恰好在 k=1.0；训练集先验挑出的单一常数区间在测试集上就有 mIoU **≈0.300**（`[06-26]` 0.2998 / `[05-26]` 0.3008，即 B3 的 0.3467 只比地板高 0.046，论文的 0.311 只高 0.011）。因此 TG 的任何改进都必须对着这条先验地板报告，提升只能来自目标函数侧（见 `docs/` 与 RL 计划），而不是采样/后处理。
+
+2026-09-13 M1 奖励审计结论（`reward_audit_m1.py`，零 GPU）：① 奖励与评测指标**逐位相同**（Δ≤2.05e-15，PASS）；② **奖励就用原始 IoU / 0-1 精确匹配**——GRPO 优势按组内均值中心化，任何加性常数（含减地板）自动抵消是 no-op，而裁到地板以上是非线性的、实测把组内 std 压掉 35~60%；③ 组内退化率决定 **G≥8、TG 用 G=16**（TG 6.9%→2.4%，existence 21.2%→15.0%，binary_qa 0.5%→0.2%）；④ 奖励黑客面：先验常数答案在 **48.7%** 的 TG 样本上打赢 B3 自己的答案（framepos3ep 52.5%），所以每次报数必须带地板、黑客面、中心熵/众数占比；⑤ 前置缺口：训练 JSON 只有 TG 条目带 `task` 字段（13,124/148,271），分任务奖励路由与分任务地板要先补标签。可执行方案与 14 步迭代流程见 `docs/learn docs/B4DL_GRPO实施方案_M1审计后定稿_20260913.md`。
 
 ### Gradio Web Demo
 
@@ -273,6 +280,7 @@ conda run -n wqlc python vtimellm/demo_gradio.py \
 ## 规划与拆解文档
 
 - `docs/learn docs/B4DL_训练全流程分步详解_RL引进挂载点_20260907.md`：SFT 管线 A–E 阶段拆解 + RL（M1–M4）挂载点底稿
+- `docs/learn docs/B4DL_GRPO实施方案_M1审计后定稿_20260913.md`：**可执行 GRPO 方案**（M1 审计实测数据 + 奖励规格 + 复用/新写组件清单 + 14 步迭代流程 + M2/M3/M4 门控与止损）。状态：M1 已完成（PASS with conditions），下一步**只做 M2 rollout 通路冒烟**，M3 之前不写 trainer
 - `docs/learn docs/B4DL_分割模块移植方案_AB路线_20260909.md`：动态目标分类/分割模块移植（Reason3D/MORE3D 方法），实验编号 **B5 系列**（B5-P0/P1 门控 + B5a 感知前端 + B5b token 解码头）；时序硬约束：B5b-4 输出接口冻结先于 RL M2
 
 ## Git 提交规范
