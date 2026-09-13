@@ -101,8 +101,8 @@ except ImportError:
 # BLEU-4 uses pycocoevalcap corpus-level (the standard behind the paper's
 # number). METEOR is reported dual-backend: the main value is the NLTK-2005
 # algorithm (Banerjee & Lavie 2005 = the paper's ref [2]), with the
-# Meteor-1.5 jar 'rank' variant kept alongside for continuity with the
-# B0-B3 tables. Both backends are recorded in metric_backend / results JSON.
+# Meteor-1.5 jar 'rank' variant kept alongside for legacy compatibility.
+# Both backends are recorded in metric_backend / results JSON.
 try:
     from pycocoevalcap.bleu.bleu import Bleu as _CocoBleu
     HAS_COCO_BLEU = True

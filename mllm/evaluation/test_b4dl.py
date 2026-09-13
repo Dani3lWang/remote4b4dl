@@ -379,16 +379,9 @@ def _save_checkpoint(results: dict, path: str):
     os.replace(tmp, path)  # atomic on POSIX
 
 
-def run_inference(model, tokenizer, features: torch.Tensor, query: str,
-                  frame_indices=None) -> str:
+def run_inference(model, tokenizer, features: torch.Tensor, query: str) -> str:
     """Run the B4DL autoregressive generation for one QA. Mirrors inference()."""
-    return inference(
-        model,
-        features,
-        query,
-        tokenizer,
-        frame_indices=frame_indices,
-    )
+    return inference(model, features, query, tokenizer)
 
 
 # --------------------------------------------------------------------------
@@ -463,12 +456,12 @@ def main():
                              "frame ego data. Use ONLY with models trained on "
                              "per-sequence data (stage2_full_train_seq[v2].json).")
     parser.add_argument("--whole_scene", action="store_true",
-                        help="B2 (paper-aligned): feed the whole scene features "
+                        help="B3 baseline: feed the whole scene features "
                              "(39/40/41 frames) without any slicing, matching the "
                              "official B4DL implementation. Metatoken anchoring "
                              "(--per_sequence --answer_frames) is unaffected: the "
                              "visual input and the <meta> range are decoupled. Use "
-                             "with models trained with --whole_scene (b2).")
+                             "with models trained with --whole_scene (B3).")
     args = parser.parse_args()
 
     # Assemble the flat test item list
@@ -593,28 +586,17 @@ def main():
             # Feature slicing. per_sequence (paper): select the QA's containing
             # sequence frames — from item fields if present, else resolved via
             # --sequence_metadata + question frames. Otherwise full scene
-            # features (per-scene mode). --whole_scene (B2) always feeds the
+            # features (per-scene mode). --whole_scene (B3) always feeds the
             # whole scene, matching the official implementation.
             if getattr(args, 'whole_scene', False):
                 feat_used = feat
-                frame_indices = list(range(int(feat.shape[0])))
             elif getattr(args, 'per_sequence', False):
                 sel = resolve_feat_slice(
                     it, question, sequence_ranges,
                     gt=gt, answer_frames=getattr(args, 'answer_frames', False))
-                if sel:
-                    valid = [int(i) for i in sel if 0 <= int(i) < feat.shape[0]]
-                else:
-                    valid = []
-                if valid:
-                    feat_used = feat[valid]
-                    frame_indices = valid
-                else:
-                    feat_used = feat
-                    frame_indices = list(range(int(feat.shape[0])))
+                feat_used = slice_features(feat, sel)
             else:
                 feat_used = feat
-                frame_indices = list(range(int(feat.shape[0])))
 
             query = build_query(
                 question,
@@ -629,10 +611,7 @@ def main():
                 task=it.get('task'),
             )
             try:
-                pred = run_inference(
-                    model, tokenizer, feat_used, query,
-                    frame_indices=frame_indices,
-                )
+                pred = run_inference(model, tokenizer, feat_used, query)
             except Exception as e:
                 skipped += 1
                 print(f"  ! inference failed for {scene_id}: {e}")

@@ -1,87 +1,17 @@
-# 架构总览
+# 架构
 
-## 数据流全景
-
-```
-nuScenes 数据集（相机图像 + LiDAR 点云）
-  │
-  ├─ [datageneration/] 相机图像 → GPT-4o → 场景描述 JSON → QA 数据集 JSON
-  │     数据格式：{"from": "human/gpt", "value": "..."}
-  │
-  ├─ [encoders/lidarclip/] LiDAR 点云 → SST编码器 → CLIP 特征 (.npy)
-  │     Stage1 特征：每帧独立 .npy，shape (1, 768)
-  │       - stage1_features/（旧，frame_id 键控，95K 数据用）
-  │       - stage1_features_sample/（新，sample_token 键控，对齐官方 162K 方案）
-  │     Stage2 特征：每场景拼接 .npy，shape (N_frames, 768)
-  │
-  └─ [mllm/] 预提取特征 + QA 数据 → VTimeLLM → 训练 / 推理 / 评估
+```text
+nuScenes
+├─ datageneration     相机图像 → 场景描述 → 六类 QA
+├─ encoders/lidarclip 点云序列 → SST → 768 维逐帧特征
+└─ mllm               特征 → mm_projector → VTimeLLM → 文本答案
 ```
 
-三个模块之间只通过**文件**耦合：特征文件名 = 数据 JSON 中的 `scene_id`（详见 [[Training]] 的特征查找约定）。
+训练数据中的 `<video>` token 会在 `prepare_inputs_labels_for_multimodal()` 中被投影后的 LiDAR 特征替换，对应 label 设为 `IGNORE_INDEX`。B3 使用 `--whole_scene`，每条 QA 输入该场景的完整特征序列。
 
-## 三阶段训练流程
+核心文件：
 
-| 阶段 | 目标 | 关键配置 |
-|------|------|----------|
-| **Stage 1** | 对齐 mm_projector | 只训练 `nn.Linear(768, 4096)`，LLM 冻结。`--tune_mm_mlp_adapter True`，`--version plain` |
-| **Stage 2** | LoRA 微调 LLM | 加载 Stage1 的 mm_projector 并冻结，对全部 Linear 层加 LoRA。`--lora_enable True`，`--freeze_mm_mlp_adapter True` |
-| **Stage 3**（可选） | 二次 LoRA | 先 merge Stage2 的 LoRA 权重作为基座，再加新 LoRA，解冻 mm_projector |
-
-实际复现采用 **Stage2+Stage3 混合单 LoRA** 或 **两阶段法（Phase A 简单任务 → merge → Phase B 复杂任务）**，详见 [[Training]]。
-
-## 多模态融合机制
-
-训练数据中的 `<video>` token 在前向传播时被替换为投影后的视觉特征，核心逻辑在 `vtimellm_arch.py` 的 `prepare_inputs_labels_for_multimodal()`：
-
-1. 找到 `<video>` token 位置（tokenizer 阶段已被 `tokenizer_image_token` 替换为 `IMAGE_TOKEN_INDEX=-200`）；
-2. CLIP 特征（N, 768）经 `mm_projector` 投影到 LLM hidden size（Vicuna-7B 为 4096）；
-3. 投影后的 embedding 插入对应位置，labels 对应位置设为 `IGNORE_INDEX`（不参与 loss）；
-4. 序列填充/截断到统一长度，生成对应 attention mask。
-
-## 关键模型组件
-
-| 组件 | 位置 | 说明 |
-|------|------|------|
-| `VTimeLLMLlamaForCausalLM` | `vtimellm/model/vtimellm_llama.py` | 继承 `LlamaForCausalLM` + `VTimeLLMMetaForCausalLM`，重写 `forward()` 在调用父类前先做多模态融合 |
-| `VTimeLLMMetaForCausalLM` | `vtimellm/model/vtimellm_arch.py` | 多模态融合核心，实现图像 token 替换、序列填充、attention mask 生成 |
-| `mm_projector` | 同上 | 单层 `nn.Linear(768, hidden_size)`，将 CLIP ViT-L/14 输出映射到 LLM hidden space |
-| `VTimeLLMTrainer` | `vtimellm/train/vtimellm_trainer.py` | 继承 HF Trainer；Stage1 时只保存 mm_projector 权重（非全量 checkpoint），规避 ZeRO-3 冲突 |
-| `load_pretrained_model` | `vtimellm/model/builder.py` | 推理/评测的完整加载链：base → stage1 projector → stage2 LoRA merge → stage3 LoRA merge |
-| ChatGLM backbone | `vtimellm/model/vtimellm_chatglm.py` | 支持 ChatGLM3-6b，通过模型名含 "chatglm" 自动选择；对应 `stage1_glm.sh` / `stage2_glm.sh` |
-
-## 对话模板系统
-
-`conversation.py` 通过 `conv_templates` dict 管理模板，训练时由 `--version` 参数选择，不同模板的 separator style 决定 `preprocess()` 的分支：
-
-| 模板 | 用途 | 格式 |
-|------|------|------|
-| `plain` | Stage1 | 无角色标记，`<video>\n` + 描述文本，只对 gpt 部分计算 loss |
-| `v1` / `vicuna_v1` | Stage2/3 与评测 | `USER: ... ASSISTANT: ...</s>`，loss 只算 ASSISTANT 部分 |
-| `llama_2` | 备选 | `[INST] ... [/INST]` |
-
-## 六种 QA 任务类型
-
-在 `datageneration/config.py` 中定义，分简单/复杂两组：
-
-- **简单任务**：`existence`（物体存在性）、`binary`（二值问答）、`time_grounding`（时间定位，答案为 `from frame X to frame Y.` 时间跨度）
-- **复杂任务**：`description`（整体描述）、`temporal_understanding`（时序理解）、`comprehensive`（综合推理）
-
-简单任务用 Accuracy / mIoU 评测，复杂任务用文本生成指标评测（详见 [[Inference-and-Evaluation]]）。
-
-## Metatoken 机制（论文 Appendix C）
-
-评测与训练的 human 消息最终格式为：
-
-```
-<4DLiDAR>\n<video>\n{question}\n<meta> The metadata of the first frame is '...' and the metadata of the last frame is '...'
-```
-
-- `<4DLiDAR>`：任务标记特殊 token（可训练 embedding 行）
-- `<video>`：视觉特征插入占位符
-- `<meta>`：后接 QA 所引用帧段（整场景输入时为整段 0..N-1）ego 车辆运动状态自然语言描述（位置/地形/速度/转向/加速度），由 `mllm/scripts/ego_text.py` 统一渲染，训练与推理逐字符一致
-
-**metatoken 语义（2026-09-02 meta2 修复，[[Reproduction-Log]] 的 B3）**：早期实现把首帧恒渲染为 `at the starting position`、运动用**前向（next）差分**；对照论文 §4.1/Figure 6，正确语义为 **relative-to-previous**——每一帧描述其相对**前一帧**的方向/位移/速度/转向/加速度变化（样例 `slightly ahead and to the right`）。修复后帧 0 保留 fallback 描述，`re_render_meta.py` 对已注入 JSON 批量重渲染出 meta2 数据（113,053/148,271 条，无帧号的 35,218 条保留原样）。
-
-**输入构造两个代际**：B0/B1 为 per-sequence 切片（视觉输入只含 QA 引用的帧段）；B2 起（对齐官方 `dataset.py`）改为 `--whole_scene` **整场景输入**（39/40/41 帧全量喂入，QA 仍用 `--answer_frames` 做 meta 锚定与评测归属），见 [[Training]]。
-
-详见 [[Training]] 与 [[Inference-and-Evaluation]]。
+- `mllm/vtimellm/model/vtimellm_arch.py`
+- `mllm/vtimellm/train/dataset.py`
+- `mllm/vtimellm/train/train.py`
+- `mllm/evaluation/test_b4dl.py`

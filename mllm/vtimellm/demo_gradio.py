@@ -215,11 +215,9 @@ class OptionalInferenceEngine:
             stopping = []
             if stop_string:
                 stopping = [KeywordsStoppingCriteria([stop_string], self.tokenizer, input_ids)]
-            frame_indices = torch.arange(features.shape[0], dtype=torch.long)
             output_ids = self.model.generate(
                 input_ids=input_ids,
                 images=features[None, ...],
-                frame_indices=[frame_indices],
                 do_sample=False,
                 num_beams=1,
                 max_new_tokens=512,

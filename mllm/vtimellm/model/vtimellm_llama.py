@@ -42,7 +42,6 @@ class VTimeLLMLlamaForCausalLM(LlamaForCausalLM, VTimeLLMMetaForCausalLM):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         images: Optional[torch.FloatTensor] = None,
-        frame_indices=None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
@@ -61,8 +60,7 @@ class VTimeLLMLlamaForCausalLM(LlamaForCausalLM, VTimeLLMMetaForCausalLM):
                 attention_mask,
                 past_key_values,
                 labels,
-                images,
-                frame_indices,
+                images
             )
 
         return super().forward(
@@ -81,14 +79,11 @@ class VTimeLLMLlamaForCausalLM(LlamaForCausalLM, VTimeLLMMetaForCausalLM):
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, inputs_embeds=None, **kwargs):
         images = kwargs.pop("images", None)
-        frame_indices = kwargs.pop("frame_indices", None)
         _inputs = super().prepare_inputs_for_generation(
             input_ids, past_key_values=past_key_values, inputs_embeds=inputs_embeds, **kwargs
         )
         if images is not None:
             _inputs['images'] = images
-        if frame_indices is not None:
-            _inputs['frame_indices'] = frame_indices
         return _inputs
 
 AutoConfig.register("VTimeLLM", VTimeLLMConfig)

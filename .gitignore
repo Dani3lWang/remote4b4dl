@@ -53,6 +53,14 @@ encoders/lidarclip/annotations/
 docs/eval_results/
 docs/evl/
 evaluation_results.json
+mllm/eval_results/
+mllm/training_logs/
+training_logs/
+encoders/lidarclip/logs/
+mllm/evaluation/*.log
+mllm/evaluation/predictions*.json
+mllm/evaluation/eval_*_metrics.json
+mllm/evaluation/evaluation_results.json
 
 # 本地下载的模型文件
 models/

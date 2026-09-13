@@ -1,6 +1,6 @@
 #!/bin/bash
 # B3 两阶段链（2026-09-02）：整场景输入 + 修复版 metatoken（relative-to-previous，meta2 数据）。
-#   阶段1: stage2 混合重训（run_stage2_full_seqv3_mixed_b3.sh，148k meta2 × 3 epochs）
+#   阶段1: stage2 混合重训（run_stage2_full_seqv3_mixed_b3.sh，148k meta2 × 2 epochs）
 #          —— 论文完整配置（整场景视觉 + 论文语义 meta）的最忠实复现
 #   阶段2: 同口径评测（--whole_scene --per_sequence --answer_frames，meta 走修复版渲染）
 # 显存门控窗口 72h（CoRViD/xmuda 共用 GPU）；断点续训（sort -V）兜底。
@@ -42,7 +42,7 @@ MIXED_OK=0
 for attempt in 1 2 3; do
     bash scripts/run_stage2_full_seqv3_mixed_b3.sh > /dev/null 2>&1
     if [ -f "$OUT/adapter_model.safetensors" ] && [ -f "$OUT/trainer_state.json" ] \
-       && python3 -c "import json,sys; d=json.load(open('$OUT/trainer_state.json')); sys.exit(0 if d.get('epoch',0) >= 2.99 else 1)"; then
+       && python3 -c "import json,sys; d=json.load(open('$OUT/trainer_state.json')); sys.exit(0 if d.get('epoch',0) >= 1.99 else 1)"; then
         MIXED_OK=1
         echo "阶段1 完成（尝试 #$attempt）"
         break
@@ -84,13 +84,13 @@ done
 [ $EVAL_OK -ne 1 ] && { echo "阶段2 五次尝试均失败，链停止"; exit 1; }
 
 echo "===== B3 链完成 ($(date '+%F %T')) ====="
-echo "B3 评测结果（对照论文 mIoU 0.311 / acc 0.762；B2 0.1992/0.7649）："
+echo "B3 评测结果（对照论文 mIoU 0.311 / acc 0.762）："
 python3 -c "
 import json
 m = json.load(open('$EVAL_OUT/metrics.json'))
 f = m['final_scores']
-print(f\"accuracy {f['accuracy']:.4f} (paper 0.762, B2 0.7649)\")
-print(f\"mIoU      {f['miou']:.4f} (paper 0.311, B2 0.1992, Δvs paper {f['miou']-0.311:+.4f})\")
+print(f\"accuracy {f['accuracy']:.4f} (paper 0.762)\")
+print(f\"mIoU      {f['miou']:.4f} (paper 0.311, Δvs paper {f['miou']-0.311:+.4f})\")
 for k in ('bleu4','meteor','rouge_l','bertscore'):
     print(f'{k:9s} {f[k]:.4f}')
 " 2>/dev/null || cat "$EVAL_OUT/metrics.json"

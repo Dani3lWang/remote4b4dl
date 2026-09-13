@@ -41,18 +41,6 @@ def _slice_features(feat, first_frame, last_frame):
     return feat[first:last + 1]
 
 
-def _slice_features_with_indices(feat, first_frame, last_frame):
-    """Slice features while retaining their original scene frame numbers."""
-    if first_frame is None or last_frame is None:
-        return feat, torch.arange(feat.shape[0], dtype=torch.long)
-    n = feat.shape[0]
-    first = max(0, min(int(first_frame), n - 1))
-    last = max(0, min(int(last_frame), n - 1))
-    if first > last:
-        first, last = last, first
-    return feat[first:last + 1], torch.arange(first, last + 1, dtype=torch.long)
-
-
 def _select_features(feat, item):
     """Select the QA's sequence frames from scene-level features.
 
@@ -75,36 +63,14 @@ def _select_features(feat, item):
     return _slice_features(feat, first_frame, last_frame)
 
 
-def _select_features_with_indices(feat, item):
-    """Select features and return the corresponding global scene indices."""
-    indices = item.get('feat_indices')
-    if indices:
-        n = feat.shape[0]
-        valid = [int(i) for i in indices if 0 <= int(i) < n]
-        if valid:
-            return feat[valid], torch.tensor(valid, dtype=torch.long)
-
-    feat_range = item.get('feat_range')
-    if feat_range is not None:
-        return _slice_features_with_indices(
-            feat, int(feat_range[0]), int(feat_range[1])
-        )
-
-    question_text = item['conversations'][0]['value']
-    first_frame, last_frame = _parse_frame_numbers(question_text)
-    return _slice_features_with_indices(feat, first_frame, last_frame)
-
 @dataclass
 class DataArguments:
     data_path: str = field(default=None,
                            metadata={"help": "Path to the training data."})
     lazy_preprocess: bool = False
     feat_folder: Optional[str] = field(default=None)
-    # B2 (paper-aligned): feed the whole scene features (39/40/41 frames) to the
-    # model instead of slicing to the QA's containing sequence. The official
-    # B4DL implementation loads the per-scene .npy without any slicing; our
-    # seqv3 slicing made time-grounding learn sequence-local frame numbers that
-    # the global-numbered evaluation then penalizes (mIoU 0.265 vs paper 0.311).
+    # B3 baseline: feed the whole-scene features (39/40/41 frames), matching
+    # the official B4DL implementation's per-scene .npy loading behavior.
     whole_scene: bool = False
 
 def _tokenize_fn(strings: Sequence[str],
@@ -505,10 +471,8 @@ class LazySupervisedDataset(Dataset):
             # Slice features to the QA's containing sequence (paper: the model
             # input S_L is the sequence the QA belongs to, not the whole scene).
             # See _select_features for the priority order.
-            if self.data_args.whole_scene:
-                frame_indices = torch.arange(image.shape[0], dtype=torch.long)
-            else:
-                image, frame_indices = _select_features_with_indices(image, source)
+            if not self.data_args.whole_scene:
+                image = _select_features(image, source)
         except Exception as e:
             self._feature_failures += 1
             print(f"[dataset] 特征加载失败 scene_id={source.get('scene_id')}: {e}"
@@ -531,7 +495,6 @@ class LazySupervisedDataset(Dataset):
                              labels=data_dict["labels"][0])
 
         data_dict['image'] = image
-        data_dict['frame_indices'] = frame_indices
         return data_dict
 
 
@@ -565,12 +528,6 @@ class DataCollatorForSupervisedDataset(object):
                 batch['images'] = torch.stack(images)
             else:
                 batch['images'] = images
-
-        if 'frame_indices' in instances[0]:
-            batch['frame_indices'] = [
-                instance['frame_indices'].to(dtype=torch.long)
-                for instance in instances
-            ]
 
         return batch
 

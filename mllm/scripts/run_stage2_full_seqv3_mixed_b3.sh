@@ -2,8 +2,8 @@
 # B3 当前基线：整场景输入 + relative-to-previous 语义的 meta2 数据。
 # --whole_scene True 直接喂整场景 (39/40/41, 768) 特征，与官方实现
 # （ccho4702/B4DL，dataset.py 对 np.load 结果直接用）一致。
-# 数据 148k、162K projector、3ep、lr 1e-4、LoRA r64/α128、ZeRO-3；
-# meta2 修复旧元数据渲染语义后，B3 达到 mIoU 0.3467。
+# 数据 148k、162K projector、2ep、lr 1e-4、LoRA r64/α128、ZeRO-3。
+# 历史 3ep B3 checkpoint 达到 mIoU 0.3467；新训练统一使用 2ep。
 # 断点续训：mllm train.py 已按步数数值排序取最新（e8639e2），此处 sort -V 与其对齐。
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
@@ -20,7 +20,7 @@ cd "$PROJECT_ROOT/mllm" || exit 1
 
 python scripts/preflight_b3.py --project-root "$PROJECT_ROOT" --require-cuda || exit 1
 
-echo "===== B2 MIXED TRAINING (whole-scene input, paper-aligned) ====="
+echo "===== B3 MIXED TRAINING (whole-scene input, paper-aligned) ====="
 echo "Start: $(date)"
 echo "Data: b4dl_dataset/stage2_full_train_seqv3_meta2_148k.json"
 
@@ -32,6 +32,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 MODEL_VERSION=vicuna-v1-5-7b
 OUT=vtimellm-$MODEL_VERSION-stage2-full-seqv3-mixed-b3
 set -o pipefail
+mkdir -p ./training_logs
 LOG=./training_logs/stage2_full_seqv3_mixed_b3_$(date +%Y%m%d_%H%M%S).log
 
 RESUME=""
@@ -49,7 +50,7 @@ deepspeed --include localhost:0 --master_port 29583 vtimellm/train/train_mem.py 
     --output_dir ./checkpoints/$OUT \
     --whole_scene True \
     --bf16 True \
-    --num_train_epochs 3 \
+    --num_train_epochs 2 \
     --per_device_train_batch_size 8 \
     --gradient_accumulation_steps 16 \
     --evaluation_strategy no \

@@ -1,73 +1,19 @@
-# 目录结构
+# 仓库结构
 
-```
-mmb4dl/
-├── README.md                    # 官方 README（管线概览、Demo、引用）
-├── CLAUDE.md                    # Claude Code 工作指引（项目速查权威文件）
-├── requirements.txt             # ⚠️ 已废弃，勿用（版本过新，与 mllm 冲突）
-├── smoke_test.log               # 冒烟测试日志
-│
-├── datageneration/              # 数据生成管线（GPT-4o）
-│   ├── config.py                # 全局配置：模型名、环境变量、任务类型、帧采样
-│   ├── generate_description.py  # Step 1：相机图 → 场景描述 JSON
-│   ├── generate_dataset.py      # Step 2：描述 → 6 类任务 QA JSON
-│   ├── prompts.py               # 全部 prompt 模板（1 描述 + 6 QA）
-│   ├── utils.py                 # ReadJson / base64 / QA 解析 / conversation 组装
-│   ├── scripts/                 # generate_description.sh / generate_dataset.sh
-│   └── tools/                   # metadata 构建、stage1 数据转换（LiDAR-LLM→162K）
-│
-├── encoders/lidarclip/          # LiDAR-CLIP 编码器
-│   ├── train.py                 # Lightning 训练（MSE 对齐冻结 CLIP）
-│   ├── extract_pc_features.py   # 特征提取（旧，frame_id 键控）
-│   ├── extract_pc_features_sample_token.py  # 特征提取（新，sample_token 键控）
-│   ├── val_mse_probe.py         # val 场景 MSE 探针（收敛/选型判据）
-│   ├── run_anneal_chain.sh      # 退火链编排（tmux b4dlanneal）
-│   ├── early_stop_monitor*.py   # 训练早停监控（v2 用 train_loss.csv 真值）
-│   ├── validate_encoder_fit.py / validate_scatter.py / smoke_train.py
-│   ├── lidarclip/               # 模型包（SST + AttentionPool2d + loader + 兼容层）
-│   ├── sst/                     # SST 官方代码（外部依赖，mmdet3d 0.x fork）
-│   └── mmdetection3d/           # mmdet3d 源码拷贝（外部依赖）
-│
-├── mllm/                        # VTimeLLM 训练/推理/评测
-│   ├── run_stages.sh            # 一键 Stage1+2
-│   ├── run_baseline_eval.sh     # baseline 评测一键脚本
-│   ├── requirements.txt         # ★ 权威依赖文件
-│   ├── vtimellm/                # 模型包（model/train/inference/demo）
-│   ├── scripts/                 # 全部训练/数据/评测驱动脚本 + zero*.json
-│   ├── evaluation/              # test_b4dl.py、evaluate_model.py、分析脚本
-│   ├── data/                    # 推理 demo 用示例
-│   └── training_logs/           # 训练日志（tee）
-│
-├── docs/
-│   ├── B4DL_复现方案.md          # 论文+官方仓库逐行解析的完整复现方案（71KB）
-│   ├── mmb4dl.pdf / mmb4dl-md/   # 论文原文 PDF 与 markdown 版
-│   ├── learn docs/               # 21 篇开发记录（审计/基线/评测/RL 分析，见 [[Reproduction-Log]]）
-│   └── 参考/                     # LiDAR-LLM 参考源码、训练手记
-│
-├── wiki/                         # 本 wiki 的页面源文件（与 docs/ 互链）
-├── backups/                      # 模型产物备份（B3_stage2_final_20260907.tar.gz + sha256 manifest；gitignore，仅存本机）
-├── assets/                       # README 用的图示与 GIF
-├── Claude_record/                # 会话记录
-└── training_logs/                # 早期训练日志
+```text
+datageneration/       数据生成
+encoders/lidarclip/   LiDAR-CLIP 与 SST 随仓依赖
+mllm/
+  scripts/            官方入口、B3 构建/训练/校验脚本
+  vtimellm/           模型、训练与推理实现
+  evaluation/         B3/通用评测与分析
+docs/learn docs/      当前 B3、编码器与指标说明
+wiki/                 精简使用文档
 ```
 
-## mllm/scripts/ 速查
+关键入口：
 
-| 脚本 | 用途 |
-|------|------|
-| `stage1.sh / stage2.sh / stage3.sh` | 标准三阶段（deepspeed zero3） |
-| `stage1_glm.sh / stage2_glm.sh` | ChatGLM backbone 版 |
-| `run_stage2_full_seqv3_mixed_b3.sh` / `run_b3_pipeline.sh` | 当前 B3 基线训练 / 训练评测链 |
-| `run_stage2_full_seqv3_mixed_framepos3ep.sh` | 当前帧位置单变量实验 |
-| `run_framepos3ep_migration_chain.sh` / `smoke_framepos_train.sh` | 迁移验收、训练冒烟与 framepos3ep 编排 |
-| `re_render_meta.py` | meta2：按 relative-to-previous 语义重渲染 meta 段（B3 数据） |
-| `merge_stage2.py` | LoRA merge 进 base 保存全量模型 |
-| `build_stage2_full_train.py` | HF 官方数据 → 训练格式（148,271 条 + TG 标签） |
-| `inject_metatoken.py` | metatoken + feat_indices/feat_range 注入 |
-| `generate_ego_metadata.py` / `ego_text.py` | ego 运动元数据生成 / 文本渲染单一来源 |
-| `verify_stage1_sample_data.py` / `verify_stage2.py` / `verify_frame_position.py` | 数据、模型与帧位置校验 |
-| `zero2.json / zero3.json / zero3_offload.json` | DeepSpeed 配置 |
-
-## 大文件存放约定
-
-预训练模型放 `mllm/base_model/`，checkpoint 放 `mllm/checkpoints/`，特征 `.npy` 放各 `b4dl/` 目录，评测数据放 `mllm/b4dl_dataset/`，评测产物（predictions/metrics）放 `mllm/eval_results/`（按代际子目录）——均不入库（.gitignore），关键文件以 MD5 记录在 [[Reproduction-Log]]；模型产物备份打 tar 放 `backups/`（B3 备份含 sha256 manifest）。
+- `mllm/scripts/run_b3_pipeline.sh`：B3 2-epoch 训练与评测。
+- `mllm/scripts/run_stage2_full_seqv3_mixed_b3.sh`：仅训练 B3。
+- `mllm/run_baseline_eval.sh`：仅评测最新 B3。
+- `mllm/evaluation/analyze_tg_regression.py`：B3 与更新模型的 TG 回归分析。
