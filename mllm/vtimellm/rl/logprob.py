@@ -41,7 +41,7 @@ def expanded_length(prompt_ids, completion_len, n_visual):
 
 
 def forward_sequence(model, prompt_ids, completion_ids, images,
-                     temperature=1.0, with_labels=False, pad_id=0):
+                     temperature=1.0, with_labels=False, pad_id=0, to_cpu=True):
     """logp (B, Lc_max), mask (B, Lc_max) and -- if requested -- the CE loss.
 
     `temperature` must match the one used at sampling time: transformers applies
@@ -53,6 +53,11 @@ def forward_sequence(model, prompt_ids, completion_ids, images,
     completion tokens only (path C), which is an independent check on the index
     arithmetic above: it must equal the token-weighted mean of -logp at
     temperature 1.0.
+
+    `to_cpu=False` keeps logp on the logits device with its autograd graph
+    intact, which is what the GRPO training forward needs to backprop into the
+    RL-LoRA. The scoring paths (old/reference) leave it True so the result is a
+    plain CPU tensor that can be serialised or compared.
     """
     device = next(model.parameters()).device
     rows, labels_rows, exp_lens, comp_lens = [], [], [], []
@@ -86,15 +91,19 @@ def forward_sequence(model, prompt_ids, completion_ids, images,
             f'{e_max} (per-row {exp_lens})')
 
     lc_max = max(comp_lens)
-    logp = torch.zeros((len(rows), lc_max), dtype=torch.float32)
-    keep = torch.zeros((len(rows), lc_max), dtype=torch.bool)
+    out_device = None if to_cpu else logits.device
+    logp = torch.zeros((len(rows), lc_max), dtype=torch.float32, device=out_device)
+    keep = torch.zeros((len(rows), lc_max), dtype=torch.bool, device=out_device)
     log_probs = torch.log_softmax(logits.float() / temperature, dim=-1)
     for b, (c, lc) in enumerate(zip(completion_ids, comp_lens)):
         c = c.to(dtype=torch.long, device='cpu')
         start = e_max - lc                      # first completion position
         idx = torch.arange(start - 1, start + lc - 1, device=log_probs.device)
         row = log_probs[b].index_select(0, idx)  # (lc, V)
-        logp[b, :lc] = row.gather(1, c.to(row.device)[:, None]).squeeze(1).cpu()
+        val = row.gather(1, c.to(row.device)[:, None]).squeeze(1)
+        # to_cpu=False keeps val on-device with its graph so backward reaches the
+        # RL-LoRA; the in-place slice-assign builds the graph via CopySlices.
+        logp[b, :lc] = val.cpu() if to_cpu else val
         keep[b, :lc] = True
 
     result = {'logp': logp, 'mask': keep, 'expanded_lengths': exp_lens,
