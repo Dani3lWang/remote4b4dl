@@ -1,4 +1,4 @@
-"""Model assembly shared by the three RL processes.
+"""Model assembly for the single-process GRPO run.
 
 Reuses `vtimellm.model.builder.load_pretrained_model` (base + stage1 projector
 + merged stage2 LoRA) instead of re-implementing it; the two additions are the
@@ -27,9 +27,11 @@ def load_merged_actor(stage2, dtype=torch.bfloat16,
                       device='cuda'):
     """base + stage1 projector + stage2 LoRA merged, resident on one GPU.
 
-    dtype is uniform on purpose: the rollout, reference and training processes
-    must agree, otherwise `exp(logp_actor - logp_old)` carries a systematic
-    precision offset instead of measuring policy movement.
+    The dtype is pinned rather than inherited because B3 was trained --bf16 True:
+    logp_old, logp_ref and logp_actor are all forwards through this one model,
+    and running them at a precision the SFT weights were not trained in would put
+    a systematic offset into `exp(logp_actor - logp_old)` alongside the policy
+    movement it is supposed to measure.
     """
     args = edict(dict(model_base=model_base,
                       pretrain_mm_mlp_adapter=mm_adapter,

@@ -1,5 +1,6 @@
 import os
 import shutil
+import json
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
 import torch
@@ -19,8 +20,9 @@ def load_lora(model, lora_path):
     return model
 
 def load_pretrained_model(args, stage2=None, stage3=None):
-    # RL processes must share one precision (B3 was trained --bf16 True); every
-    # existing caller leaves torch_dtype unset and keeps the original fp16.
+    # The GRPO caller pins one precision for all of its forwards (B3 was trained
+    # --bf16 True); every existing caller leaves torch_dtype unset and keeps the
+    # original fp16.
     kwargs = {'torch_dtype': getattr(args, 'torch_dtype', None) or torch.float16}
 
     # model_path = os.path.expanduser(args.model_path)
@@ -39,6 +41,29 @@ def load_pretrained_model(args, stage2=None, stage3=None):
         if model.lm_head.weight.shape[0] != token_num:
             model.lm_head.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
             model.model.embed_tokens.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))
+
+    # A stage-2 adapter may carry the optional frame-position module. Its config
+    # has to be read before initialize_vision_modules below, otherwise the module
+    # does not exist and load_lora's strict=False silently drops the trained
+    # frame_position_embedding weights from non_lora_trainables.bin. Explicit
+    # inference arguments win; checkpoints predating the feature stay disabled.
+    stage_config = {}
+    if stage2 is not None:
+        config_path = os.path.join(stage2, 'config.json')
+        if os.path.isfile(config_path):
+            with open(config_path, 'r', encoding='utf-8') as handle:
+                stage_config = json.load(handle)
+
+    use_frame_position_embedding = getattr(args, 'use_frame_position_embedding', None)
+    if use_frame_position_embedding is None:
+        use_frame_position_embedding = stage_config.get('use_frame_position_embedding', False)
+    frame_position_max = getattr(args, 'frame_position_max', None)
+    if frame_position_max is None:
+        frame_position_max = stage_config.get('frame_position_max', 64)
+    setattr(args, 'use_frame_position_embedding', bool(use_frame_position_embedding))
+    setattr(args, 'frame_position_max', int(frame_position_max))
+    model.config.use_frame_position_embedding = bool(use_frame_position_embedding)
+    model.config.frame_position_max = int(frame_position_max)
 
     # ── Register B4DL special tokens at inference time (paper §4.1) ──
     # <4DLiDAR> and <meta> must be single tokens for the model to use

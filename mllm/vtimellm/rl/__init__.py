@@ -1,8 +1,10 @@
 """GRPO stack for B4DL.
 
-Single 32GB GPU cannot hold a merged bf16 7B actor, a second frozen reference
-copy and ZeRO-3 activations at once, so the three roles run as separate
-processes and exchange JSONL:
+One process on one 32GB GPU. The reference policy is the merged B3 SFT base with
+the RL-LoRA disabled (`model.disable_adapter()`) rather than a second resident
+copy, so rollout, reference and actor are three forwards through the same ~14GB
+model; `grpo_trainer.py` carries the full memory argument. The roles still live
+in separate modules because each is independently testable:
 
     rollout.py    sample G completions per prompt + the sampling-time logp
     logprob.py    one forward over prompt+completion -> per-token logp

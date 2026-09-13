@@ -59,6 +59,17 @@ class ModelArguments:
     version: Optional[str] = field(default="v0")
     tune_mm_mlp_adapter: bool = field(default=False)
     pretrain_mm_mlp_adapter: Optional[str] = field(default=None)
+    use_frame_position_embedding: bool = field(
+        default=False,
+        metadata={
+            "help": "Add a learnable absolute scene-frame embedding to each "
+                    "projected LiDAR frame."
+        },
+    )
+    frame_position_max: int = field(
+        default=64,
+        metadata={"help": "Maximum supported absolute scene frame index."},
+    )
 
 
 @dataclass
@@ -264,7 +275,8 @@ def train():
         f"bf16={training_args.bf16} fp16={training_args.fp16} "
         f"max_length={training_args.model_max_length} "
         f"optimizer={training_args.optim} scheduler={training_args.lr_scheduler_type} "
-        f"warmup_ratio={training_args.warmup_ratio} weight_decay={training_args.weight_decay}"
+        f"warmup_ratio={training_args.warmup_ratio} weight_decay={training_args.weight_decay} "
+        f"frame_position={model_args.use_frame_position_embedding}(max={model_args.frame_position_max})"
     )
 
     bnb_model_from_pretrained_args = {}
@@ -295,6 +307,10 @@ def train():
             cache_dir=training_args.cache_dir,
             **bnb_model_from_pretrained_args
         )
+    model.config.use_frame_position_embedding = bool(
+        model_args.use_frame_position_embedding
+    )
+    model.config.frame_position_max = int(model_args.frame_position_max)
     model.config.use_cache = False
 
     if training_args.bits in [4, 8]:
@@ -433,6 +449,22 @@ def train():
         if training_args.freeze_mm_mlp_adapter:
             for p in model.get_model().mm_projector.parameters():
                 p.requires_grad = False
+
+        # get_peft_model froze every base parameter above; the frame-position
+        # embedding is not a LoRA parameter, so re-enable it explicitly. It is
+        # persisted via non_lora_trainables.bin at the end of train().
+        if model_args.use_frame_position_embedding:
+            position_embedding = model.get_model().frame_position_embedding
+            position_embedding.requires_grad_(True)
+            position_embedding.to(
+                dtype=compute_dtype,
+                device=training_args.device,
+            )
+            rank0_print(
+                "Frame position embedding trainable: "
+                f"{position_embedding.num_embeddings} x "
+                f"{position_embedding.embedding_dim} (zero initialized)"
+            )
 
     if training_args.bits in [4, 8]:
         model.get_model().mm_projector.to(dtype=compute_dtype, device=training_args.device)

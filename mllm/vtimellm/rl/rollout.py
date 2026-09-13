@@ -62,7 +62,7 @@ def generate_batch(model, tokenizer, prompt_ids_list, images, *,
     ids, mask, _ = left_pad([p.to(torch.long) for p in prompt_ids_list], pad_id)
     input_len = ids.shape[1]
     # features arrive fp16 (evaluation.test_b4dl.load_features); mm_projector
-    # needs the actor's dtype, which is bf16 for the RL processes.
+    # needs the actor's dtype, which the GRPO run pins to bf16.
     dtype = next(model.parameters()).dtype
     imgs = [im.to(device=device, dtype=dtype) for im in images]
 

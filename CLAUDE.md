@@ -115,6 +115,7 @@ bash scripts/run_grpo_tg.sh eval
 ## 关键实现
 
 - `mllm/vtimellm/model/vtimellm_arch.py`：将 `<video>` token 替换为投影后的 LiDAR 特征。
+- 帧位置嵌入（A.2）是默认关闭的可选开关：`--use_frame_position_embedding --frame_position_max 64`，零初始化，作为非 LoRA 参数存入 `non_lora_trainables.bin`。`builder.py` 会从 stage2 的 `config.json` 自动读取这两个键，所以加载 `framepos3ep` checkpoint 不需要额外传参。关闭时 B0/B3/B4a 的结构与数值与未引入该开关前完全一致；CPU 自检见 `scripts/verify_frame_position.py`。
 - `mllm/vtimellm/train/dataset.py`：加载 QA 和场景特征，处理 whole-scene/per-sequence 输入。
 - `mllm/vtimellm/train/train.py`：训练参数、LoRA、DeepSpeed 和 checkpoint 恢复。
 - `mllm/evaluation/test_b4dl.py`：六任务推理及统一评测入口。

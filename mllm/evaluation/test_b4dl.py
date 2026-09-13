@@ -224,16 +224,30 @@ def resolve_feat_slice(item: dict, question: str,
     return list(range(first, last + 1))
 
 
+def slice_features_with_indices(
+        feat: torch.Tensor,
+        frame_indices: Optional[list]) -> Tuple[torch.Tensor, list]:
+    """Select scene-level feature rows and report which frame each row came from.
+
+    The indices are positions in `feat`, not positions in the returned tensor --
+    that distinction is what makes them usable by the optional frame-position
+    embedding, which is indexed by absolute frame number. The whole-scene
+    fallback has to cover the indices too, otherwise a dropped selection would
+    hand the model a 0..n-1 range for features that are not the whole scene.
+    """
+    n = int(feat.shape[0])
+    if not frame_indices:
+        return feat, list(range(n))
+    valid = [int(i) for i in frame_indices if 0 <= int(i) < n]
+    if not valid:
+        return feat, list(range(n))
+    return feat[valid], valid
+
+
 def slice_features(feat: torch.Tensor,
                    frame_indices: Optional[list]) -> torch.Tensor:
     """Select scene-level feature rows by frame index list (None = full scene)."""
-    if not frame_indices:
-        return feat
-    n = feat.shape[0]
-    valid = [i for i in frame_indices if 0 <= i < n]
-    if not valid:
-        return feat
-    return feat[valid]
+    return slice_features_with_indices(feat, frame_indices)[0]
 
 
 # --------------------------------------------------------------------------
@@ -379,9 +393,11 @@ def _save_checkpoint(results: dict, path: str):
     os.replace(tmp, path)  # atomic on POSIX
 
 
-def run_inference(model, tokenizer, features: torch.Tensor, query: str) -> str:
+def run_inference(model, tokenizer, features: torch.Tensor, query: str,
+                  frame_indices=None) -> str:
     """Run the B4DL autoregressive generation for one QA. Mirrors inference()."""
-    return inference(model, features, query, tokenizer)
+    return inference(model, features, query, tokenizer,
+                     frame_indices=frame_indices)
 
 
 # --------------------------------------------------------------------------
@@ -588,15 +604,19 @@ def main():
             # --sequence_metadata + question frames. Otherwise full scene
             # features (per-scene mode). --whole_scene (B3) always feeds the
             # whole scene, matching the official implementation.
+            # frame_indices tracks which absolute frame each fed row is, for the
+            # optional frame-position embedding (inert when the model lacks it).
             if getattr(args, 'whole_scene', False):
                 feat_used = feat
+                frame_indices = None
             elif getattr(args, 'per_sequence', False):
                 sel = resolve_feat_slice(
                     it, question, sequence_ranges,
                     gt=gt, answer_frames=getattr(args, 'answer_frames', False))
-                feat_used = slice_features(feat, sel)
+                feat_used, frame_indices = slice_features_with_indices(feat, sel)
             else:
                 feat_used = feat
+                frame_indices = None
 
             query = build_query(
                 question,
@@ -611,7 +631,8 @@ def main():
                 task=it.get('task'),
             )
             try:
-                pred = run_inference(model, tokenizer, feat_used, query)
+                pred = run_inference(model, tokenizer, feat_used, query,
+                                     frame_indices=frame_indices)
             except Exception as e:
                 skipped += 1
                 print(f"  ! inference failed for {scene_id}: {e}")
