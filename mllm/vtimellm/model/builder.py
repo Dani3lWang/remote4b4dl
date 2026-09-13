@@ -20,7 +20,9 @@ def load_lora(model, lora_path):
     return model
 
 def load_pretrained_model(args, stage2=None, stage3=None):
-    kwargs = {'torch_dtype': torch.float16}
+    # RL processes must share one precision (B3 was trained --bf16 True); every
+    # existing caller leaves torch_dtype unset and keeps the original fp16.
+    kwargs = {'torch_dtype': getattr(args, 'torch_dtype', None) or torch.float16}
 
     # model_path = os.path.expanduser(args.model_path)
     model_base = args.model_base
