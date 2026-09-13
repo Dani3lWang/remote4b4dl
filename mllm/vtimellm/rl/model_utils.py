@@ -31,9 +31,9 @@ def load_merged_actor(stage2, dtype=torch.bfloat16,
     must agree, otherwise `exp(logp_actor - logp_old)` carries a systematic
     precision offset instead of measuring policy movement.
     """
-    args = EasyDict(dict(model_base=model_base,
-                         pretrain_mm_mlp_adapter=mm_adapter,
-                         torch_dtype=dtype))
+    args = edict(dict(model_base=model_base,
+                      pretrain_mm_mlp_adapter=mm_adapter,
+                      torch_dtype=dtype))
     tokenizer, model, context_len = load_pretrained_model(args, stage2=stage2)
     if getattr(model.config, 'use_frame_position_embedding', False):
         raise ValueError(
@@ -48,7 +48,7 @@ def load_merged_actor(stage2, dtype=torch.bfloat16,
 
 
 def prepare_for_generation(tokenizer, model):
-    """Batched generate needs left padding, which nothing upstream sets.
+    """Batched generate needs left padding and a cache_position fix.
 
     `builder` never touches padding_side and `train.py:343` sets "right" for the
     SFT collator. Right padding is wrong here: the fused first forward returns
@@ -62,6 +62,35 @@ def prepare_for_generation(tokenizer, model):
     # 'right'. Left padding is also what makes the per-step mask rebuild in
     # arch.py:89-94 land on the right positions (see data.iter_prompt_batches).
     model.config.tokenizer_padding_side = 'left'
+    _drop_cache_position(model)
+
+
+def _drop_cache_position(model):
+    """Make batched `generate` survive the multimodal expansion.
+
+    transformers derives `cache_position` from the *unexpanded* input_ids, but
+    arch.py replaces the single `<video>` placeholder with N embeddings, so
+    `_update_causal_mask` is handed target_length = L + N - 1 against a
+    cache_position of length L and raises a broadcast error. Batch=1 escapes it
+    only because an unpadded, all-ones mask takes the sdpa fast path -- which is
+    why `inference.py` has never hit this.
+
+    Dropping the value lets LlamaModel.forward recompute it from the real
+    `inputs_embeds` length: arange(0, E) on the first step and past_seen + 1 on
+    every later step, both correct.
+
+    Patched on the instance, not in vtimellm_llama.py, so the frozen evaluation
+    path (test_b4dl -> load_pretrained_model) is provably untouched.
+    """
+    original = model.prepare_inputs_for_generation
+
+    def patched(input_ids, past_key_values=None, inputs_embeds=None, **kwargs):
+        model_inputs = original(input_ids, past_key_values=past_key_values,
+                                inputs_embeds=inputs_embeds, **kwargs)
+        model_inputs.pop('cache_position', None)
+        return model_inputs
+
+    model.prepare_inputs_for_generation = patched
 
 
 def attach_rl_lora(model, r=64, alpha=128, dropout=0.0):
