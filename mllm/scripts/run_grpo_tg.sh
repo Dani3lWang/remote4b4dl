@@ -9,12 +9,16 @@
 #   阶段 m32   短训 100 步 P=16/G=8。门控=跑满 100 步且 loss 无 NaN；同时打印奖励首末、
 #              退化组率、中心 std 供人工看是否坍缩。
 #   阶段 full  1 epoch P=32/G=8 正式训练（--resume 断点续训，save-total-limit=2 滚动删档）。
-#              注意：M3.3 同口径评测需要「RL 策略评测入口」(load_merged_actor + 载入 RL-LoRA)，
-#              test_b4dl 只认单个 stage2 adapter，故评测另行接入，本脚本 full 阶段只训练。
+#   阶段 eval  M3.3 同口径评测：test_b4dl 支持 --stage3，在「已合并 B3(stage2)」之上再合并
+#              RL-LoRA(stage3)，复用冻结评测环（--whole_scene --per_sequence --answer_frames、
+#              fp16，与 B3 的 mIoU 0.3467 逐位同口径）。已用 m31 单步档实证双合并可加载并出
+#              metrics.json，故 M3.3 无需新写评测入口。报数须带先验地板 0.2998 + 黑客面 +
+#              中心熵/众数 + --answer_frames 的 oracle 输入选择声明。
 #
 # 硬约束：奖励只调 evaluation.evaluate_model（不重写）；只用训练集 rl_tg_train.jsonl；
 # logp_old/logp_ref/logp_actor 全走 path B(forward_sequence)，绝不用 generate 的 scores。
-# 每阶段前查磁盘，余量 < MIN_FREE_GB 不开训（RL-LoRA 单档约 0.32G，但留足评测/中间产物）。
+# 每阶段前查磁盘，余量 < MIN_FREE_GB 不开训（RL-LoRA 单档 fp32 约 0.61G——save_embedding_layers
+# =False 已剔掉冻结 embed/lm_head 的 0.55G；save-total-limit=2 滚动，留足评测/中间产物）。
 set -u
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
@@ -86,10 +90,36 @@ case "$STAGE" in
         2>&1 | tee -a training_logs/grpo_full.log
     [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "full 训练非 0 退出（可重跑本阶段断点续训）"; exit 1; }
     "$PY" -m vtimellm.rl.check_gate "$OUT/grpo_log.jsonl" full
-    echo "训练结束 -> $OUT；M3.3 同口径评测待接入 RL 策略评测入口后再跑"
+    echo "训练结束 -> $OUT；下一步 bash scripts/run_grpo_tg.sh eval 跑 M3.3 同口径评测"
+    ;;
+  eval)
+    OUT=checkpoints/grpo_tg
+    EVAL_OUT=eval_results/grpo_tg
+    [ -f "$OUT/trainer_state.json" ] || { echo "缺 $OUT/trainer_state.json，full 未跑完"; exit 1; }
+    STEP=$("$PY" -c "import json;print(json.load(open('$OUT/trainer_state.json'))['global_step'])")
+    RL="$OUT/rl_lora_step$STEP"
+    [ -f "$RL/adapter_model.safetensors" ] || { echo "缺 RL adapter: $RL"; exit 1; }
+    mkdir -p "$EVAL_OUT"
+    echo "===== M3.3 同口径评测 --stage2 B3 --stage3 rl_lora_step$STEP $(date '+%F %T') ====="
+    timeout 21600 "$PY" -u evaluation/test_b4dl.py \
+        --model_base ./base_model/vicuna-v1-5-7b \
+        --pretrain_mm_mlp_adapter ./checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin \
+        --stage2 "./$B3_DIR" --stage3 "$RL" \
+        --feat_folder ../encoders/lidarclip/b4dl/stage2_features \
+        --test_data ./b4dl_dataset/test_qa.json \
+        --ego_meta ./b4dl_dataset/ego_metadata.json \
+        --frame_motion ./b4dl_dataset/ego_frame_motion.json \
+        --whole_scene --per_sequence --answer_frames \
+        --output "$EVAL_OUT/predictions.json" \
+        --metrics_output "$EVAL_OUT/metrics.json" \
+        2>&1 | tee "$EVAL_OUT/eval_log.txt"
+    [ "${PIPESTATUS[0]}" -eq 0 ] && [ -s "$EVAL_OUT/metrics.json" ] \
+        || { echo "M3.3 评测失败（非 0 退出或 metrics.json 空）"; exit 1; }
+    echo "M3.3 完成 -> $EVAL_OUT/metrics.json；对照 B3 mIoU 0.3467 / acc 0.7526（SIGMA 0.013）。"
+    echo "报数须带：先验地板 0.2998、奖励黑客面、中心熵/众数占比，并声明 --answer_frames 是 oracle 输入选择。"
     ;;
   *)
-    echo "用法: bash scripts/run_grpo_tg.sh {m31|m32|full}"; exit 2 ;;
+    echo "用法: bash scripts/run_grpo_tg.sh {m31|m32|full|eval}"; exit 2 ;;
 esac
 
 echo "########## 阶段=$STAGE 结束 $(date '+%F %T') ##########"

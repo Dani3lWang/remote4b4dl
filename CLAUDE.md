@@ -229,6 +229,34 @@ python evaluation/reward_audit_m1.py \
 
 2026-09-13 M1 奖励审计结论（`reward_audit_m1.py`，零 GPU）：① 奖励与评测指标**逐位相同**（Δ≤2.05e-15，PASS）；② **奖励就用原始 IoU / 0-1 精确匹配**——GRPO 优势按组内均值中心化，任何加性常数（含减地板）自动抵消是 no-op，而裁到地板以上是非线性的、实测把组内 std 压掉 35~60%；③ 组内退化率决定 **G≥8、TG 用 G=16**（TG 6.9%→2.4%，existence 21.2%→15.0%，binary_qa 0.5%→0.2%）；④ 奖励黑客面：先验常数答案在 **48.7%** 的 TG 样本上打赢 B3 自己的答案（framepos3ep 52.5%），所以每次报数必须带地板、黑客面、中心熵/众数占比；⑤ 前置缺口：训练 JSON 只有 TG 条目带 `task` 字段（13,124/148,271），分任务奖励路由与分任务地板要先补标签。可执行方案与 14 步迭代流程见 `docs/learn docs/B4DL_GRPO实施方案_M1审计后定稿_20260913.md`。
 
+### GRPO RL 训练（M2 冒烟 / M3 训练，2026-09-13 起）
+
+RL 代码全部在 `mllm/vtimellm/rl/`，训练基底固定 **B3**（不是 framepos3ep）。逐条审查见上述方案文档 §4.5（8 个静默错数坑）+ §4.6（实现定稿，覆盖 §5/§7 的三进程旧设计）。模块：`data.py`(复用 SFT 训练 JSON 逐字 + 按 n_visual 分桶) / `rollout.py`(批量采样，等 N 硬校验) / `logprob.py`(path B 前向 gather) / `reward.py`(只调 evaluate_model，不重写) / `model_utils.py`(load_merged_actor + attach_rl_lora) / `grpo_trainer.py`(训练器) / `check_gate.py`(阶段门控) / `diag_logprob_dtype.py`(A-vs-B 舍入诊断) / `smoke_m2.py`(8 门冒烟)。
+
+```bash
+cd mllm
+# M2 rollout 通路冒烟（8 道门，零训练；写 training_logs/smoke_m2.{log,json}，all_pass 是 M3 硬门）
+python -m vtimellm.rl.smoke_m2   # --stage2/--data 默认 B3 + rl_tg_train.jsonl
+# 训练链（设计成跑在一个 tmux 会话里，断链不影响）：
+bash scripts/run_grpo_tg.sh m31    # 1 步机械冒烟，门控 grad_norm>0 / ratio_dev<1e-3 / lora_delta>0
+bash scripts/run_grpo_tg.sh m32    # 100 步短训，门控 跑满100步无NaN + 人工看 reward↑/退化率/中心熵
+bash scripts/run_grpo_tg.sh full   # 1 epoch P=32 G=8，--resume 断点续训，save-total-limit=2 滚动删档
+```
+
+关键实现定稿（§4.6）：
+- **单进程**：RL-LoRA 叠在「已合并 B3」之上，参考策略 = `model.disable_adapter()` 同一模型，不常驻第二份 14G，也不需要 ZeRO-3/offload（只 ~160M LoRA 可训，base 冻结无优化器态/梯度）。
+- **三路 logp（old/ref/actor）全走 path B**（`logprob.forward_sequence`），绝不用 generate 的 scores（path A 与 B 差 ~0.085 nat = bf16 cache-vs-full 舍入，`diag_logprob_dtype` 实证 fp16 缩小 8.9x；path B == path C 模型自带 CE 到 1e-7）。
+- **fp32 LoRA + fp32 master**：peft `get_peft_model` 默认 `autocast_adapter_dtype=True` 把新建 LoRA 升成 fp32，故可训 RL-LoRA 本身即 fp32（实测存档 448 张量全 fp32、单档 0.61G），AdamW 更新的 fp32 master 与之同步、每步 cast 回是 fp32→fp32 no-op；合并 B3 base 仍 bf16 冻结，peft 在每个 LoRA 前向内部把激活 cast 到 adapter dtype。fp32 训练正是 lr=1e-5 能生效的前提：纯 bf16 更新低于 ~1e-2 权重的 bf16 ULP(~4e-5) 会被静默抹零。`inner_epochs=1` 时 ratio==1（更新前算），clip 是 no-op 安全网，策略仍移动（KL/gnorm/lora_delta 为证）。
+- ⚠️ **分块生成防 OOM**：rollout 按 `--gen-max-batch`(默认 32) 分块 generate；单次给整组 P*G(128/256 行) 建 KV cache，叠加 step0 末才落地的常驻 AdamW 态会爆 32G 卡（M3.2 step1 实测 OOM）。实测 B=32 吞吐 38.7 items/s（近峰值），train micro-batch=4 时峰值稳定 ~23.5G。
+- ⚠️ **cache_position 实例补丁**：transformers 用未展开的 input_ids 推 cache_position，但 arch.py 把单个 `<video>` 换成 N 个 embedding 致长度不符而广播报错；`model_utils._drop_cache_position` 在**实例上**（非 vtimellm_llama.py）丢掉 cache_position，让 LlamaModel 按真实 inputs_embeds 重算，故冻结评测路径 provably 不受影响（batch=1 走 sdpa 快路本就绕过此 bug）。
+- ⚠️ **NLTK_DATA**：`evaluate_model` 导入时 `_ensure_nltk_data()` 缺语料会触发 nltk.download 联网卡死约 7 分钟；`run_grpo_tg.sh` 已 `export NLTK_DATA=$PROJECT_ROOT/nltk_data`（语料已暂存于项目内）。
+
+**M3.3 同口径评测**：RL 策略 = 合并 B3 + RL-LoRA，直接用冻结的 `test_b4dl.py --stage2 <B3> --stage3 <rl_lora_stepN>`（builder 对 stage3 也 `merge_and_unload`），其余 flag 与 B3 基线 `run_eval` 完全一致（`--whole_scene --per_sequence --answer_frames` + ego_meta + frame_motion + test_qa.json，fp16），故与 B3 的 mIoU 0.3467 同口径可比；`--answer_frames` 仍是 oracle 输入选择，报数须声明。
+
+硬约束：奖励只调 `evaluation.evaluate_model`（不重写）；RL 数据只用训练集 `rl_tg_train.jsonl`（测试集 predictions/GT 禁入训练与调参，仅 M3.3/M4.2 验收用）；调参只看训练集指标。
+
+状态（2026-09-13）：M2 冒烟 **8/8 全绿**；M3.1 机械门控 **PASS**（grad_norm 1.14 / ratio_dev 0 / lora_delta 1e-5 / peak 21.4G）；M3.2 短训 100 步 **PASS**（reward 0.176→0.322 即 +71.6%、退化率末段 0、parse 失败 0.37%、中心众数占比 0.171→0.136 低于 B3 的 0.244 不坍缩、KL 峰 0.224、peak 24.3G、无 NaN）；M3.3 评测入口已实证（`test_b4dl --stage2 B3 --stage3 rl_lora` 双合并 exit 0 出 metrics）；`full`（1 epoch **406 步** P=32/G=8，~32s/步 ≈ 3.6h，--resume，save-total-limit=2）**已启动运行中**，完成后跑 `bash scripts/run_grpo_tg.sh eval` 出 M3.3 同口径数。
+
 ### Gradio Web Demo
 
 ```bash
@@ -280,7 +308,7 @@ conda run -n wqlc python vtimellm/demo_gradio.py \
 ## 规划与拆解文档
 
 - `docs/learn docs/B4DL_训练全流程分步详解_RL引进挂载点_20260907.md`：SFT 管线 A–E 阶段拆解 + RL（M1–M4）挂载点底稿
-- `docs/learn docs/B4DL_GRPO实施方案_M1审计后定稿_20260913.md`：**可执行 GRPO 方案**（M1 审计实测数据 + 奖励规格 + 复用/新写组件清单 + 14 步迭代流程 + M2/M3/M4 门控与止损）。状态：M1 已完成（PASS with conditions），下一步**只做 M2 rollout 通路冒烟**，M3 之前不写 trainer
+- `docs/learn docs/B4DL_GRPO实施方案_M1审计后定稿_20260913.md`：**可执行 GRPO 方案**（M1 审计实测数据 + 奖励规格 + 复用/新写组件清单 + 14 步迭代流程 + M2/M3/M4 门控与止损）。状态：M1/M2 已完成（M2 冒烟 **8/8 全绿**），单进程 trainer 已写并跑通 M3.1（机械门控 PASS）、M3.2 短训进行中；**实现定稿见 §4.6**（单进程 / path B / fp32 master / 分块生成 / cache_position 补丁），覆盖 §5/§7 的三进程旧设计
 - `docs/learn docs/B4DL_分割模块移植方案_AB路线_20260909.md`：动态目标分类/分割模块移植（Reason3D/MORE3D 方法），实验编号 **B5 系列**（B5-P0/P1 门控 + B5a 感知前端 + B5b token 解码头）；时序硬约束：B5b-4 输出接口冻结先于 RL M2
 
 ## Git 提交规范
