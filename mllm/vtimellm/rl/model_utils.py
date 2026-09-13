@@ -35,10 +35,6 @@ def load_merged_actor(stage2, dtype=torch.bfloat16,
                       pretrain_mm_mlp_adapter=mm_adapter,
                       torch_dtype=dtype))
     tokenizer, model, context_len = load_pretrained_model(args, stage2=stage2)
-    if getattr(model.config, 'use_frame_position_embedding', False):
-        raise ValueError(
-            f'{stage2} enables frame-position embeddings; the B3 baseline does '
-            'not, and this stack passes frame_indices=None')
     prepare_for_generation(tokenizer, model)
     model = model.to(dtype)
     if device:

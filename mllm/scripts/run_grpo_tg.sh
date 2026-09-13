@@ -1,6 +1,6 @@
 #!/bin/bash
 # GRPO 时间定位训练链（单进程单卡，设计成跑在一个 tmux 会话里，断链不影响）。
-# 基底固定为 B3（当前最优 acc 0.7526 / mIoU 0.3467）；RL-LoRA 叠加在「已合并 B3」之上，
+# 基底固定为当前 B3 checkpoint；RL-LoRA 叠加在「已合并 B3」之上，
 # 参考策略 = 关掉 RL-LoRA 的同一模型（model.disable_adapter()），不再常驻第二份 14G 权重。
 #
 #   阶段 m31   训练侧冒烟：1 步 P=4/G=4。门控=backward 流通(grad_norm>0)、ratio==1
@@ -11,7 +11,7 @@
 #   阶段 full  1 epoch P=32/G=8 正式训练（--resume 断点续训，save-total-limit=2 滚动删档）。
 #   阶段 eval  M3.3 同口径评测：test_b4dl 支持 --stage3，在「已合并 B3(stage2)」之上再合并
 #              RL-LoRA(stage3)，复用冻结评测环（--whole_scene --per_sequence --answer_frames、
-#              fp16，与 B3 的 mIoU 0.3467 逐位同口径）。已用 m31 单步档实证双合并可加载并出
+#              fp16，与 B3 逐位同口径）。已用 m31 单步档实证双合并可加载并出
 #              metrics.json，故 M3.3 无需新写评测入口。报数须带先验地板 0.2998 + 黑客面 +
 #              中心熵/众数 + --answer_frames 的 oracle 输入选择声明。
 #
@@ -115,7 +115,7 @@ case "$STAGE" in
         2>&1 | tee "$EVAL_OUT/eval_log.txt"
     [ "${PIPESTATUS[0]}" -eq 0 ] && [ -s "$EVAL_OUT/metrics.json" ] \
         || { echo "M3.3 评测失败（非 0 退出或 metrics.json 空）"; exit 1; }
-    echo "M3.3 完成 -> $EVAL_OUT/metrics.json；对照 B3 mIoU 0.3467 / acc 0.7526（SIGMA 0.013）。"
+    echo "M3.3 完成 -> $EVAL_OUT/metrics.json；请读取同一 B3 checkpoint 的实测指标作为对照。"
     echo "报数须带：先验地板 0.2998、奖励黑客面、中心熵/众数占比，并声明 --answer_frames 是 oracle 输入选择。"
     ;;
   *)

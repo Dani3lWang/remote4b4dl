@@ -16,7 +16,7 @@ S4 的散布是**代理假设**（按 B3 自身答案的经验分布抽样），
 
 用法（服务器，wqlc python，纯 CPU）：
     python evaluation/reward_audit_m1.py \
-        --run eval_results/migration_b3 --run eval_results/framepos3ep \
+        --run eval_results/b3 --run eval_results/grpo_tg \
         --train b4dl_dataset/stage2_full_train_seqv3_meta2_148k.json \
         --test  b4dl_dataset/test_qa.json \
         --out   eval_results/reward_baseline.json
@@ -308,8 +308,8 @@ def main():
     print('  奖励形状结论：GRPO 的优势按组内均值中心化，任何**加性**常数（含先验地板）在优势里')
     print('        自动抵消 → "减地板"对梯度是 no-op；而"裁到地板以上"是非线性的，会压掉组内方差')
     print('        （对比 S4 最后两列 E[std r] vs E[std r-floor]）→ 奖励就用原始 IoU / 0-1 准确率。')
-    print('        S4 的"含常数答案(50%)"行说明 rollout 越贴近先验众数、组内方差越小，故 RL 初始化')
-    print('        取熵更高的那份 checkpoint（见 tg_decode_probe 的中心熵与众数占比）。')
+    print('        S4 的"含常数答案(50%)"行说明 rollout 越贴近先验众数、组内方差越小；')
+    print('        比较 checkpoint 时应同步检查本报告给出的中心熵与众数占比。')
     return 0
 
 
