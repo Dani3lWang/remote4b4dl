@@ -51,6 +51,12 @@ from effect_visualizer import (  # noqa: E402
     time_grounding_diagnostics_figure,
     timeline_figure,
 )
+from paper_case_visualizer import (  # noqa: E402
+    build_paper_case,
+    parse_frame_indices,
+    select_frame_indices,
+    split_highlights,
+)
 
 
 APP_CSS = """
@@ -124,6 +130,14 @@ textarea, input { font-family: "Aptos", "Segoe UI", sans-serif !important; }
 .diagnosis-strip span { border: 1px solid var(--b4-line); padding: 7px 10px; background: #08111a; color: var(--b4-muted); }
 .diagnosis-strip span:first-child { color: var(--b4-cyan); border-color: rgba(0,212,199,.45); }
 #effect-sample-panel { border-left: 3px solid var(--b4-amber); padding-left: 14px; }
+#paper-case-builder {
+  border: 1px solid var(--b4-line); border-left: 3px solid var(--b4-amber);
+  background: linear-gradient(145deg, rgba(255,176,0,.055), rgba(8,16,24,.96));
+  padding: 14px !important;
+}
+#paper-case-preview {
+  border: 1px solid var(--b4-line); background: #f3f0e8; padding: 8px !important;
+}
 @media (max-width: 1050px) { .metric-rail { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 620px) { .metric-rail { grid-template-columns: repeat(2, 1fr); } }
 """
@@ -394,6 +408,16 @@ def create_demo(
                 initial_effect_id, None, initial_camera, True, True
             )
             effect_frame_count, effect_frame_index, effect_render, effect_timeline, effect_sample = initial_effect
+            initial_paper_scene = initial_scene
+            if effect_sample and effect_sample.scene_id:
+                try:
+                    initial_paper_scene = repository.get_scene_by_id(effect_sample.scene_id)
+                except KeyError:
+                    pass
+            initial_paper_frames = ", ".join(
+                str(value)
+                for value in select_frame_indices(len(initial_paper_scene.sample_tokens))
+            )
 
             with gr.Group(elem_classes=["effect-shell"]):
                 gr.HTML('<h2 class="effect-heading">MODEL EFFECTS / 模型效果</h2>')
@@ -518,6 +542,74 @@ def create_demo(
                                     effect_boxes = gr.Checkbox(value=True, label="真值 3D 框")
                                     effect_tracks = gr.Checkbox(value=True, label="历史轨迹")
 
+                    with gr.Tab("论文案例图 / PAPER CASE"):
+                        gr.Markdown(
+                            "将评测样本组织为 **5 帧 × 前视 / 后视 / LiDAR BEV** 的论文定性案例图。"
+                            "文本高亮项用逗号分隔；留空帧号时自动均匀采样。"
+                        )
+                        paper_sample_picker = gr.Dropdown(
+                            choices=effect_choices(effect_samples),
+                            value=initial_effect_id,
+                            label="从当前评测页载入样本",
+                            filterable=True,
+                        )
+                        with gr.Row(equal_height=False):
+                            with gr.Column(scale=4, min_width=360, elem_id="paper-case-builder"):
+                                paper_scene = gr.Dropdown(
+                                    choices=scene_choices,
+                                    value=initial_paper_scene.scene_token,
+                                    label="nuScenes 场景",
+                                    filterable=True,
+                                )
+                                paper_frames = gr.Textbox(
+                                    value=initial_paper_frames,
+                                    label="帧号（2–8 帧，推荐 5 帧）",
+                                    placeholder="例如：0, 10, 20, 30, 39；留空自动选择",
+                                )
+                                paper_title = gr.Textbox(
+                                    value="QUALITATIVE CASE STUDY", label="图标题",
+                                )
+                                paper_question = gr.Textbox(
+                                    value=effect_sample.question if effect_sample else "",
+                                    label="QUESTION", lines=3,
+                                )
+                                with gr.Row():
+                                    paper_baseline_label = gr.Textbox(
+                                        value="Ground truth", label="左侧模型名",
+                                    )
+                                    paper_b4dl_label = gr.Textbox(
+                                        value="B4DL model (Ours)", label="右侧模型名",
+                                    )
+                                paper_baseline_answer = gr.Textbox(
+                                    value=effect_sample.ground_truth if effect_sample else "",
+                                    label="左侧答案 / BASELINE", lines=4,
+                                )
+                                paper_baseline_highlights = gr.Textbox(
+                                    label="左侧黄色高亮短语",
+                                    placeholder="vehicles in front, turning left",
+                                )
+                                paper_b4dl_answer = gr.Textbox(
+                                    value=effect_sample.prediction if effect_sample else "",
+                                    label="右侧答案 / B4DL", lines=4,
+                                )
+                                paper_b4dl_highlights = gr.Textbox(
+                                    label="右侧绿色高亮短语",
+                                    placeholder="vehicles in the back view",
+                                )
+                                with gr.Row():
+                                    paper_boxes = gr.Checkbox(value=True, label="投影真值框")
+                                    paper_tracks = gr.Checkbox(value=True, label="LiDAR 历史轨迹")
+                                paper_build = gr.Button("生成论文案例图 / EXPORT", variant="primary")
+                                paper_status = gr.Markdown("等待生成 · 输出 PNG + PDF")
+                                paper_files = gr.File(
+                                    label="下载论文图", file_count="multiple", interactive=False,
+                                )
+                            with gr.Column(scale=8, min_width=640):
+                                paper_preview = gr.Image(
+                                    type="pil", interactive=False, label="PAPER FIGURE PREVIEW",
+                                    elem_id="paper-case-preview",
+                                )
+
             def update_effect_page(task, status, query, sort_order, requested_page):
                 page_samples, total, actual_page = evaluation.page(
                     task=task, status=status, query=query, sort_order=sort_order,
@@ -530,10 +622,12 @@ def create_demo(
                     gr.update(choices=choices, value=selected),
                     f"第 {actual_page + 1} 页 · 当前 {len(page_samples)} / 共 {total} 条",
                     actual_page,
+                    gr.update(choices=choices, value=selected),
                 )
 
             effect_page_outputs = [
                 effect_table, effect_sample_picker, effect_page_info, effect_page_state,
+                paper_sample_picker,
             ]
             for component in (effect_task, effect_status, effect_query, effect_sort):
                 component.change(
@@ -604,6 +698,99 @@ def create_demo(
                 component.change(
                     change_effect_frame, effect_frame_inputs, effect_frame_outputs
                 )
+
+            def load_paper_sample(sample_id):
+                if not sample_id:
+                    return (
+                        gr.update(), "", "", "", "",
+                        "未选择评测样本；可以手动填写场景与文案。",
+                    )
+                sample = evaluation.get(sample_id)
+                scene = initial_scene
+                warning = ""
+                if sample.scene_id:
+                    try:
+                        scene = repository.get_scene_by_id(sample.scene_id)
+                    except KeyError:
+                        warning = f"scene_id {sample.scene_id} 未映射，已保留默认场景。"
+                else:
+                    warning = "该旧版评测样本没有 scene_id；请手动选择场景。"
+
+                candidates = [
+                    int(value) for value in (sample.feat_indices or ())
+                    if 0 <= int(value) < len(scene.sample_tokens)
+                ]
+                if len(set(candidates)) >= 2:
+                    candidates = sorted(set(candidates))
+                    positions = np.linspace(0, len(candidates) - 1, min(5, len(candidates)))
+                    selected = tuple(candidates[int(round(position))] for position in positions)
+                else:
+                    selected = select_frame_indices(len(scene.sample_tokens))
+                frame_text = ", ".join(str(value) for value in selected)
+                status = (
+                    f"已载入 `{sample.sample_id}` · {TASK_LABELS[sample.task]}"
+                    + (f"  \n{warning}" if warning else "")
+                )
+                return (
+                    gr.update(value=scene.scene_token), frame_text, sample.question,
+                    sample.ground_truth, sample.prediction, status,
+                )
+
+            paper_sample_picker.change(
+                load_paper_sample,
+                paper_sample_picker,
+                [
+                    paper_scene, paper_frames, paper_question,
+                    paper_baseline_answer, paper_b4dl_answer, paper_status,
+                ],
+            )
+
+            def export_paper_case(
+                scene_token, frames, title, question,
+                baseline_label, baseline_answer, baseline_highlights,
+                b4dl_label, b4dl_answer, b4dl_highlights,
+                boxes, tracks,
+            ):
+                try:
+                    scene = repository.get_scene(scene_token)
+                    selected = parse_frame_indices(
+                        frames, len(scene.sample_tokens), count=5
+                    )
+                    artifact = build_paper_case(
+                        repository=repository,
+                        scene_token=scene_token,
+                        frame_indices=selected,
+                        question=question,
+                        baseline_answer=baseline_answer,
+                        b4dl_answer=b4dl_answer,
+                        baseline_label=baseline_label or "Baseline",
+                        b4dl_label=b4dl_label or "B4DL model (Ours)",
+                        baseline_highlights=split_highlights(baseline_highlights),
+                        b4dl_highlights=split_highlights(b4dl_highlights),
+                        title=title or "QUALITATIVE CASE STUDY",
+                        show_boxes=bool(boxes),
+                        show_tracks=bool(tracks),
+                    )
+                    selected_text = ", ".join(str(value) for value in artifact.frame_indices)
+                    return (
+                        artifact.image,
+                        [artifact.png_path, artifact.pdf_path],
+                        f"**导出完成** · 帧 `{selected_text}` · PNG / PDF 均已生成",
+                    )
+                except Exception as exc:
+                    return None, None, f"**生成失败** · {exc}"
+
+            paper_build.click(
+                export_paper_case,
+                [
+                    paper_scene, paper_frames, paper_title, paper_question,
+                    paper_baseline_label, paper_baseline_answer,
+                    paper_baseline_highlights, paper_b4dl_label,
+                    paper_b4dl_answer, paper_b4dl_highlights,
+                    paper_boxes, paper_tracks,
+                ],
+                [paper_preview, paper_files, paper_status],
+            )
 
         with gr.Row(equal_height=False):
             with gr.Column(scale=3, min_width=260, elem_id="b4-controls"):

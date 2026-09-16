@@ -75,12 +75,15 @@ python -m vtimellm.demo_gradio \
   --test_data ./b4dl_dataset/test_qa.json
 ```
 
-页面增加两个区域：
+页面增加三个区域：
 
 - **效果总览**：最终指标与论文 Table 3 对比、per-task 指标、分类混淆矩阵、
   TG IoU 分布和开始帧散点图。
 - **样本诊断**：按任务、状态、关键词和得分分页筛选；选择样本后显示点云、
   BEV、相机、问题、Ground Truth、预测和任务对应的单样本得分。
+- **论文案例图**：从当前评测页载入一个样本，选择 2–8 个场景帧（默认均匀
+  选择 5 帧），生成同步的前视、后视和 LiDAR BEV 三行视图；可编辑两组
+  模型答案与黄色/绿色高亮短语，并下载 180 DPI PNG 和 PDF。
 
 时间定位时间轴使用数据集原始 0 基帧号。界面的 `DATASET FRAME 006 ·
 POSITION 7/40` 表示数据集帧号为 6，同时它是场景中的第 7 帧。
@@ -96,3 +99,34 @@ POSITION 7/40` 表示数据集帧号为 6，同时它是场景中的第 7 帧。
 
 若旧结果无法与 `test_qa.json` 唯一匹配，页面保留文本诊断并明确显示未关联，
 不会猜测或跳转到错误场景。
+
+## 单独导出论文案例图
+
+不启动 Gradio 时，可直接调用独立渲染器。`--frames` 留空会在整段场景中
+均匀选择 5 帧；高亮短语支持用逗号、分号或换行分隔。
+
+```bash
+cd mllm
+python vtimellm/paper_case_visualizer.py \
+  --nuscenes-root /path/to/nuScenes \
+  --scene-metadata ../encoders/lidarclip/annotations/scene_metadata.json \
+  --scene-token <nuscenes-scene-token> \
+  --frames "0, 10, 20, 30, 39" \
+  --question "What dynamic movement is observed throughout the frames?" \
+  --baseline-label "VTimeLLM" \
+  --baseline-answer "Vehicles in front move forward." \
+  --b4dl-answer "Front vehicles move forward while rear vehicles move away." \
+  --baseline-highlights "Vehicles in front" \
+  --b4dl-highlights "Front vehicles,rear vehicles" \
+  --output-dir ./paper_cases
+```
+
+相机行使用 nuScenes 标定将真值 3D 框投影到画面；LiDAR 行是适合打印的
+静态 BEV，并可叠加真值框和历史轨迹。该流程只读数据与评测输出，不加载或
+修改训练代码。
+
+论文案例图的 CPU 单元测试：
+
+```bash
+python -m unittest tests.test_paper_case_visualizer -v
+```
