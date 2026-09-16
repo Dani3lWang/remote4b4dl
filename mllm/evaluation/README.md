@@ -119,6 +119,42 @@ python evaluation/evaluate_model.py --demo
 > `test_b4dl.py` 输出的 dict 格式（`{task: {predictions:[], ground_truths:[]}}`）
 > 和 `test_qa.json` 的 list 格式（`[{task, conversations}]`）均支持。
 
+## 评测输出格式 v2
+
+`test_b4dl.py` 现在仍保留原有三个任务级数组，并增加与预测一一对齐的
+`samples` 元数据，供模型效果看板定位原始场景：
+
+```json
+{
+  "_schema_version": 2,
+  "_run": {
+    "model": "vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-b3",
+    "whole_scene": true,
+    "per_sequence": true,
+    "answer_frames": true
+  },
+  "time_grounding": {
+    "predictions": ["from frame 15 to frame 25"],
+    "ground_truths": ["from frame 18 to frame 27"],
+    "questions": ["When did the vehicle begin turning?"],
+    "samples": [{
+      "sample_id": "time_grounding:000123",
+      "source_index": 123,
+      "scene_id": "005745653",
+      "scene_token": null,
+      "feat_indices": null,
+      "feat_range": [0, 40]
+    }]
+  }
+}
+```
+
+新增字段不改变正式指标口径，现有 `evaluate_model.py` 和
+`analyze_tg_regression.py` 会继续读取任务键并忽略元数据键。写盘前会检查
+`predictions`、`ground_truths`、`questions`、`samples` 严格等长。
+
+模型效果看板的使用方式见 `mllm/docs/lidar_gradio_demo.md`。
+
 ## 验收标准（论文 Table 3 参考值）
 
 | Accuracy | mIoU | B@4 | ROUGE-L | METEOR | BERTScore | GPT Score |

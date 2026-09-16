@@ -689,8 +689,13 @@ def merge_pred_gt(predictions: Dict, ground_truth: Dict, evaluator: B4DLEvaluato
     keys = set(predictions.keys()) | set(ground_truth.keys())
     for k in keys:
         ck = evaluator.canonical_task(k)
+        # Schema-v2 metadata keys (_schema_version/_run) are not tasks.
+        if ck not in evaluator.ALL_TASKS:
+            continue
         p = predictions.get(k, {})
         g = ground_truth.get(k, {})
+        p = p if isinstance(p, dict) else {}
+        g = g if isinstance(g, dict) else {}
         merged[ck] = {
             'predictions': p.get('predictions', []),
             'ground_truths': g.get('ground_truths', p.get('ground_truths', [])),

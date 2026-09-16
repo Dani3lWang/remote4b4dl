@@ -245,6 +245,13 @@ class NuScenesSceneRepository:
         self._frame_cache: "OrderedDict[Tuple[str, int], FrameData]" = OrderedDict()
         self.scenes = self._build_scene_index()
         self._scenes_by_token = {scene.scene_token: scene for scene in self.scenes}
+        self._scenes_by_id: Dict[str, SceneRef] = {}
+        for scene in self.scenes:
+            if not scene.scene_id:
+                continue
+            if scene.scene_id in self._scenes_by_id:
+                raise ValueError(f"scene_metadata 包含重复 scene_id：{scene.scene_id}")
+            self._scenes_by_id[scene.scene_id] = scene
         if not self.scenes:
             raise RuntimeError(f"{version} 中没有可显示的场景")
 
@@ -301,6 +308,13 @@ class NuScenesSceneRepository:
             return self._scenes_by_token[str(scene_token)]
         except KeyError as exc:
             raise KeyError(f"未知 scene token：{scene_token}") from exc
+
+    def get_scene_by_id(self, scene_id: str) -> SceneRef:
+        """Resolve the B4DL feature key to its nuScenes scene."""
+        try:
+            return self._scenes_by_id[str(scene_id)]
+        except KeyError as exc:
+            raise KeyError(f"scene_metadata 中没有 scene_id：{scene_id}") from exc
 
     def _load_points(self, lidar_path: str, sample_token: str) -> np.ndarray:
         try:

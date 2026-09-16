@@ -1,7 +1,8 @@
-"""B4DL 4D LiDAR scene explorer and optional model chat UI.
+"""B4DL 4D LiDAR scene explorer, evaluation dashboard, and model chat UI.
 
 Viewer-only mode needs nuScenes plus the demo requirements. Model chat is
 enabled only when all model/feature arguments are supplied as a complete set.
+Evaluation mode reads predictions/metrics without loading model weights.
 No training module or training dataset is imported by this entrypoint.
 """
 
@@ -34,6 +35,21 @@ from lidar_visualizer import (  # noqa: E402
     make_plotly_figures,
     step_frame,
     validate_scene_features,
+)
+from model_effects import (  # noqa: E402
+    TASK_LABELS,
+    TASKS,
+    EvaluationRepository,
+)
+from effect_visualizer import (  # noqa: E402
+    confusion_matrix_figure,
+    empty_effect_figure,
+    metric_cards_html,
+    overview_metrics_figure,
+    per_task_metrics_figure,
+    sample_diagnosis_html,
+    time_grounding_diagnostics_figure,
+    timeline_figure,
 )
 
 
@@ -87,13 +103,36 @@ button.secondary { border-color: var(--b4-line) !important; }
 .tabs > .tab-nav { border-bottom: 1px solid var(--b4-line) !important; }
 .tabs > .tab-nav button.selected { color: var(--b4-cyan) !important; border-bottom-color: var(--b4-cyan) !important; }
 textarea, input { font-family: "Aptos", "Segoe UI", sans-serif !important; }
+.effect-shell {
+  border: 1px solid var(--b4-line); border-top: 3px solid var(--b4-cyan);
+  background: rgba(8,16,24,.94); padding: 14px; margin-bottom: 16px;
+  box-shadow: 0 18px 58px rgba(0,0,0,.28);
+}
+.effect-heading { margin: 0 0 11px; color: var(--b4-text); font-size: 18px; letter-spacing: .08em; }
+.metric-rail { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 8px; margin: 4px 0 14px; }
+.metric-card {
+  min-height: 78px; border: 1px solid var(--b4-line); padding: 11px 12px;
+  background: linear-gradient(145deg, rgba(0,212,199,.09), rgba(11,19,28,.95));
+  position: relative; overflow: hidden;
+}
+.metric-card::after { content: ""; position: absolute; left: 0; bottom: 0; width: 100%; height: 2px; background: var(--b4-cyan); }
+.metric-card span { display: block; color: var(--b4-muted); font-size: 10px; letter-spacing: .15em; }
+.metric-card strong { display: block; margin-top: 8px; color: var(--b4-text); font-size: 24px; font-weight: 600; }
+.metric-card.is-na strong { color: var(--b4-muted); }
+.effect-warning { border-left: 2px solid var(--b4-amber); padding: 8px 12px; margin: 4px 0 12px; color: var(--b4-amber); background: rgba(255,176,0,.06); }
+.diagnosis-strip { display: flex; flex-wrap: wrap; gap: 7px; margin: 6px 0 10px; }
+.diagnosis-strip span { border: 1px solid var(--b4-line); padding: 7px 10px; background: #08111a; color: var(--b4-muted); }
+.diagnosis-strip span:first-child { color: var(--b4-cyan); border-color: rgba(0,212,199,.45); }
+#effect-sample-panel { border-left: 3px solid var(--b4-amber); padding-left: 14px; }
+@media (max-width: 1050px) { .metric-rail { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 620px) { .metric-rail { grid-template-columns: repeat(2, 1fr); } }
 """
 
 HERO_HTML = """
 <section id="b4-hero">
   <div class="b4-kicker"><span class="b4-live"></span>B4DL / SENSOR OPERATIONS</div>
-  <h1 class="b4-title">4D LiDAR 场景查看器</h1>
-  <div class="b4-subtitle">NUSCENES TIMELINE · 3D / BEV · GROUND-TRUTH TRACKS · OPTIONAL LLM</div>
+  <h1 class="b4-title">4D LiDAR 模型诊断台</h1>
+  <div class="b4-subtitle">MODEL EFFECTS · TEMPORAL ERROR · 3D / BEV · SCENE CHAT</div>
 </section>
 """
 
@@ -250,8 +289,9 @@ class DemoController:
             scene_id = frame.scene.scene_id or "未映射"
             warning_text = "<br>".join(frame.warnings[:3]) if frame.warnings else "无"
             summary = (
-                f"**SCENE** `{scene_id}`　 **FRAME** `{frame.frame_index + 1:02d}/"
-                f"{len(frame.scene.sample_tokens):02d}`　 **POINTS** `{len(frame.points):,}`  \n"
+                f"**SCENE** `{scene_id}`　 **DATASET FRAME** `{frame.frame_index:03d}`　"
+                f"**POSITION** `{frame.frame_index + 1:02d}/{len(frame.scene.sample_tokens):02d}`　"
+                f"**POINTS** `{len(frame.points):,}`  \n"
                 f"**SAMPLE** `{frame.sample_token}`　 **BOXES** `{len(frame.boxes)}`　"
                 f"**TRACKS** `{len(frame.tracks)}`"
             )
@@ -264,7 +304,11 @@ class DemoController:
             return placeholder, placeholder, None, "**FRAME ERROR**", message
 
 
-def create_demo(repository: NuScenesSceneRepository, inference: OptionalInferenceEngine):
+def create_demo(
+    repository: NuScenesSceneRepository,
+    inference: OptionalInferenceEngine,
+    evaluation: Optional[EvaluationRepository] = None,
+):
     try:
         import gradio as gr
     except ImportError as exc:
@@ -283,6 +327,283 @@ def create_demo(repository: NuScenesSceneRepository, inference: OptionalInferenc
         frame_count_state = gr.State(len(initial_scene.sample_tokens))
         conversation_state = gr.State(None)
         timer = gr.Timer(value=0.5, active=False)
+
+        if evaluation is not None and evaluation.enabled:
+            effect_page_state = gr.State(0)
+            effect_samples, effect_total, effect_page = evaluation.page(page=0)
+
+            def effect_rows(samples):
+                return [
+                    [
+                        sample.sample_id,
+                        TASK_LABELS[sample.task],
+                        sample.scene_id or "未关联",
+                        sample.score_label,
+                        sample.status,
+                        sample.question[:120],
+                    ]
+                    for sample in samples
+                ]
+
+            def effect_choices(samples):
+                return [
+                    (
+                        f"{sample.score_label:>6} · {TASK_LABELS[sample.task]} · "
+                        f"{sample.scene_id or '未关联'} · {sample.question[:72]}",
+                        sample.sample_id,
+                    )
+                    for sample in samples
+                ]
+
+            def resolve_effect_sample(sample_id, requested_frame, camera, boxes, tracks):
+                if not sample_id:
+                    placeholder = empty_plotly_figure("没有可显示的评测样本")
+                    return (
+                        1, 0, (placeholder, placeholder, None, "**NO SAMPLE**", "无评测样本"),
+                        empty_effect_figure("没有可显示的评测样本", "TIMELINE"),
+                        None,
+                    )
+                sample = evaluation.get(sample_id)
+                if not sample.scene_id:
+                    placeholder = empty_plotly_figure("该旧结果未关联 scene_id")
+                    return (
+                        1, 0,
+                        (placeholder, placeholder, None, "**SCENE UNLINKED**", "请提供 --test_data 关联旧结果"),
+                        timeline_figure(sample, 1, 0), sample,
+                    )
+                try:
+                    scene = repository.get_scene_by_id(sample.scene_id)
+                    frame_count = len(scene.sample_tokens)
+                    frame_index = sample.default_frame if requested_frame is None else int(requested_frame)
+                    frame_index = max(0, min(frame_count - 1, frame_index))
+                    rendered = controller.render(
+                        scene.scene_token, frame_index, camera, boxes, tracks
+                    )
+                    timeline = timeline_figure(sample, frame_count, frame_index)
+                    return frame_count, frame_index, rendered, timeline, sample
+                except Exception as exc:
+                    placeholder = empty_plotly_figure(str(exc))
+                    return (
+                        1, 0,
+                        (placeholder, placeholder, None, "**SCENE ERROR**", str(exc)),
+                        timeline_figure(sample, 1, 0), sample,
+                    )
+
+            initial_effect_id = effect_samples[0].sample_id if effect_samples else None
+            initial_effect = resolve_effect_sample(
+                initial_effect_id, None, initial_camera, True, True
+            )
+            effect_frame_count, effect_frame_index, effect_render, effect_timeline, effect_sample = initial_effect
+
+            with gr.Group(elem_classes=["effect-shell"]):
+                gr.HTML('<h2 class="effect-heading">MODEL EFFECTS / 模型效果</h2>')
+                gr.HTML(metric_cards_html(evaluation.final_scores, evaluation.warnings))
+                with gr.Tabs():
+                    with gr.Tab("效果总览 / OVERVIEW"):
+                        with gr.Row():
+                            gr.Plot(
+                                overview_metrics_figure(evaluation.final_scores),
+                                show_label=False,
+                            )
+                            gr.Plot(
+                                per_task_metrics_figure(evaluation.per_task_metrics),
+                                show_label=False,
+                            )
+                        with gr.Row():
+                            gr.Plot(
+                                confusion_matrix_figure(evaluation.samples, "existence"),
+                                show_label=False,
+                            )
+                            gr.Plot(
+                                confusion_matrix_figure(evaluation.samples, "binary_qa"),
+                                show_label=False,
+                            )
+                        gr.Plot(
+                            time_grounding_diagnostics_figure(evaluation.samples),
+                            show_label=False,
+                        )
+
+                    with gr.Tab("样本诊断 / SAMPLE LAB"):
+                        with gr.Row():
+                            effect_task = gr.Dropdown(
+                                choices=[("全部任务", "all")] + [
+                                    (TASK_LABELS[task], task) for task in TASKS
+                                ],
+                                value="all", label="任务",
+                            )
+                            effect_status = gr.Dropdown(
+                                choices=[
+                                    ("全部状态", "all"), ("正确", "correct"),
+                                    ("错误", "error"), ("完全匹配", "exact"),
+                                    ("部分重叠", "overlap"), ("零重叠", "miss"),
+                                    ("无法解析", "unparseable"), ("文本较强", "strong"),
+                                    ("文本部分匹配", "partial"), ("文本较弱", "weak"),
+                                ],
+                                value="all", label="结果状态",
+                            )
+                            effect_sort = gr.Dropdown(
+                                choices=[
+                                    ("低分优先", "score_asc"),
+                                    ("高分优先", "score_desc"),
+                                    ("原始顺序", "source"),
+                                ],
+                                value="score_asc", label="排序",
+                            )
+                            effect_query = gr.Textbox(
+                                label="搜索", placeholder="问题 / 答案 / scene_id",
+                            )
+                        with gr.Row():
+                            effect_prev_page = gr.Button("◀ 上一页", variant="secondary")
+                            effect_page_info = gr.Markdown(
+                                f"第 {effect_page + 1} 页 · 当前 {len(effect_samples)} / 共 {effect_total} 条"
+                            )
+                            effect_next_page = gr.Button("下一页 ▶", variant="secondary")
+                        effect_table = gr.Dataframe(
+                            headers=["sample_id", "任务", "scene_id", "得分", "状态", "问题"],
+                            value=effect_rows(effect_samples),
+                            interactive=False,
+                            wrap=True,
+                            label="筛选结果（每页 50 条）",
+                        )
+                        effect_sample_picker = gr.Dropdown(
+                            choices=effect_choices(effect_samples),
+                            value=initial_effect_id,
+                            label="选择诊断样本",
+                            filterable=True,
+                        )
+
+                        with gr.Row(equal_height=False):
+                            with gr.Column(scale=7, min_width=600):
+                                with gr.Tabs():
+                                    with gr.Tab("3D POINT CLOUD"):
+                                        effect_plot_3d = gr.Plot(effect_render[0], show_label=False)
+                                    with gr.Tab("BEV / 俯视"):
+                                        effect_plot_bev = gr.Plot(effect_render[1], show_label=False)
+                                    with gr.Tab("CAMERA / 相机"):
+                                        effect_camera_image = gr.Image(
+                                            effect_render[2], type="pil", interactive=False,
+                                            label=initial_camera,
+                                        )
+                                effect_frame_summary = gr.Markdown(effect_render[3])
+                                effect_system_status = gr.Markdown(effect_render[4])
+                                effect_frame_slider = gr.Slider(
+                                    minimum=0,
+                                    maximum=max(0, effect_frame_count - 1),
+                                    value=effect_frame_index,
+                                    step=1,
+                                    label="数据集帧号（0 基）",
+                                )
+                                effect_timeline_plot = gr.Plot(effect_timeline, show_label=False)
+                            with gr.Column(scale=5, min_width=360, elem_id="effect-sample-panel"):
+                                effect_diagnosis = gr.HTML(
+                                    sample_diagnosis_html(effect_sample) if effect_sample else ""
+                                )
+                                effect_question = gr.Textbox(
+                                    value=effect_sample.question if effect_sample else "",
+                                    label="QUESTION", lines=4, interactive=False,
+                                )
+                                effect_ground_truth = gr.Textbox(
+                                    value=effect_sample.ground_truth if effect_sample else "",
+                                    label="GROUND TRUTH", lines=6, interactive=False,
+                                )
+                                effect_prediction = gr.Textbox(
+                                    value=effect_sample.prediction if effect_sample else "",
+                                    label="PREDICTION", lines=6, interactive=False,
+                                )
+                                effect_camera = gr.Dropdown(
+                                    choices=list(CAMERA_VIEWS), value=initial_camera,
+                                    label="相机视角",
+                                )
+                                with gr.Row():
+                                    effect_boxes = gr.Checkbox(value=True, label="真值 3D 框")
+                                    effect_tracks = gr.Checkbox(value=True, label="历史轨迹")
+
+            def update_effect_page(task, status, query, sort_order, requested_page):
+                page_samples, total, actual_page = evaluation.page(
+                    task=task, status=status, query=query, sort_order=sort_order,
+                    page=int(requested_page or 0), page_size=50,
+                )
+                choices = effect_choices(page_samples)
+                selected = choices[0][1] if choices else None
+                return (
+                    effect_rows(page_samples),
+                    gr.update(choices=choices, value=selected),
+                    f"第 {actual_page + 1} 页 · 当前 {len(page_samples)} / 共 {total} 条",
+                    actual_page,
+                )
+
+            effect_page_outputs = [
+                effect_table, effect_sample_picker, effect_page_info, effect_page_state,
+            ]
+            for component in (effect_task, effect_status, effect_query, effect_sort):
+                component.change(
+                    lambda task, status, query, sort_order: update_effect_page(
+                        task, status, query, sort_order, 0
+                    ),
+                    [effect_task, effect_status, effect_query, effect_sort],
+                    effect_page_outputs,
+                )
+            effect_prev_page.click(
+                lambda task, status, query, sort_order, page: update_effect_page(
+                    task, status, query, sort_order, int(page or 0) - 1
+                ),
+                [effect_task, effect_status, effect_query, effect_sort, effect_page_state],
+                effect_page_outputs,
+            )
+            effect_next_page.click(
+                lambda task, status, query, sort_order, page: update_effect_page(
+                    task, status, query, sort_order, int(page or 0) + 1
+                ),
+                [effect_task, effect_status, effect_query, effect_sort, effect_page_state],
+                effect_page_outputs,
+            )
+
+            def select_effect_sample(sample_id, camera, boxes, tracks):
+                frame_count, frame_index, rendered, timeline, sample = resolve_effect_sample(
+                    sample_id, None, camera, boxes, tracks
+                )
+                return (
+                    gr.update(value=frame_index, maximum=max(0, frame_count - 1)),
+                    *rendered,
+                    sample.question if sample else "",
+                    sample.ground_truth if sample else "",
+                    sample.prediction if sample else "",
+                    sample_diagnosis_html(sample) if sample else "",
+                    timeline,
+                )
+
+            effect_sample_outputs = [
+                effect_frame_slider, effect_plot_3d, effect_plot_bev, effect_camera_image,
+                effect_frame_summary, effect_system_status, effect_question,
+                effect_ground_truth, effect_prediction, effect_diagnosis,
+                effect_timeline_plot,
+            ]
+            effect_sample_picker.change(
+                select_effect_sample,
+                [effect_sample_picker, effect_camera, effect_boxes, effect_tracks],
+                effect_sample_outputs,
+            )
+
+            def change_effect_frame(sample_id, frame_index, camera, boxes, tracks):
+                _, _, rendered, timeline, _ = resolve_effect_sample(
+                    sample_id, frame_index, camera, boxes, tracks
+                )
+                return (*rendered, timeline)
+
+            effect_frame_inputs = [
+                effect_sample_picker, effect_frame_slider, effect_camera,
+                effect_boxes, effect_tracks,
+            ]
+            effect_frame_outputs = [
+                effect_plot_3d, effect_plot_bev, effect_camera_image,
+                effect_frame_summary, effect_system_status, effect_timeline_plot,
+            ]
+            for component in (
+                effect_frame_slider, effect_camera, effect_boxes, effect_tracks,
+            ):
+                component.change(
+                    change_effect_frame, effect_frame_inputs, effect_frame_outputs
+                )
 
         with gr.Row(equal_height=False):
             with gr.Column(scale=3, min_width=260, elem_id="b4-controls"):
@@ -467,6 +788,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--stage2", default=None)
     parser.add_argument("--stage3", default=None)
     parser.add_argument("--feat_folder", "--feat-folder", default=None)
+    parser.add_argument(
+        "--predictions", default=None,
+        help="test_b4dl.py 输出的 predictions.json；启用模型效果看板",
+    )
+    parser.add_argument(
+        "--metrics", default=None,
+        help="test_b4dl.py 输出的 metrics.json；用于汇总指标图",
+    )
+    parser.add_argument(
+        "--test_data", "--test-data", default=None,
+        help="原始 test_qa.json；用于把旧版预测安全关联回 scene_id",
+    )
     parser.add_argument("--share", action="store_true")
     parser.add_argument("--server_name", "--server-name", default="127.0.0.1")
     parser.add_argument("--server_port", "--server-port", type=int, default=7860)
@@ -487,8 +820,15 @@ def main(argv: Optional[List[str]] = None) -> None:
         scene_metadata=args.scene_metadata,
         max_points=args.max_points,
     )
+    evaluation = None
+    if args.predictions or args.metrics:
+        evaluation = EvaluationRepository.from_files(
+            predictions_path=args.predictions,
+            metrics_path=args.metrics,
+            test_data_path=args.test_data,
+        )
     inference = OptionalInferenceEngine(args)
-    demo = create_demo(repository, inference)
+    demo = create_demo(repository, inference, evaluation)
     demo.queue(default_concurrency_limit=4).launch(
         share=args.share,
         server_name=args.server_name,

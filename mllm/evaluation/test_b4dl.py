@@ -379,6 +379,20 @@ def _save_checkpoint(results: dict, path: str):
     os.replace(tmp, path)  # atomic on POSIX
 
 
+def _sample_metadata(item: dict, task: str, source_index: int) -> dict:
+    """Keep the minimum source identity needed by the effect dashboard."""
+    feat_indices = item.get("feat_indices")
+    feat_range = item.get("feat_range")
+    return {
+        "sample_id": f"{task}:{source_index:06d}",
+        "source_index": source_index,
+        "scene_id": item.get("scene_id") or item.get("id"),
+        "scene_token": item.get("scene_token"),
+        "feat_indices": list(feat_indices) if feat_indices else None,
+        "feat_range": list(feat_range) if feat_range else None,
+    }
+
+
 def run_inference(model, tokenizer, features: torch.Tensor, query: str) -> str:
     """Run the B4DL autoregressive generation for one QA. Mirrors inference()."""
     return inference(model, features, query, tokenizer)
@@ -530,7 +544,7 @@ def main():
     feat_cache: dict = {}
 
     # ── Resume from checkpoint if available ──
-    results: dict = {}     # canonical_task -> {predictions, ground_truths, questions}
+    results: dict = {}     # canonical_task -> predictions/GT/questions/samples
     checkpoint_path = args.output + ".ckpt"
     completed_ids: set = set()  # (task, sample_index) already done
     if os.path.exists(checkpoint_path):
@@ -550,6 +564,16 @@ def main():
         # Determine starting point for this task
         if task in results:
             done_count = len(results[task].get("predictions", []))
+            existing_meta = results[task].get("samples")
+            if existing_meta is None:
+                # A checkpoint written before schema v2 has no source identity.
+                existing_meta = [None] * done_count
+                results[task]["samples"] = existing_meta
+            elif len(existing_meta) != done_count:
+                raise RuntimeError(
+                    f"{task} checkpoint 元数据长度 {len(existing_meta)} "
+                    f"与预测数 {done_count} 不一致"
+                )
             if done_count >= len(group):
                 print(f"\n[{task}] {len(group)} samples — already complete, skipping")
                 continue
@@ -557,9 +581,10 @@ def main():
             preds = results[task]["predictions"]
             gts = results[task]["ground_truths"]
             qs = results[task]["questions"]
+            sample_meta = existing_meta
             start_idx = done_count
         else:
-            preds, gts, qs = [], [], []
+            preds, gts, qs, sample_meta = [], [], [], []
             start_idx = 0
 
         if args.max_samples and args.max_samples > 0:
@@ -621,11 +646,13 @@ def main():
             qs.append(query.replace(VIDEO_TOKEN, "")
                           .replace("<4DLiDAR>", "")
                           .split("<meta>")[0].strip())
+            sample_meta.append(_sample_metadata(it, task, sample_idx))
 
             # Periodic checkpoint save
             if (sample_idx + 1) % checkpoint_interval == 0:
                 results[task] = {"predictions": preds, "ground_truths": gts,
-                                 "questions": qs, "_task": task}
+                                 "questions": qs, "samples": sample_meta,
+                                 "_task": task}
                 _save_checkpoint(results, checkpoint_path)
                 elapsed = time.time() - task_start_time
                 rate = (i + 1) / elapsed if elapsed > 0 else 0
@@ -634,7 +661,8 @@ def main():
                                   "eta": f"{eta/60:.0f}m"})
 
         results[task] = {"predictions": preds, "ground_truths": gts,
-                         "questions": qs, "_task": task}
+                         "questions": qs, "samples": sample_meta,
+                         "_task": task}
         # Save after each task completes
         _save_checkpoint(results, checkpoint_path)
 
@@ -642,10 +670,30 @@ def main():
         print(f"\nSkipped {skipped} items (missing features or inference errors).")
 
     # Save final predictions (clean version without _task metadata)
-    clean_results = {k: {"predictions": v["predictions"],
-                         "ground_truths": v["ground_truths"],
-                         "questions": v["questions"]}
-                     for k, v in results.items()}
+    clean_results = {
+        "_schema_version": 2,
+        "_run": {
+            "model": os.path.basename(os.path.normpath(args.stage2 or args.model_base)),
+            "whole_scene": bool(args.whole_scene),
+            "per_sequence": bool(args.per_sequence),
+            "answer_frames": bool(args.answer_frames),
+        },
+    }
+    for task_name, task_result in results.items():
+        lengths = {
+            len(task_result["predictions"]),
+            len(task_result["ground_truths"]),
+            len(task_result["questions"]),
+            len(task_result.get("samples", [])),
+        }
+        if len(lengths) != 1:
+            raise RuntimeError(f"{task_name} 评测输出数组长度不一致：{sorted(lengths)}")
+        clean_results[task_name] = {
+            "predictions": task_result["predictions"],
+            "ground_truths": task_result["ground_truths"],
+            "questions": task_result["questions"],
+            "samples": task_result["samples"],
+        }
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w") as f:
         json.dump(clean_results, f, indent=2, ensure_ascii=False)

@@ -58,3 +58,41 @@ python -m unittest tests.test_lidar_visualizer -v
 ```
 
 完整验收建议先使用 `v1.0-mini`，确认点云、相机、框和轨迹在同一帧对齐，再切换到 `v1.0-trainval` 和真实 B4DL 权重。
+
+## 模型效果看板
+
+效果看板读取已经完成的评测结果，不重新运行模型，也不要求 CUDA。新版
+`evaluation/test_b4dl.py` 会在 `predictions.json` 中保存每条预测对应的
+`scene_id`；旧版预测可通过原始测试集安全补全场景关联。
+
+```bash
+cd mllm
+python -m vtimellm.demo_gradio \
+  --nuscenes_root /path/to/nuScenes \
+  --scene_metadata ../encoders/lidarclip/annotations/scene_metadata.json \
+  --predictions ./eval_results/stage2_full_seqv3_mixed_b3/predictions.json \
+  --metrics ./eval_results/stage2_full_seqv3_mixed_b3/metrics.json \
+  --test_data ./b4dl_dataset/test_qa.json
+```
+
+页面增加两个区域：
+
+- **效果总览**：最终指标与论文 Table 3 对比、per-task 指标、分类混淆矩阵、
+  TG IoU 分布和开始帧散点图。
+- **样本诊断**：按任务、状态、关键词和得分分页筛选；选择样本后显示点云、
+  BEV、相机、问题、Ground Truth、预测和任务对应的单样本得分。
+
+时间定位时间轴使用数据集原始 0 基帧号。界面的 `DATASET FRAME 006 ·
+POSITION 7/40` 表示数据集帧号为 6，同时它是场景中的第 7 帧。
+
+### 输入组合
+
+| 参数 | 效果 |
+|---|---|
+| 仅 `--metrics` | 只显示汇总指标；没有样本列表 |
+| `--predictions` | 显示文本和单样本诊断；新版结果可直接关联场景 |
+| 旧 `--predictions` + `--test_data` | 校验问题和 GT 后补全 `scene_id` |
+| 再提供完整模型参数 | 在效果看板之外同时启用自由问答 |
+
+若旧结果无法与 `test_qa.json` 唯一匹配，页面保留文本诊断并明确显示未关联，
+不会猜测或跳转到错误场景。

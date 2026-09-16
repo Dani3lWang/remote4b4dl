@@ -192,6 +192,7 @@ class RepositoryTests(unittest.TestCase):
             )
             scene = repository.scenes[0]
             self.assertEqual(scene.scene_id, "003833660")
+            self.assertIs(repository.get_scene_by_id("003833660"), scene)
             self.assertEqual(scene.sample_tokens, ("sample-0", "sample-1"))
             frame = repository.get_frame(scene.scene_token, 0)
             self.assertEqual(frame.points.shape, (1, 4))
