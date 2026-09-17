@@ -83,6 +83,16 @@ class FrameData:
     tracks: Tuple[TrackRender, ...]
     camera_paths: Mapping[str, Optional[str]]
     warnings: Tuple[str, ...] = ()
+    lidar_path: Optional[str] = None
+    point_indices: Optional[np.ndarray] = None  # displayed -> original file row
+
+
+@dataclass(frozen=True)
+class SegmentationRender:
+    label: str
+    color: str
+    mask: np.ndarray  # boolean mask aligned with frame.points
+    score: Optional[float] = None
 
 
 def category_group(category: str) -> str:
@@ -119,6 +129,24 @@ def deterministic_downsample(
     rng = np.random.default_rng(seed)
     indices = np.sort(rng.choice(len(points), size=max_points, replace=False))
     return points[indices]
+
+
+def deterministic_downsample_indices(
+    point_count: int,
+    max_points: int,
+    seed_key: str,
+) -> np.ndarray:
+    """Return the exact original rows used by deterministic_downsample."""
+    if point_count < 0:
+        raise ValueError("point_count must be non-negative")
+    if max_points <= 0:
+        raise ValueError("max_points must be positive")
+    if point_count <= max_points:
+        return np.arange(point_count, dtype=np.int64)
+    digest = hashlib.sha256(seed_key.encode("utf-8")).digest()
+    seed = int.from_bytes(digest[:8], byteorder="little", signed=False)
+    rng = np.random.default_rng(seed)
+    return np.sort(rng.choice(point_count, size=max_points, replace=False))
 
 
 def quaternion_rotation_matrix(rotation: Sequence[float]) -> np.ndarray:
@@ -302,7 +330,9 @@ class NuScenesSceneRepository:
         except KeyError as exc:
             raise KeyError(f"未知 scene token：{scene_token}") from exc
 
-    def _load_points(self, lidar_path: str, sample_token: str) -> np.ndarray:
+    def _load_points(
+        self, lidar_path: str, sample_token: str
+    ) -> Tuple[np.ndarray, np.ndarray]:
         try:
             from nuscenes.utils.data_classes import LidarPointCloud
         except ImportError as exc:
@@ -311,7 +341,8 @@ class NuScenesSceneRepository:
             ) from exc
         cloud = LidarPointCloud.from_file(lidar_path)
         points = np.asarray(cloud.points.T, dtype=np.float32)
-        return deterministic_downsample(points, self.max_points, sample_token)
+        indices = deterministic_downsample_indices(len(points), self.max_points, sample_token)
+        return points[indices], indices
 
     def _load_boxes_and_tracks(
         self,
@@ -388,7 +419,12 @@ class NuScenesSceneRepository:
         lidar_token = sample["data"]["LIDAR_TOP"]
         lidar_data = self.nusc.get("sample_data", lidar_token)
         lidar_path = os.path.join(self.dataroot, lidar_data["filename"])
-        points = self._load_points(lidar_path, sample_token)
+        loaded_points = self._load_points(lidar_path, sample_token)
+        if isinstance(loaded_points, tuple):
+            points, point_indices = loaded_points
+        else:  # compatibility for custom/test repositories overriding the private hook
+            points = loaded_points
+            point_indices = np.arange(len(points), dtype=np.int64)
         boxes, tracks, warnings = self._load_boxes_and_tracks(lidar_token, lidar_data)
 
         camera_paths: Dict[str, Optional[str]] = {}
@@ -410,6 +446,8 @@ class NuScenesSceneRepository:
             tracks=tracks,
             camera_paths=camera_paths,
             warnings=tuple(warnings),
+            lidar_path=lidar_path,
+            point_indices=point_indices,
         )
         self._frame_cache[cache_key] = frame
         self._frame_cache.move_to_end(cache_key)
@@ -488,6 +526,7 @@ def make_plotly_figures(
     frame: FrameData,
     show_boxes: bool = True,
     show_tracks: bool = True,
+    segmentations: Sequence[SegmentationRender] = (),
 ):
     """Create coordinated 3D and BEV figures for a frame."""
     try:
@@ -525,6 +564,7 @@ def make_plotly_figures(
     if show_tracks:
         _append_tracks(fig3d, frame.tracks, is_3d=True)
         _append_tracks(bev, frame.tracks, is_3d=False)
+    _append_segmentations(fig3d, bev, points, segmentations)
 
     axis = dict(
         showbackground=True,
@@ -566,6 +606,61 @@ def make_plotly_figures(
         uirevision=f"scene-{frame.scene.scene_token}",
     )
     return fig3d, bev
+
+
+def _append_segmentations(fig3d, bev, points, segmentations) -> None:
+    import plotly.graph_objects as go
+
+    for result in segmentations:
+        mask = np.asarray(result.mask, dtype=bool)
+        if mask.shape != (len(points),):
+            raise ValueError(
+                f"segmentation mask for {result.label!r} has shape {mask.shape}; "
+                f"expected {(len(points),)}"
+            )
+        selected = points[mask]
+        if not len(selected):
+            continue
+        suffix = f" · {result.score:.2f}" if result.score is not None else ""
+        name = f"预测 {result.label}{suffix}"
+        marker = dict(size=4, color=result.color, opacity=0.95)
+        fig3d.add_trace(
+            go.Scatter3d(
+                x=selected[:, 0],
+                y=selected[:, 1],
+                z=selected[:, 2],
+                mode="markers",
+                name=name,
+                marker=marker,
+                hoverinfo="skip",
+            )
+        )
+        bev.add_trace(
+            go.Scattergl(
+                x=selected[:, 0],
+                y=selected[:, 1],
+                mode="markers",
+                name=name,
+                marker={**marker, "size": 5},
+                hoverinfo="skip",
+            )
+        )
+
+
+def project_full_mask_to_display(frame: FrameData, full_mask: np.ndarray) -> np.ndarray:
+    """Map a full raw-file mask onto the viewer's deterministic sample."""
+    full_mask = np.asarray(full_mask, dtype=bool).reshape(-1)
+    indices = frame.point_indices
+    if indices is None:
+        if len(full_mask) != len(frame.points):
+            raise ValueError("frame has no point index map and mask length differs")
+        return full_mask
+    indices = np.asarray(indices, dtype=np.int64)
+    if len(indices) != len(frame.points):
+        raise ValueError("frame point index map length differs from displayed points")
+    if len(indices) and indices.max() >= len(full_mask):
+        raise ValueError("predicted mask is shorter than the original point index map")
+    return full_mask[indices]
 
 
 def empty_plotly_figure(message: str):

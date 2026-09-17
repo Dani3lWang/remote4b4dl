@@ -13,7 +13,7 @@ import sys
 import threading
 from collections import OrderedDict
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 import numpy as np
 
@@ -35,6 +35,8 @@ from lidar_visualizer import (  # noqa: E402
     step_frame,
     validate_scene_features,
 )
+if TYPE_CHECKING:
+    from vtimellm.segmentation.inference import ReasonSegInferenceEngine
 
 
 APP_CSS = """
@@ -99,15 +101,23 @@ HERO_HTML = """
 
 
 def _model_option_state(args: argparse.Namespace) -> Tuple[bool, List[str]]:
+    # A segmentation-only launch reuses model_base/stage2 but does not need
+    # the pooled B3 feature directory used by scene chat.
+    if (
+        getattr(args, "seg_checkpoint", None)
+        and not getattr(args, "feat_folder", None)
+        and not getattr(args, "stage3", None)
+    ):
+        return False, []
     required = {
-        "model_base": args.model_base,
-        "pretrain_mm_mlp_adapter": args.pretrain_mm_mlp_adapter,
-        "stage2": args.stage2,
-        "feat_folder": args.feat_folder,
+        "model_base": getattr(args, "model_base", None),
+        "pretrain_mm_mlp_adapter": getattr(args, "pretrain_mm_mlp_adapter", None),
+        "stage2": getattr(args, "stage2", None),
+        "feat_folder": getattr(args, "feat_folder", None),
     }
     provided = [name for name, value in required.items() if value]
     if not provided:
-        if args.stage3:
+        if getattr(args, "stage3", None):
             return False, ["stage3 不能在未配置基础模型时单独使用"]
         return False, []
     missing = [name for name, value in required.items() if not value]
@@ -235,15 +245,32 @@ class OptionalInferenceEngine:
 
 
 class DemoController:
-    def __init__(self, repository: NuScenesSceneRepository, inference: OptionalInferenceEngine) -> None:
+    def __init__(
+        self,
+        repository: NuScenesSceneRepository,
+        inference: OptionalInferenceEngine,
+        segmentation: Optional["ReasonSegInferenceEngine"] = None,
+    ) -> None:
         self.repository = repository
         self.inference = inference
+        self.segmentation = segmentation
 
-    def render(self, scene_token, frame_index, camera, show_boxes, show_tracks):
+    def render(
+        self,
+        scene_token,
+        frame_index,
+        camera,
+        show_boxes,
+        show_tracks,
+        segmentations=(),
+    ):
         try:
             frame = self.repository.get_frame(scene_token, int(frame_index))
             figure_3d, figure_bev = make_plotly_figures(
-                frame, show_boxes=show_boxes, show_tracks=show_tracks
+                frame,
+                show_boxes=show_boxes,
+                show_tracks=show_tracks,
+                segmentations=segmentations,
             )
             camera_image = self.repository.camera_image(frame, camera)
             model_ready, model_status = self.inference.scene_status(frame.scene)
@@ -264,17 +291,24 @@ class DemoController:
             return placeholder, placeholder, None, "**FRAME ERROR**", message
 
 
-def create_demo(repository: NuScenesSceneRepository, inference: OptionalInferenceEngine):
+def create_demo(
+    repository: NuScenesSceneRepository,
+    inference: OptionalInferenceEngine,
+    segmentation: Optional["ReasonSegInferenceEngine"] = None,
+):
     try:
         import gradio as gr
     except ImportError as exc:
         raise RuntimeError("缺少 Gradio，请安装 mllm/requirements-demo.txt") from exc
 
-    controller = DemoController(repository, inference)
+    controller = DemoController(repository, inference, segmentation)
     initial_scene = repository.scenes[0]
     initial_camera = CAMERA_VIEWS[0]
     initial_render = controller.render(initial_scene.scene_token, 0, initial_camera, True, True)
     initial_chat_ready, initial_chat_status = inference.scene_status(initial_scene)
+    initial_seg_ready, initial_seg_status = (
+        segmentation.status() if segmentation is not None else (False, "未配置分割 checkpoint")
+    )
     scene_choices = [(scene.label, scene.scene_token) for scene in repository.scenes]
 
     with gr.Blocks(title="B4DL · 4D LiDAR Explorer") as demo:
@@ -335,6 +369,28 @@ def create_demo(repository: NuScenesSceneRepository, inference: OptionalInferenc
                         "发送 / RUN", variant="primary", interactive=initial_chat_ready
                     )
                     clear_chat = gr.Button("清空", variant="secondary")
+                gr.Markdown("### 当前帧分割 / POINT MASK")
+                seg_input = gr.Textbox(
+                    label="分割问题",
+                    placeholder=(
+                        "例如：Segment the nearest car and the pedestrian to its left."
+                        if initial_seg_ready
+                        else initial_seg_status
+                    ),
+                    interactive=initial_seg_ready,
+                    lines=2,
+                )
+                seg_threshold = gr.Slider(
+                    minimum=0.1,
+                    maximum=0.9,
+                    value=0.5,
+                    step=0.05,
+                    label="掩码阈值",
+                )
+                seg_button = gr.Button(
+                    "分割 / SEGMENT", variant="primary", interactive=initial_seg_ready
+                )
+                seg_result = gr.Markdown("尚未运行分割")
 
         render_outputs = [plot_3d, plot_bev, camera_image, frame_summary, system_status]
         render_inputs = [scene_select, frame_slider, camera_select, show_boxes, show_tracks]
@@ -447,6 +503,52 @@ def create_demo(repository: NuScenesSceneRepository, inference: OptionalInferenc
         )
         clear_chat.click(lambda: ([], None), None, [chatbot, conversation_state])
 
+        def submit_segmentation(
+            query, threshold, scene_token, frame_index, boxes, tracks
+        ):
+            if segmentation is None:
+                return (
+                    empty_plotly_figure("未配置分割模型"),
+                    empty_plotly_figure("未配置分割模型"),
+                    "未配置分割 checkpoint",
+                    "分割不可用",
+                )
+            frame = repository.get_frame(scene_token, int(frame_index))
+            try:
+                result = segmentation.segment_frame(
+                    frame, query, threshold=float(threshold)
+                )
+                figure_3d, figure_bev = make_plotly_figures(
+                    frame,
+                    show_boxes=boxes,
+                    show_tracks=tracks,
+                    segmentations=result.objects,
+                )
+                summary = (
+                    f"**STATUS** `{result.status}`　 **OBJECTS** `{len(result.objects)}`  \n"
+                    f"{result.text}"
+                )
+                return figure_3d, figure_bev, summary, "分割推理完成"
+            except Exception as exc:
+                figure_3d, figure_bev = make_plotly_figures(
+                    frame, show_boxes=boxes, show_tracks=tracks
+                )
+                message = f"分割失败：{exc}"
+                return figure_3d, figure_bev, message, message
+
+        seg_button.click(
+            submit_segmentation,
+            [
+                seg_input,
+                seg_threshold,
+                scene_select,
+                frame_slider,
+                show_boxes,
+                show_tracks,
+            ],
+            [plot_3d, plot_bev, seg_result, system_status],
+        )
+
     return demo
 
 
@@ -467,6 +569,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--stage2", default=None)
     parser.add_argument("--stage3", default=None)
     parser.add_argument("--feat_folder", "--feat-folder", default=None)
+    parser.add_argument("--seg_checkpoint", "--seg-checkpoint", default=None)
     parser.add_argument("--share", action="store_true")
     parser.add_argument("--server_name", "--server-name", default="127.0.0.1")
     parser.add_argument("--server_port", "--server-port", type=int, default=7860)
@@ -476,6 +579,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     _, missing = _model_option_state(args)
     if missing:
         parser.error("模型模式参数不完整，缺少：" + ", ".join(missing))
+    if args.seg_checkpoint:
+        seg_required = {
+            "model_base": args.model_base,
+            "pretrain_mm_mlp_adapter": args.pretrain_mm_mlp_adapter,
+            "stage2": args.stage2,
+        }
+        seg_missing = [name for name, value in seg_required.items() if not value]
+        if seg_missing:
+            parser.error("分割模式参数不完整，缺少：" + ", ".join(seg_missing))
     return args
 
 
@@ -488,7 +600,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         max_points=args.max_points,
     )
     inference = OptionalInferenceEngine(args)
-    demo = create_demo(repository, inference)
+    if args.seg_checkpoint:
+        from vtimellm.segmentation.inference import ReasonSegInferenceEngine
+
+        segmentation = ReasonSegInferenceEngine(args)
+    else:
+        segmentation = None
+    demo = create_demo(repository, inference, segmentation)
     demo.queue(default_concurrency_limit=4).launch(
         share=args.share,
         server_name=args.server_name,
