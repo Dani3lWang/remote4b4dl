@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shutil
 import sys
 from pathlib import Path
 
@@ -297,6 +298,21 @@ def build_optimizer(model, args):
     )
 
 
+def _prune_old_checkpoints(output_dir: Path, keep: int) -> None:
+    if keep <= 0 or not output_dir.is_dir():
+        return
+    steps = []
+    for child in output_dir.iterdir():
+        name = child.name
+        if child.is_dir() and name.startswith("checkpoint-"):
+            suffix = name[len("checkpoint-"):]
+            if suffix.isdigit():
+                steps.append((int(suffix), child))
+    steps.sort(key=lambda item: item[0], reverse=True)
+    for _, child in steps[keep:]:
+        shutil.rmtree(child, ignore_errors=True)
+
+
 def save_checkpoint(
     accelerator,
     model,
@@ -314,7 +330,8 @@ def save_checkpoint(
     destination = Path(args.output_dir) / (
         destination_name or f"checkpoint-{global_step}"
     )
-    accelerator.save_state(str(destination / "accelerator_state"))
+    if not getattr(args, "no_resume_state", False):
+        accelerator.save_state(str(destination / "accelerator_state"))
     if accelerator.is_main_process:
         unwrapped = accelerator.unwrap_model(model)
         save_reasonseg_checkpoint(
@@ -339,6 +356,11 @@ def save_checkpoint(
             + "\n",
             encoding="utf-8",
         )
+        if destination_name is None:
+            _prune_old_checkpoints(
+                Path(args.output_dir),
+                keep=int(getattr(args, "keep_last", 2)),
+            )
     accelerator.wait_for_everyone()
 
 
@@ -367,6 +389,8 @@ def build_parser():
     parser.add_argument("--dataloader-num-workers", type=int, default=4)
     parser.add_argument("--logging-steps", type=int, default=1)
     parser.add_argument("--save-steps", type=int, default=200)
+    parser.add_argument("--keep-last", type=int, default=2)
+    parser.add_argument("--no-resume-state", action="store_true")
     parser.add_argument("--validation-samples", type=int, default=32)
     parser.add_argument("--validation-threshold", type=float, default=0.5)
     parser.add_argument("--early-stopping-patience", type=int, default=5)
