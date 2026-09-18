@@ -103,8 +103,13 @@ class SegTokenInputAdapter(nn.Module):
         self.base = base
         self.base.weight.requires_grad_(False)
         self.register_buffer("token_ids", torch.tensor(token_ids, dtype=torch.long))
+        # Store the trainable delta in fp32. These rows are tiny, and keeping
+        # them (and their AdamW moments) in fp16/bf16 makes the second-moment
+        # state underflow to 0 on small gradients; with eps also rounding to 0
+        # the first optimizer step divides by zero and turns the rows into
+        # inf/nan. fp32 master storage removes that failure at negligible cost.
         self.delta = nn.Parameter(
-            torch.zeros(len(token_ids), base.embedding_dim, dtype=base.weight.dtype)
+            torch.zeros(len(token_ids), base.embedding_dim, dtype=torch.float32)
         )
 
     @property
@@ -122,7 +127,8 @@ class SegTokenInputAdapter(nn.Module):
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         values = self.base(input_ids)
         for row, token_id in enumerate(self.token_ids.tolist()):
-            values = values + (input_ids == token_id).unsqueeze(-1).to(values.dtype) * self.delta[row]
+            delta = self.delta[row].to(values.dtype)
+            values = values + (input_ids == token_id).unsqueeze(-1).to(values.dtype) * delta
         return values
 
 
@@ -136,7 +142,7 @@ class SegTokenOutputAdapter(nn.Module):
         if self.base.bias is not None:
             self.base.bias.requires_grad_(False)
         self.register_buffer("token_ids", torch.tensor(token_ids, dtype=torch.long))
-        initial = self.base.weight.detach()[list(token_ids)].clone()
+        initial = self.base.weight.detach()[list(token_ids)].clone().float()
         self.rows = nn.Parameter(initial)
 
     @property
@@ -153,7 +159,7 @@ class SegTokenOutputAdapter(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         logits = self.base(hidden_states)
-        replacement = F.linear(hidden_states, self.rows)
+        replacement = F.linear(hidden_states, self.rows.to(hidden_states.dtype))
         # index_copy is differentiable for the source and does not mutate the
         # frozen base-head output in place.
         return logits.index_copy(-1, self.token_ids, replacement)

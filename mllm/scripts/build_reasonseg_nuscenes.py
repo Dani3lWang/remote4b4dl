@@ -55,11 +55,12 @@ def main() -> int:
     idx_to_name = _category_mapping(nusc)
     class_to_id = {name: index for index, name in enumerate(THING_CLASSES)}
     splits = create_splits_scenes()
-    scene_name_to_split = {
-        name: split
-        for split in ("train", "val")
-        for name in splits[split]
-    }
+    split_keys = ("mini_train", "mini_val") if "mini" in args.version else ("train", "val")
+    scene_name_to_split = {}
+    for split_key in split_keys:
+        label = "train" if split_key.endswith("train") else "val"
+        for name in splits[split_key]:
+            scene_name_to_split[name] = label
     excluded = _load_excluded_scenes(args.exclude_scenes)
     panoptic_by_sample_data = {
         str(record.get("sample_data_token") or record.get("token")): record
