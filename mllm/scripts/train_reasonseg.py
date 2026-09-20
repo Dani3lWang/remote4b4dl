@@ -39,6 +39,8 @@ def main() -> int:
 
         set_seed(args.seed)
     config = ReasonSegConfig()
+    if getattr(args, "dropout", None) is not None:
+        config.dropout = float(args.dropout)
     tokenizer, model, _ = load_reasonseg_model(
         args,
         b3_checkpoint=args.b3_checkpoint,
@@ -393,6 +395,7 @@ def build_parser():
     parser.add_argument("--no-resume-state", action="store_true")
     parser.add_argument("--validation-samples", type=int, default=32)
     parser.add_argument("--validation-threshold", type=float, default=0.5)
+    parser.add_argument("--dropout", type=float, default=None)
     parser.add_argument("--early-stopping-patience", type=int, default=5)
     parser.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=20260917)

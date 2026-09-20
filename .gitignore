@@ -73,3 +73,11 @@ mllm/_vram_smoke_*/
 
 # Agent 记忆归档（2026-09-11 起取消 git 跟踪，仅本地保留）
 AgentMEM/
+
+# ReasonSeg 生成产物与训练过程文件（可由 scripts/build_reasonseg_nuscenes.py 重建）
+mllm/reasonseg_data/
+mllm/reasonseg_data_mini/
+mllm/reasonseg_data_trainval/
+mllm/reasonseg_trainval/
+Claude_record/
+/mllm/data/lidar-stage3_750.json
