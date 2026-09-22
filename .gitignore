@@ -81,3 +81,6 @@ mllm/reasonseg_data_trainval/
 mllm/reasonseg_trainval/
 Claude_record/
 /mllm/data/lidar-stage3_750.json
+# nltk 语料（punkt/punkt_tab/wordnet/omw-1.4，约 42MB）：评测需要但可重新下载，
+# 无外网的机器靠 scp 补齐后用 NLTK_DATA 指向此目录
+/nltk_data/
