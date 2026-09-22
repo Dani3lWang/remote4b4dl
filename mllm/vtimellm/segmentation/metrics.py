@@ -42,6 +42,15 @@ class SegmentationMetricAccumulator:
         target_masks = np.asarray(target_masks, dtype=bool)
         predicted_classes = np.asarray(predicted_classes, dtype=np.int64)
         target_classes = np.asarray(target_classes, dtype=np.int64)
+        predicted_masks, target_masks = _normalize_mask_arrays(
+            predicted_masks, target_masks
+        )
+        if predicted_classes.shape != (len(predicted_masks),):
+            raise ValueError(
+                "predicted_classes must contain one class per predicted mask"
+            )
+        if target_classes.shape != (len(target_masks),):
+            raise ValueError("target_classes must contain one class per target mask")
         self.sample_count += 1
         if token_status not in ("ok", "no_object"):
             self.token_failures += 1
@@ -54,8 +63,8 @@ class SegmentationMetricAccumulator:
 
         ious, intersections, unions = pairwise_mask_iou(predicted_masks, target_masks)
         matches = optimal_iou_matching(ious)
-        matched_predictions = set()
-        matched_targets = set()
+        paired_predictions = {predicted_index for predicted_index, _ in matches}
+        paired_targets = {target_index for _, target_index in matches}
         for predicted_index, target_index in matches:
             iou = float(ious[predicted_index, target_index])
             self.matched_ious.append(iou)
@@ -63,8 +72,6 @@ class SegmentationMetricAccumulator:
             self.cumulative_union += unions[predicted_index, target_index]
             if iou >= iou_match_threshold:
                 self.true_positive += 1
-                matched_predictions.add(predicted_index)
-                matched_targets.add(target_index)
                 predicted_class = int(predicted_classes[predicted_index])
                 target_class = int(target_classes[target_index])
                 if 0 <= predicted_class < self.num_classes and 0 <= target_class < self.num_classes:
@@ -72,8 +79,23 @@ class SegmentationMetricAccumulator:
             else:
                 self.false_positive += 1
                 self.false_negative += 1
-        self.false_positive += len(predicted_masks) - len(matched_predictions)
-        self.false_negative += len(target_masks) - len(matched_targets)
+
+        # Unmatched instances must affect both detection metrics and mask IoU.
+        # Previously they were omitted from cIoU/gIoU, while below-threshold
+        # pairs were counted twice as FP/FN (once above and once here).
+        unmatched_predictions = set(range(len(predicted_masks))) - paired_predictions
+        unmatched_targets = set(range(len(target_masks))) - paired_targets
+        self.false_positive += len(unmatched_predictions)
+        self.false_negative += len(unmatched_targets)
+        self.cumulative_union += sum(
+            float(predicted_masks[index].sum()) for index in unmatched_predictions
+        )
+        self.cumulative_union += sum(
+            float(target_masks[index].sum()) for index in unmatched_targets
+        )
+        self.matched_ious.extend(
+            [0.0] * (max(len(predicted_masks), len(target_masks)) - len(matches))
+        )
 
     def compute(self) -> Dict[str, float]:
         precision = self.true_positive / max(1, self.true_positive + self.false_positive)
@@ -105,13 +127,9 @@ def pairwise_mask_iou(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     predicted_masks = np.asarray(predicted_masks, dtype=bool)
     target_masks = np.asarray(target_masks, dtype=bool)
-    point_count = 0
-    if predicted_masks.ndim == 2:
-        point_count = predicted_masks.shape[1]
-    if target_masks.ndim == 2:
-        point_count = target_masks.shape[1]
-    predicted_masks = predicted_masks.reshape(len(predicted_masks), point_count)
-    target_masks = target_masks.reshape(len(target_masks), point_count)
+    predicted_masks, target_masks = _normalize_mask_arrays(
+        predicted_masks, target_masks
+    )
     intersections = np.logical_and(
         predicted_masks[:, None, :], target_masks[None, :, :]
     ).sum(axis=-1)
@@ -125,6 +143,34 @@ def pairwise_mask_iou(
         where=unions > 0,
     )
     return ious, intersections, unions
+
+
+def _normalize_mask_arrays(
+    predicted_masks: np.ndarray,
+    target_masks: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Normalize empty mask collections and reject incompatible point axes."""
+
+    point_count = None
+    for name, values in (
+        ("predicted_masks", predicted_masks),
+        ("target_masks", target_masks),
+    ):
+        if values.ndim == 2:
+            if point_count is None:
+                point_count = values.shape[1]
+            elif values.shape[1] != point_count:
+                raise ValueError(
+                    f"{name} point dimension {values.shape[1]} != {point_count}"
+                )
+        elif values.ndim != 1 or values.size:
+            raise ValueError(f"{name} must have shape [objects, points]")
+    point_count = point_count or 0
+    if predicted_masks.ndim == 1:
+        predicted_masks = predicted_masks.reshape(0, point_count)
+    if target_masks.ndim == 1:
+        target_masks = target_masks.reshape(0, point_count)
+    return predicted_masks, target_masks
 
 
 def optimal_iou_matching(ious: np.ndarray) -> List[Tuple[int, int]]:

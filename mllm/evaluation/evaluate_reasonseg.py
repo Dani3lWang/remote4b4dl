@@ -51,6 +51,7 @@ def main() -> int:
     # Adapter expected by the shared B3 loader.
     args.stage2 = args.b3_checkpoint
     device = torch.device(f"cuda:{args.gpu_id}")
+    torch.cuda.set_device(device)
     tokenizer, model, _ = load_reasonseg_model(
         args,
         b3_checkpoint=args.b3_checkpoint,
@@ -79,6 +80,8 @@ def main() -> int:
     masks_dir.mkdir(parents=True, exist_ok=True)
     accumulator = SegmentationMetricAccumulator(model.reasonseg_config.num_classes)
     predictions = []
+    inference_latency_ms = []
+    torch.cuda.reset_peak_memory_stats(device)
     sample_count = len(dataset) if not args.max_samples else min(len(dataset), args.max_samples)
     for index in range(sample_count):
         sample = dataset[index]
@@ -86,6 +89,9 @@ def main() -> int:
         attention_mask = torch.ones_like(input_ids)
         points = sample["points"].to(device=device, dtype=point_dtype)
         point_batch_indices = torch.zeros(len(points), dtype=torch.long, device=device)
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
         generated = model.generate_and_segment(
             tokenizer=tokenizer,
             input_ids=input_ids,
@@ -100,6 +106,9 @@ def main() -> int:
             eos_token_id=tokenizer.eos_token_id,
             pad_token_id=tokenizer.eos_token_id,
         )
+        end_event.record()
+        end_event.synchronize()
+        inference_latency_ms.append(float(start_event.elapsed_time(end_event)))
         predicted_masks = generated.mask_probabilities[0].numpy()
         predicted_classes = generated.class_ids[0].numpy()
         valid_targets = sample["object_valid_mask"].numpy().astype(bool)
@@ -136,6 +145,23 @@ def main() -> int:
         if (index + 1) % 100 == 0:
             print(f"evaluated {index + 1}/{sample_count}")
     metrics = accumulator.compute()
+    metrics.update(
+        {
+            "evaluated_samples": sample_count,
+            "dataset_samples": len(dataset),
+            "partial_evaluation": sample_count < len(dataset),
+            "mean_inference_latency_ms": float(np.mean(inference_latency_ms))
+            if inference_latency_ms
+            else 0.0,
+            "p95_inference_latency_ms": float(
+                np.percentile(inference_latency_ms, 95)
+            )
+            if inference_latency_ms
+            else 0.0,
+            "peak_cuda_memory_gib": float(torch.cuda.max_memory_allocated(device))
+            / (1024**3),
+        }
+    )
     (output_dir / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

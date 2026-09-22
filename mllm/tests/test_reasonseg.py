@@ -211,6 +211,32 @@ class MetricAndViewerTests(unittest.TestCase):
         self.assertEqual(values["instance_recall@0.5"], 1.0)
         self.assertEqual(values["count_accuracy"], 0.0)
 
+    def test_metric_counts_below_threshold_pair_once(self):
+        accumulator = SegmentationMetricAccumulator(num_classes=2)
+        accumulator.update(
+            np.array([[1, 1, 0, 0]], dtype=bool),
+            np.array([0]),
+            np.array([[1, 0, 1, 0]], dtype=bool),
+            np.array([0]),
+        )
+        values = accumulator.compute()
+        self.assertEqual(accumulator.false_positive, 1)
+        self.assertEqual(accumulator.false_negative, 1)
+        self.assertEqual(values["instance_precision@0.5"], 0.0)
+        self.assertEqual(values["instance_recall@0.5"], 0.0)
+
+    def test_metric_ious_penalize_extra_masks(self):
+        accumulator = SegmentationMetricAccumulator(num_classes=2)
+        accumulator.update(
+            np.array([[1, 1, 0, 0], [0, 0, 1, 1]], dtype=bool),
+            np.array([0, 1]),
+            np.array([[1, 1, 0, 0]], dtype=bool),
+            np.array([0]),
+        )
+        values = accumulator.compute()
+        self.assertEqual(values["cIoU"], 0.5)
+        self.assertEqual(values["gIoU"], 0.5)
+
     def test_full_mask_projects_to_displayed_point_indices(self):
         frame = FrameData(
             scene=SceneRef("scene", None, "scene", None, ("sample",)),

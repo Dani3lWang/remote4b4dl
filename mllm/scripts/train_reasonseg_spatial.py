@@ -39,6 +39,9 @@ def main() -> int:
         "dataroot": args.dataroot,
         "version": args.version,
         "exclude_scenes": args.exclude_scenes,
+        "label_source": args.label_source,
+        "validation_fraction": args.validation_fraction,
+        "seed": args.seed,
     }
     train_dataset = NuScenesLidarsegDataset(
         split="train", max_samples=args.max_train_samples, **common
@@ -145,6 +148,10 @@ def build_parser():
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--version", default="v1.0-trainval")
     parser.add_argument("--exclude-scenes")
+    parser.add_argument(
+        "--label-source", choices=("auto", "lidarseg", "panoptic"), default="auto"
+    )
+    parser.add_argument("--validation-fraction", type=float, default=0.1)
     parser.add_argument("--num-train-epochs", type=int, default=20)
     parser.add_argument("--per-device-batch-size", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
