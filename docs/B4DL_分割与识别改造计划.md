@@ -18,7 +18,7 @@ AutoDL `/root/autodl-tmp/mmb4dl` 实测为 Python 3.10.20、PyTorch 2.8.0+cu128�
 
 ## 数据和训练
 
-使用 nuScenes trainval 原始点云、lidarseg 语义预训练和 panoptic 实例监督。按场景划分数据并隔离 B4DL 测试场景。标注只用于生成训练目标和评测，绝不进入模型输入。
+使用 nuScenes trainval 原始点云、lidarseg 语义预训练和 panoptic 实例监督。B4DL 测试集对应 nuScenes 官方 150 个 val 场景；空间预训练和 ReasonSeg 主训练都只能在官方 700 个 train 场景内再按场景划分内部 train/val。标注只用于生成训练目标和评测，绝不进入模型输入。
 
 训练顺序：数据/几何闭包 → 稀疏空间编码预训练 → 单目标分割 → 多目标路由和粗定位 → 自由生成评测 → Gradio 展示。最终对比类别名称基线、仅 `<SEG>`、完整 `<LOC>/<SEG>`，至少运行三个随机种子。
 
@@ -31,4 +31,6 @@ AutoDL `/root/autodl-tmp/mmb4dl` 实测为 Python 3.10.20、PyTorch 2.8.0+cu128�
 
 ## 当前实施状态
 
-远端 `main` 已确认与 `origin/main` 一致，更新前备份分支为 `backup/pre-seg-sync-20260917`，开发分支为 `seg`。代码已包含模型加载、分割头、lidarseg 空间编码预训练、无歧义多实例数据生成、32 条固定样本 teacher-forcing 验证与早停、自由生成评测、自描述 checkpoint 和 Gradio 接口。目标实例训练仍受 panoptic expansion、spconv 和可用 CUDA GPU 约束；预检在资源不完整时会明确停止。
+远端 `main` 已确认与 `origin/main` 一致，更新前备份分支为 `backup/pre-seg-sync-20260917`，开发分支为 `seg`。代码已包含模型加载、分割头、lidarseg 空间编码预训练、无歧义多实例数据生成、32 条固定样本 teacher-forcing 验证与早停、自由生成评测、自描述 checkpoint 和 Gradio 接口。目标实例训练仍受 panoptic expansion、spconv 和可用 CUDA GPU 约束；预检会逐一核对数据文件、训练/验证场景隔离、测试场景排除及答案 token 契约。
+
+当前只能判定为“实现就绪”，不能判定为“实验完成”。32 条 teacher-forcing 验证是调试指标，不得替代全量自由生成结果；在三个随机种子、三组消融、B3 文本任务回归和非泄漏数据闭包完成前，`seg` 不晋级为 `main`。

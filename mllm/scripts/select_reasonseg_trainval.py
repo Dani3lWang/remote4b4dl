@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Pick a trainval scene subset and emit the blobs it needs.
+"""Pick a leakage-safe development subset and emit the blobs it needs.
 
 Outputs (all under --output-dir):
-  scenes_keep.json     scene names to use
-  scenes_exclude.json  every other train/val scene name, for build --exclude-scenes
+  scenes_keep.json     official-train scene names to use
+  scenes_exclude.json  unused official-train plus every official-val scene
   lidar_members.txt    tar member paths of the LIDAR_TOP files to extract
 """
 
@@ -23,17 +23,27 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
+    if args.train_scenes <= 0 or args.validation_scenes <= 0:
+        raise ValueError("train-scenes and validation-scenes must both be positive")
+
     from nuscenes.nuscenes import NuScenes
     from nuscenes.utils.splits import create_splits_scenes
 
     nusc = NuScenes(version=args.version, dataroot=str(args.dataroot), verbose=False)
     splits = create_splits_scenes()
     train_names = sorted(set(splits["train"]))
-    val_names = sorted(set(splits["val"]))
-    keep_train = train_names[: args.train_scenes]
-    keep_val = val_names[: args.validation_scenes]
-    keep = keep_train + keep_val
-    exclude = train_names[len(keep_train):] + val_names[len(keep_val):]
+    official_val_names = sorted(set(splits["val"]))
+    development_count = args.train_scenes + args.validation_scenes
+    if development_count > len(train_names):
+        raise ValueError(
+            f"requested {development_count} development scenes, but the official "
+            f"train split contains only {len(train_names)}"
+        )
+    # Both training and internal validation must come from official train.
+    # The manifest builder performs the deterministic random partition; this
+    # selector only defines the available development-scene pool.
+    keep = train_names[:development_count]
+    exclude = train_names[development_count:] + official_val_names
 
     name_to_token = {scene["name"]: scene["token"] for scene in nusc.scene}
     keep_tokens = {name_to_token[name] for name in keep if name in name_to_token}
@@ -55,8 +65,11 @@ def main() -> int:
     (output / "lidar_members.txt").write_text("\n".join(members) + "\n", encoding="utf-8")
 
     print(json.dumps({
-        "train_scenes": len(keep_train),
-        "val_scenes": len(keep_val),
+        "development_scenes": len(keep),
+        "planned_train_scenes": args.train_scenes,
+        "planned_validation_scenes": args.validation_scenes,
+        "validation_fraction": args.validation_scenes / len(keep),
+        "official_val_scenes_excluded": len(official_val_names),
         "excluded_scenes": len(exclude),
         "lidar_files": len(members),
         "lidar_gib": round(bytes_needed / 1024**3, 2),

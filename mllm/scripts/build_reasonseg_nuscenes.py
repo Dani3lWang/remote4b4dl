@@ -11,11 +11,19 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
 import numpy as np
+
+
+MLLM_ROOT = Path(__file__).resolve().parents[1]
+if str(MLLM_ROOT) not in sys.path:
+    sys.path.insert(0, str(MLLM_ROOT))
+
+from reasonseg_splits import partition_development_scenes
 
 
 THING_CLASSES = [
@@ -38,6 +46,7 @@ def main() -> int:
     parser.add_argument("--version", default="v1.0-trainval")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--exclude-scenes", type=Path)
+    parser.add_argument("--validation-fraction", type=float, default=0.1)
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--seed", type=int, default=20260917)
     args = parser.parse_args()
@@ -54,14 +63,24 @@ def main() -> int:
         )
     idx_to_name = _category_mapping(nusc)
     class_to_id = {name: index for index, name in enumerate(THING_CLASSES)}
-    splits = create_splits_scenes()
-    split_keys = ("mini_train", "mini_val") if "mini" in args.version else ("train", "val")
-    scene_name_to_split = {}
-    for split_key in split_keys:
-        label = "train" if split_key.endswith("train") else "val"
-        for name in splits[split_key]:
-            scene_name_to_split[name] = label
-    excluded = _load_excluded_scenes(args.exclude_scenes)
+    official_splits = create_splits_scenes()
+    # B4DL uses the official 150-scene nuScenes val split as its held-out
+    # test set.  ReasonSeg validation must therefore be carved only from the
+    # official train scenes, never from official val.
+    excluded = set(official_splits["val"])
+    excluded.update(_load_excluded_scenes(args.exclude_scenes))
+    train_names = (
+        official_splits["mini_train"]
+        if "mini" in args.version
+        else official_splits["train"]
+    )
+    scene_token_to_split = partition_development_scenes(
+        nusc.scene,
+        official_train_names=train_names,
+        excluded_scenes=excluded,
+        validation_fraction=args.validation_fraction,
+        seed=args.seed,
+    )
     panoptic_by_sample_data = {
         str(record.get("sample_data_token") or record.get("token")): record
         for record in nusc.panoptic
@@ -71,8 +90,8 @@ def main() -> int:
     processed = 0
     for sample in nusc.sample:
         scene = scene_by_token[sample["scene_token"]]
-        split = scene_name_to_split.get(scene["name"])
-        if split not in ("train", "val") or scene["token"] in excluded or scene["name"] in excluded:
+        split = scene_token_to_split.get(scene["token"])
+        if split not in ("train", "val"):
             continue
         lidar_token = sample["data"]["LIDAR_TOP"]
         panoptic_record = panoptic_by_sample_data.get(lidar_token)
@@ -98,6 +117,19 @@ def main() -> int:
             break
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    split_scene_counts = {
+        split: sum(value == split for value in scene_token_to_split.values())
+        for split in ("train", "val")
+    }
+    (args.output_dir / "b4dl_test_scenes.json").write_text(
+        json.dumps({"scene_tokens": sorted(excluded_tokens)}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        "scene split: "
+        f"train={split_scene_counts['train']}, val={split_scene_counts['val']}, "
+        f"held-out={len(excluded_tokens)}"
+    )
     for split in ("train", "val"):
         destination = args.output_dir / f"reasonseg_{split}.jsonl"
         with destination.open("w", encoding="utf-8", newline="\n") as handle:

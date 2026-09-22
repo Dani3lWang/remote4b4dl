@@ -14,11 +14,12 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 
 from .config import ReasonSegConfig
+from reasonseg_splits import partition_development_scenes
 from .spatial_encoder import SparseUNetPointEncoder
 
 
 class NuScenesLidarsegDataset(Dataset):
-    """Read key-frame point clouds and lidarseg labels by official scene split."""
+    """Read key frames from a deterministic split of official-train scenes."""
 
     def __init__(
         self,
@@ -27,6 +28,9 @@ class NuScenesLidarsegDataset(Dataset):
         split: str,
         version: str = "v1.0-trainval",
         exclude_scenes: Optional[str] = None,
+        label_source: str = "auto",
+        validation_fraction: float = 0.1,
+        seed: int = 20260917,
         max_samples: int = 0,
     ):
         if split not in ("train", "val"):
@@ -36,33 +40,56 @@ class NuScenesLidarsegDataset(Dataset):
 
         self.dataroot = Path(dataroot).resolve()
         nusc = NuScenes(version=version, dataroot=str(self.dataroot), verbose=False)
-        if not getattr(nusc, "lidarseg", None):
+        if label_source not in ("auto", "lidarseg", "panoptic"):
+            raise ValueError("label_source must be auto, lidarseg or panoptic")
+        has_lidarseg = bool(getattr(nusc, "lidarseg", None))
+        has_panoptic = bool(getattr(nusc, "panoptic", None))
+        if label_source == "auto":
+            label_source = "lidarseg" if has_lidarseg else "panoptic"
+        if label_source == "lidarseg" and not has_lidarseg:
             raise RuntimeError("nuScenes lidarseg metadata is unavailable")
-        split_key = f"mini_{split}" if "mini" in version else split
-        scene_names = set(create_splits_scenes()[split_key])
+        if label_source == "panoptic" and not has_panoptic:
+            raise RuntimeError("nuScenes panoptic metadata is unavailable")
+        self.label_source = label_source
+        official_splits = create_splits_scenes()
+        split_key = "mini_train" if "mini" in version else "train"
+        scene_names = set(official_splits[split_key])
         excluded = _load_excluded_scenes(exclude_scenes)
+        scene_assignments = partition_development_scenes(
+            nusc.scene,
+            official_train_names=scene_names,
+            excluded_scenes=excluded,
+            validation_fraction=validation_fraction,
+            seed=seed,
+        )
         scenes = {record["token"]: record for record in nusc.scene}
+        labels_by_sample_data = {
+            str(record.get("sample_data_token") or record.get("token")): record
+            for record in getattr(nusc, label_source)
+        }
         records = []
         for sample in nusc.sample:
             scene = scenes[sample["scene_token"]]
-            if scene["name"] not in scene_names:
-                continue
-            if scene["name"] in excluded or scene["token"] in excluded:
+            if scene_assignments.get(scene["token"]) != split:
                 continue
             lidar_token = sample["data"]["LIDAR_TOP"]
             sample_data = nusc.get("sample_data", lidar_token)
-            lidarseg = nusc.get("lidarseg", lidar_token)
+            label_record = labels_by_sample_data.get(lidar_token)
+            if label_record is None:
+                raise RuntimeError(
+                    f"missing {label_source} record for LIDAR_TOP {lidar_token}"
+                )
             records.append(
                 (
                     sample["token"],
                     self.dataroot / sample_data["filename"],
-                    self.dataroot / lidarseg["filename"],
+                    self.dataroot / label_record["filename"],
                 )
             )
         if max_samples:
             records = records[:max_samples]
         if not records:
-            raise ValueError(f"no lidarseg samples found for {split_key}")
+            raise ValueError(f"no lidarseg samples found for internal {split} split")
         self.records = records
         mapping = getattr(nusc, "lidarseg_name2idx_mapping", None) or {}
         self.num_classes = max((int(value) for value in mapping.values()), default=31) + 1
@@ -76,7 +103,17 @@ class NuScenesLidarsegDataset(Dataset):
         if points.size % 5:
             raise RuntimeError(f"invalid nuScenes point file: {point_path}")
         points = points.reshape(-1, 5)[:, :4]
-        labels = np.fromfile(label_path, dtype=np.uint8).astype(np.int64)
+        if self.label_source == "lidarseg":
+            labels = np.fromfile(label_path, dtype=np.uint8).astype(np.int64)
+        else:
+            with np.load(label_path) as values:
+                if "data" not in values:
+                    raise RuntimeError(
+                        f"panoptic archive has no 'data' array: {label_path}"
+                    )
+                labels = (
+                    np.asarray(values["data"]).reshape(-1).astype(np.int64) // 1000
+                )
         if len(points) != len(labels):
             raise RuntimeError(
                 f"point/lidarseg mismatch for {sample_token}: {len(points)} != {len(labels)}"
