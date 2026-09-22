@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-本文件记录当前仓库的有效开发约定。`main` 只维护官方基础模块与最新 B3 基线；强化学习实现位于 `rf-grpo` 分支。
+本文件记录当前仓库的有效开发约定。`main` 只维护官方基础模块与最新 B3 基线；强化学习实现位于 `rf-grpo` 分支；ReasonSeg 单帧点级分割位于 `seg` 分支。
 
 ## 项目概述
 
@@ -100,6 +100,17 @@ METEOR 默认使用双后端；与论文对比采用 NLTK-2005 主口径。
 - `mllm/evaluation/test_b4dl.py`：六任务推理及统一评测入口。
 - `mllm/evaluation/analyze_tg_regression.py`：B3 与后续模型的 TG 失败模式对比。
 
+## ReasonSeg（seg 分支）
+
+ReasonSeg（单帧点级推理分割）在 `seg` 分支开发，运行环境是独立的 `reasonseg`（`/root/autodl-tmp/.conda-stuff/envs/reasonseg`），不复用 `wqlc`。
+
+- 复算 teacher-forcing 验证用 `--validate-only --validation-samples 0 --validate-dtype-variants as_is --eval-checkpoint <best>`；**不可**与 `--spatial-checkpoint` 并用——ReasonSeg checkpoint 已含完整空间编码器，loader 会直接 raise。
+- teacher-forcing mean IoU 的绝对值只在同一 manifest 内可比：query 构成主导，同一份权重在 `val_thin`(2248 条)/`val_internal_fresh`(19450 条)/`val_oov500`(1991 条) 上分别为 0.113/0.082/0.138。报数必须写明 manifest 名与记录数，模型间对比只能在同一 manifest 上做。
+- 模型选择只能用 `reasonseg_val_internal*.jsonl`（官方 train 场景内划分，由 `scripts/reasonseg_experiments/repartition_reasonseg_val.py` 产出）。`reasonseg_val_thin.jsonl` 的 20 个场景属 nuScenes 官方 val，即 B4DL 测试集，只能作最终测试报告，不得用于 early stopping。
+- 训练一律显式 `--validation-samples 0`（默认 32 只测 manifest 前 32 条，且几乎落在同一场景）。
+- 自由生成评测固定 `--dtype fp16 --encoder-dtype fp32`：编码器进 fp16 会让部分帧特征 NaN，贪心解码随即锁死在 `<unk>`。metrics 的 `cIoU` 是面积加权、`gIoU` 是逐对均值，键名与惯例相反。
+- 实验脚本归档在 `mllm/scripts/reasonseg_experiments/`；`mllm/reasonseg_data_trainval/` 与 `mllm/training_logs/` 整体被 gitignore，脚本必须放进前者才入库。
+
 ## 约束
 
 - 训练和评测必须使用同代际的数据构造和输入参数。
@@ -113,3 +124,6 @@ METEOR 默认使用双后端；与论文对比采用 NLTK-2005 主口径。
 - 提交信息使用中文。
 - `git add` 必须列出具体文件，不使用 `git add -A`。
 - 不在 `main` 新增 RL 代码；RL 变更提交到 `rf-grpo`。
+- ReasonSeg 代码与训练脚本变更提交到 `seg`，不混入 `main`；`seg` 晋级 `main` 前必须完成非泄漏数据闭包与消融。
+- `push` 前先过 L3 深度安全扫描。
+- autodl3 服务器无 GitHub 直连且是 blob 过滤的 partial clone：同步用区间 bundle（`git bundle create x.bundle <base>..seg`，全历史 bundle 会因缺 blob 反复回源卡死），服务器→本地经 scp+fetch 后由本地 push，本地→服务器经 scp+`git fetch <bundle> seg:tmp && git merge --ff-only tmp`。
