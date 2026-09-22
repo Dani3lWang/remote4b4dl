@@ -395,7 +395,7 @@ def validate_teacher_forcing(accelerator, model, loader, *, threshold: float,
     thresholds = [float(threshold)]
     thresholds += [float(value) for value in extra_thresholds
                    if float(value) != float(threshold)]
-    totals = torch.zeros(4 * len(thresholds), dtype=torch.float64, device=accelerator.device)
+    totals = torch.zeros(5 * len(thresholds), dtype=torch.float64, device=accelerator.device)
     token_failures = torch.zeros(1, dtype=torch.float64, device=accelerator.device)
     sample_count = torch.zeros(1, dtype=torch.float64, device=accelerator.device)
     for batch in loader:
@@ -426,11 +426,15 @@ def validate_teacher_forcing(accelerator, model, loader, *, threshold: float,
                 intersection = (predicted & target & valid).sum(dim=-1).double()
                 union = ((predicted | target) & valid).sum(dim=-1).double()
                 present = object_valid & union.gt(0)
-                base = 4 * offset
-                totals[base] += (intersection[present] / union[present]).sum()
+                base = 5 * offset
+                per_object_iou = intersection[present] / union[present]
+                totals[base] += per_object_iou.sum()
                 totals[base + 1] += present.sum()
                 totals[base + 2] += intersection.sum()
                 totals[base + 3] += union.sum()
+                # mean IoU 对阈值平坦不代表硬计数平坦：recall@0.5 数的是越过
+                # 0.5 边界的实例数，阈值可能把它们整体推过去而均值几乎不动。
+                totals[base + 4] += (per_object_iou >= 0.5).sum()
             token_failures += sum(
                 status not in ("ok", "no_object") for status in output.token_status
             )
@@ -441,13 +445,16 @@ def validate_teacher_forcing(accelerator, model, loader, *, threshold: float,
     model.train()
 
     def summarize(offset: int) -> dict:
-        base = 4 * offset
+        base = 5 * offset
+        objects = totals[base + 1].clamp_min(1.0)
         return {
-            "teacher_forcing_mean_iou": float(totals[base] / totals[base + 1].clamp_min(1.0)),
+            "teacher_forcing_mean_iou": float(totals[base] / objects),
             "teacher_forcing_global_iou": float(
                 totals[base + 2] / totals[base + 3].clamp_min(1.0)
             ),
             "teacher_forcing_objects": int(totals[base + 1].item()),
+            "teacher_forcing_recall_at_0.5": float(totals[base + 4] / objects),
+            "teacher_forcing_hits_at_0.5": int(totals[base + 4].item()),
         }
 
     result = summarize(0)
