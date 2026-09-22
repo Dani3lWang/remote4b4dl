@@ -28,6 +28,7 @@ CLI usage:
 import os
 import re
 import json
+import socket
 import argparse
 import threading
 import numpy as np
@@ -69,11 +70,18 @@ try:
             try:
                 nltk.data.find(resource_path)
             except LookupError:
-                # Resource genuinely not found — attempt download (may hang offline)
+                # Resource genuinely not found — attempt download. 必须限时：
+                # 语料托管在 raw.githubusercontent.com，无外网的机器上 TCP 会
+                # 连上但永不返回，默认无超时的 nltk.download 会把整个评测挂死
+                # （实测 5 小时 timeout 都救不回来，进程 0 CPU、fd 挂着 socket）。
+                _previous_timeout = socket.getdefaulttimeout()
+                socket.setdefaulttimeout(20)
                 try:
                     nltk.download(download_name, quiet=True)
                 except Exception:
                     pass
+                finally:
+                    socket.setdefaulttimeout(_previous_timeout)
             except Exception:
                 # Corrupted resource (e.g. BadZipFile) — warn, don't auto-download
                 pass

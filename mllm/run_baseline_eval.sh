@@ -12,6 +12,9 @@ if [ ! -x "$WQLC_PREFIX/bin/python" ]; then
 fi
 
 export PATH="$WQLC_PREFIX/bin:$PATH"
+# 语料随仓库放在 $PROJECT_ROOT/nltk_data，不在 nltk 默认搜索路径内；缺它会触发
+# nltk.download 连 raw.githubusercontent.com，在无外网机器上永久挂死。
+export NLTK_DATA="${NLTK_DATA:-$PROJECT_ROOT/nltk_data}"
 cd "$PROJECT_ROOT/mllm"
 
 OUT=./eval_results/b3

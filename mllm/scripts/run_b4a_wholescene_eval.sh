@@ -10,6 +10,9 @@ cd /root/autodl-tmp/mmb4dl/mllm
 W=/root/autodl-tmp/.conda-stuff/envs/wqlc
 export HF_HUB_OFFLINE=1 HF_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# 语料在仓库内而不在 nltk 默认搜索路径里；缺它会触发 nltk.download 去
+# raw.githubusercontent.com 并在无外网机器上永久挂死。
+export NLTK_DATA="${NLTK_DATA:-/root/autodl-tmp/mmb4dl/nltk_data}"
 export PATH="$W/bin:$PATH"
 
 CKPT=./checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-b4a
