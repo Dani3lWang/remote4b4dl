@@ -399,39 +399,42 @@ def validate_teacher_forcing(accelerator, model, loader, *, threshold: float,
     token_failures = torch.zeros(1, dtype=torch.float64, device=accelerator.device)
     sample_count = torch.zeros(1, dtype=torch.float64, device=accelerator.device)
     for batch in loader:
-        output = model(
-            input_ids=batch["input_ids"],
-            attention_mask=batch["attention_mask"],
-            labels=batch["labels"],
-            points=batch["points"],
-            point_batch_indices=batch["point_batch_indices"],
-            target_masks=batch["target_masks"],
-            target_loc_masks=batch["target_loc_masks"],
-            target_classes=batch["target_classes"],
-            target_object_valid_mask=batch["object_valid_mask"],
-        )
-        probabilities = torch.sigmoid(output.head.mask_logits)
-        target = batch["target_masks"].bool()
-        object_valid = batch["object_valid_mask"].bool()
-        if object_valid.shape[1] != probabilities.shape[1]:
-            object_valid = object_valid[:, : probabilities.shape[1]]
-            target = target[:, : probabilities.shape[1]]
-        point_valid = output.point_valid_mask[:, None, :]
-        valid = point_valid & object_valid[:, :, None]
-        for offset, cut in enumerate(thresholds):
-            predicted = probabilities >= cut
-            intersection = (predicted & target & valid).sum(dim=-1).double()
-            union = ((predicted | target) & valid).sum(dim=-1).double()
-            present = object_valid & union.gt(0)
-            base = 4 * offset
-            totals[base] += (intersection[present] / union[present]).sum()
-            totals[base + 1] += present.sum()
-            totals[base + 2] += intersection.sum()
-            totals[base + 3] += union.sum()
-        token_failures += sum(
-            status not in ("ok", "no_object") for status in output.token_status
-        )
-        sample_count += len(output.token_status)
+        # 验证不需要梯度；不关掉的话每批都会建 autograd 图，且 probabilities
+        # 跨阈值循环存活会让相邻两批的图同时驻留（实测 +7.7G，4090 上 OOM）。
+        with torch.no_grad():
+            output = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                labels=batch["labels"],
+                points=batch["points"],
+                point_batch_indices=batch["point_batch_indices"],
+                target_masks=batch["target_masks"],
+                target_loc_masks=batch["target_loc_masks"],
+                target_classes=batch["target_classes"],
+                target_object_valid_mask=batch["object_valid_mask"],
+            )
+            probabilities = torch.sigmoid(output.head.mask_logits)
+            target = batch["target_masks"].bool()
+            object_valid = batch["object_valid_mask"].bool()
+            if object_valid.shape[1] != probabilities.shape[1]:
+                object_valid = object_valid[:, : probabilities.shape[1]]
+                target = target[:, : probabilities.shape[1]]
+            point_valid = output.point_valid_mask[:, None, :]
+            valid = point_valid & object_valid[:, :, None]
+            for offset, cut in enumerate(thresholds):
+                predicted = probabilities >= cut
+                intersection = (predicted & target & valid).sum(dim=-1).double()
+                union = ((predicted | target) & valid).sum(dim=-1).double()
+                present = object_valid & union.gt(0)
+                base = 4 * offset
+                totals[base] += (intersection[present] / union[present]).sum()
+                totals[base + 1] += present.sum()
+                totals[base + 2] += intersection.sum()
+                totals[base + 3] += union.sum()
+            token_failures += sum(
+                status not in ("ok", "no_object") for status in output.token_status
+            )
+            sample_count += len(output.token_status)
     totals = accelerator.reduce(totals, reduction="sum")
     token_failures = accelerator.reduce(token_failures, reduction="sum")
     sample_count = accelerator.reduce(sample_count, reduction="sum")
