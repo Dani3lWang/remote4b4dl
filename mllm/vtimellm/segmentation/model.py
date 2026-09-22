@@ -223,7 +223,11 @@ class ReasonSegModel(nn.Module):
             locs.append(loc_probabilities[batch_index, object_mask, :point_count].cpu())
             classes.append(class_ids[batch_index, object_mask].cpu())
             scores.append(class_scores[batch_index, object_mask].cpu())
-        text = tokenizer.batch_decode(output_ids, skip_special_tokens=False)
+        # output_ids still carries the IMAGE_TOKEN_INDEX (-200) prompt placeholder, which is
+        # not a real vocabulary id and makes sentencepiece raise IndexError on decode.
+        text = tokenizer.batch_decode(
+            [ids[ids >= 0].tolist() for ids in output_ids], skip_special_tokens=False
+        )
         return GeneratedSegmentation(
             output_ids=output_ids,
             text=text,
