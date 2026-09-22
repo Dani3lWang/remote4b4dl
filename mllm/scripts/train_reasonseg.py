@@ -352,7 +352,8 @@ def _validate_dtype_variants(accelerator, model, val_dataset, collator, args) ->
             _make_val_loader(val_dataset, collator, args, limit)
         )
         metrics = validate_teacher_forcing(
-            accelerator, model, loader, threshold=args.validation_threshold
+            accelerator, model, loader, threshold=args.validation_threshold,
+            extra_thresholds=_parse_thresholds(args.validation_thresholds),
         )
         metrics.update(
             {
@@ -377,11 +378,24 @@ def _validate_dtype_variants(accelerator, model, val_dataset, collator, args) ->
 
 
 @torch.inference_mode()
-def validate_teacher_forcing(accelerator, model, loader, *, threshold: float):
-    """Measure masks from ground-truth LOC/SEG tokens, separate from generation."""
+def _parse_thresholds(text: str) -> list:
+    return [float(value) for value in str(text or "").split(",") if value.strip()]
+
+
+def validate_teacher_forcing(accelerator, model, loader, *, threshold: float,
+                             extra_thresholds=()):
+    """Measure masks from ground-truth LOC/SEG tokens, separate from generation.
+
+    ``extra_thresholds`` are scored in the same forward pass: the mask head's
+    sigmoid rarely reaches 0.5, so the binarisation cut dominates the reported
+    IoU and must be swept instead of assumed.
+    """
 
     model.eval()
-    totals = torch.zeros(4, dtype=torch.float64, device=accelerator.device)
+    thresholds = [float(threshold)]
+    thresholds += [float(value) for value in extra_thresholds
+                   if float(value) != float(threshold)]
+    totals = torch.zeros(4 * len(thresholds), dtype=torch.float64, device=accelerator.device)
     token_failures = torch.zeros(1, dtype=torch.float64, device=accelerator.device)
     sample_count = torch.zeros(1, dtype=torch.float64, device=accelerator.device)
     for batch in loader:
@@ -396,21 +410,24 @@ def validate_teacher_forcing(accelerator, model, loader, *, threshold: float):
             target_classes=batch["target_classes"],
             target_object_valid_mask=batch["object_valid_mask"],
         )
-        predicted = torch.sigmoid(output.head.mask_logits) >= threshold
+        probabilities = torch.sigmoid(output.head.mask_logits)
         target = batch["target_masks"].bool()
         object_valid = batch["object_valid_mask"].bool()
-        if object_valid.shape[1] != predicted.shape[1]:
-            object_valid = object_valid[:, : predicted.shape[1]]
-            target = target[:, : predicted.shape[1]]
+        if object_valid.shape[1] != probabilities.shape[1]:
+            object_valid = object_valid[:, : probabilities.shape[1]]
+            target = target[:, : probabilities.shape[1]]
         point_valid = output.point_valid_mask[:, None, :]
         valid = point_valid & object_valid[:, :, None]
-        intersection = (predicted & target & valid).sum(dim=-1).double()
-        union = ((predicted | target) & valid).sum(dim=-1).double()
-        present = object_valid & union.gt(0)
-        totals[0] += (intersection[present] / union[present]).sum()
-        totals[1] += present.sum()
-        totals[2] += intersection.sum()
-        totals[3] += union.sum()
+        for offset, cut in enumerate(thresholds):
+            predicted = probabilities >= cut
+            intersection = (predicted & target & valid).sum(dim=-1).double()
+            union = ((predicted | target) & valid).sum(dim=-1).double()
+            present = object_valid & union.gt(0)
+            base = 4 * offset
+            totals[base] += (intersection[present] / union[present]).sum()
+            totals[base + 1] += present.sum()
+            totals[base + 2] += intersection.sum()
+            totals[base + 3] += union.sum()
         token_failures += sum(
             status not in ("ok", "no_object") for status in output.token_status
         )
@@ -419,14 +436,26 @@ def validate_teacher_forcing(accelerator, model, loader, *, threshold: float):
     token_failures = accelerator.reduce(token_failures, reduction="sum")
     sample_count = accelerator.reduce(sample_count, reduction="sum")
     model.train()
-    return {
-        "teacher_forcing_mean_iou": float(totals[0] / totals[1].clamp_min(1.0)),
-        "teacher_forcing_global_iou": float(totals[2] / totals[3].clamp_min(1.0)),
-        "teacher_forcing_objects": int(totals[1].item()),
-        "teacher_forcing_token_failure_rate": float(
-            token_failures[0] / sample_count[0].clamp_min(1.0)
-        ),
-    }
+
+    def summarize(offset: int) -> dict:
+        base = 4 * offset
+        return {
+            "teacher_forcing_mean_iou": float(totals[base] / totals[base + 1].clamp_min(1.0)),
+            "teacher_forcing_global_iou": float(
+                totals[base + 2] / totals[base + 3].clamp_min(1.0)
+            ),
+            "teacher_forcing_objects": int(totals[base + 1].item()),
+        }
+
+    result = summarize(0)
+    result["teacher_forcing_token_failure_rate"] = float(
+        token_failures[0] / sample_count[0].clamp_min(1.0)
+    )
+    if len(thresholds) > 1:
+        result["threshold_sweep"] = {
+            f"{value:g}": summarize(offset) for offset, value in enumerate(thresholds)
+        }
+    return result
 
 
 def build_optimizer(model, args):
@@ -558,6 +587,12 @@ def build_parser():
     parser.add_argument("--no-resume-state", action="store_true")
     parser.add_argument("--validation-samples", type=int, default=32)
     parser.add_argument("--validation-threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--validation-thresholds",
+        default="",
+        help="逗号分隔的额外二值化阈值，与 --validation-threshold 在同一次前向内一起评分，"
+             "结果出现在 threshold_sweep 字段；仅 validate-only 复算时需要",
+    )
     parser.add_argument("--dropout", type=float, default=None)
     parser.add_argument("--early-stopping-patience", type=int, default=5)
     parser.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
