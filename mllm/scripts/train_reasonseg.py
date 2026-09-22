@@ -41,11 +41,16 @@ def main() -> int:
     config = ReasonSegConfig()
     if getattr(args, "dropout", None) is not None:
         config.dropout = float(args.dropout)
+    if args.resume_from_checkpoint and args.eval_checkpoint:
+        raise RuntimeError(
+            "--eval-checkpoint and --resume-from-checkpoint are mutually exclusive; "
+            "the former loads weights only, the latter also requires accelerator_state"
+        )
     tokenizer, model, _ = load_reasonseg_model(
         args,
         b3_checkpoint=args.b3_checkpoint,
         reasonseg_config=config,
-        segmentation_checkpoint=args.resume_from_checkpoint,
+        segmentation_checkpoint=args.resume_from_checkpoint or args.eval_checkpoint,
         spatial_checkpoint=args.spatial_checkpoint,
         trainable=True,
     )
@@ -62,10 +67,12 @@ def main() -> int:
         collate_fn=collator,
     )
     val_loader = None
+    full_val_dataset = None
     if args.validation_manifest:
         val_dataset = ReasonSegDataset(
             args.validation_manifest, dataroot=args.dataroot, config=config
         )
+        full_val_dataset = val_dataset
         if args.validation_samples:
             val_dataset = Subset(
                 val_dataset,
@@ -96,6 +103,10 @@ def main() -> int:
     else:
         model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
             model, optimizer, train_loader, val_loader, scheduler
+        )
+    if args.validate_only:
+        return _validate_dtype_variants(
+            accelerator, model, full_val_dataset, collator, args
         )
     start_epoch = 0
     global_step = 0
@@ -223,6 +234,148 @@ def main() -> int:
     return 0
 
 
+def _first_param_dtype(module) -> str:
+    for param in module.parameters():
+        return str(param.dtype)
+    return "none"
+
+
+def _make_val_loader(dataset, collator, args, limit: int):
+    if limit:
+        dataset = Subset(dataset, range(min(limit, len(dataset))))
+    return DataLoader(
+        dataset,
+        batch_size=args.per_device_eval_batch_size,
+        shuffle=False,
+        num_workers=args.dataloader_num_workers,
+        pin_memory=True,
+        collate_fn=collator,
+    )
+
+
+class _NonFiniteProbe:
+    """Counts encoder batches that emit non-finite values."""
+
+    def __init__(self) -> None:
+        self.batches = 0
+        self.nonfinite_batches = 0
+        self.nonfinite_elements = 0
+
+    def reset(self) -> None:
+        self.batches = self.nonfinite_batches = self.nonfinite_elements = 0
+
+    def __call__(self, _module, _inputs, output) -> None:
+        tensors = (
+            [output]
+            if torch.is_tensor(output)
+            else [
+                value
+                for value in getattr(output, "__dict__", {}).values()
+                if torch.is_tensor(value)
+            ]
+        )
+        self.batches += 1
+        bad = sum(int((~torch.isfinite(tensor)).sum()) for tensor in tensors)
+        if bad:
+            self.nonfinite_batches += 1
+            self.nonfinite_elements += bad
+
+
+def _apply_dtype_variant(accelerator, model, variant: str):
+    unwrapped = accelerator.unwrap_model(model)
+    original_encode = unwrapped.encode_points
+
+    def restore() -> None:
+        unwrapped.__dict__.pop("encode_points", None)
+
+    if variant == "as_is":
+        return restore
+    if variant == "fp16":
+        model.to(torch.float16)
+        return restore
+    if variant != "fp32":
+        raise ValueError(f"unknown dtype variant: {variant}")
+    # spconv 只接受 fp32/fp16。这里只把编码器抬回 fp32，两路输出按各自消费者的 dtype 回cast，
+    # 使该臂与 fp16 臂之间唯一的差别就是编码器精度。
+    lm_dtype = next(unwrapped.language_model.get_input_embeddings().parameters()).dtype
+    head_dtype = next(unwrapped.mask_head.parameters()).dtype
+    unwrapped.point_encoder.to(torch.float32)
+    unwrapped.scene_compressor.to(torch.float32)
+
+    def encode_points_fp32(points, point_batch_indices):
+        encoding, padded, valid, scene, indices = original_encode(
+            points.to(torch.float32), point_batch_indices
+        )
+        return encoding, padded.to(head_dtype), valid, scene.to(lm_dtype), indices
+
+    unwrapped.encode_points = encode_points_fp32
+    return restore
+
+
+def _validate_dtype_variants(accelerator, model, val_dataset, collator, args) -> int:
+    if val_dataset is None:
+        raise RuntimeError("--validate-only requires --validation-manifest")
+    variants = [
+        name.strip() for name in args.validate_dtype_variants.split(",") if name.strip()
+    ]
+    if not variants or variants[0] != "as_is":
+        raise RuntimeError(
+            "--validate-dtype-variants must start with as_is; later arms mutate weight dtype"
+        )
+    unwrapped = accelerator.unwrap_model(model)
+    accelerator.print(
+        json.dumps(
+            {
+                "dtype_snapshot": {
+                    name: _first_param_dtype(module)
+                    for name, module in (
+                        ("point_encoder", unwrapped.point_encoder),
+                        ("scene_compressor", unwrapped.scene_compressor),
+                        ("mask_head", unwrapped.mask_head),
+                        ("language_model", unwrapped.language_model),
+                    )
+                }
+            },
+            ensure_ascii=False,
+        )
+    )
+    probe = _NonFiniteProbe()
+    unwrapped.point_encoder.register_forward_hook(probe)
+    for position, variant in enumerate(variants):
+        restore = _apply_dtype_variant(accelerator, model, variant)
+        limit = args.validation_samples
+        if position and args.variant_validation_samples:
+            limit = args.variant_validation_samples
+        probe.reset()
+        # 必须像训练里 prepare(val_loader) 那样把 batch 搬上设备，否则 spconv 会收到 CPU 张量。
+        loader = accelerator.prepare(
+            _make_val_loader(val_dataset, collator, args, limit)
+        )
+        metrics = validate_teacher_forcing(
+            accelerator, model, loader, threshold=args.validation_threshold
+        )
+        metrics.update(
+            {
+                "variant": variant,
+                "requested_samples": limit if limit else len(val_dataset),
+                "point_encoder_batches": probe.batches,
+                "point_encoder_nonfinite_batches": probe.nonfinite_batches,
+                "point_encoder_nonfinite_elements": probe.nonfinite_elements,
+                "observed_dtypes": {
+                    name: _first_param_dtype(module)
+                    for name, module in (
+                        ("point_encoder", unwrapped.point_encoder),
+                        ("language_model", unwrapped.language_model),
+                        ("mask_head", unwrapped.mask_head),
+                    )
+                },
+            }
+        )
+        restore()
+        accelerator.print(json.dumps(metrics, ensure_ascii=False))
+    return 0
+
+
 @torch.inference_mode()
 def validate_teacher_forcing(accelerator, model, loader, *, threshold: float):
     """Measure masks from ground-truth LOC/SEG tokens, separate from generation."""
@@ -307,7 +460,7 @@ def _prune_old_checkpoints(output_dir: Path, keep: int) -> None:
     for child in output_dir.iterdir():
         name = child.name
         if child.is_dir() and name.startswith("checkpoint-"):
-            suffix = name[len("checkpoint-"):]
+            suffix = name[len("checkpoint-") :]
             if suffix.isdigit():
                 steps.append((int(suffix), child))
     steps.sort(key=lambda item: item[0], reverse=True)
@@ -376,6 +529,16 @@ def build_parser():
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--resume-from-checkpoint")
     parser.add_argument("--spatial-checkpoint")
+    parser.add_argument("--eval-checkpoint")
+    parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument(
+        "--validate-dtype-variants",
+        default="as_is",
+        help="逗号分隔的精度臂，按顺序执行：as_is（不加任何 cast，忠实复现训练配置）、"
+             "fp16（整模型转 fp16，复现评测侧被 spconv NaN 污染的配置）、"
+             "fp32（仅点云编码器/压缩器转 fp32）。as_is 必须排在最前，后续臂会改权重 dtype。",
+    )
+    parser.add_argument("--variant-validation-samples", type=int, default=0)
     parser.add_argument("--validation-manifest")
     parser.add_argument("--num-train-epochs", type=int, default=20)
     parser.add_argument("--per-device-train-batch-size", type=int, default=1)
