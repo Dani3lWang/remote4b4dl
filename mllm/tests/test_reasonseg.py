@@ -19,7 +19,7 @@ from vtimellm.segmentation.checkpoint import (
     load_spatial_encoder_checkpoint,
     save_spatial_encoder_checkpoint,
 )
-from vtimellm.segmentation.heads import HierarchicalMaskDecoder
+from vtimellm.segmentation.heads import HierarchicalMaskDecoder, _mask_loss
 from vtimellm.segmentation.metrics import (
     SegmentationMetricAccumulator,
     optimal_iou_matching,
@@ -192,6 +192,110 @@ class DecoderTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(output.loss))
         output.loss.backward()
         self.assertIsNotNone(point_features.grad)
+
+
+class MaskLossTests(unittest.TestCase):
+    """掩码正例只占帧内点的 3e-4，损失形状直接决定模型敢不敢触发。"""
+
+    @staticmethod
+    def _reference_bce_dice(logits, targets, valid):
+        """重构前的实现，用于锁定 plain+dice 的向后兼容性。"""
+        targets = targets.to(logits.dtype)
+        valid_float = valid.to(logits.dtype)
+        denominator = valid_float.sum().clamp_min(1.0)
+        bce = nn.functional.binary_cross_entropy_with_logits(
+            logits, targets, reduction="none"
+        )
+        bce = (bce * valid_float).sum() / denominator
+        probabilities = torch.sigmoid(logits) * valid_float
+        target_values = targets * valid_float
+        intersection = (probabilities * target_values).sum(dim=-1)
+        union = probabilities.sum(dim=-1) + target_values.sum(dim=-1)
+        dice = 1.0 - (2.0 * intersection + 1.0) / (union + 1.0)
+        object_valid = valid.any(dim=-1)
+        dice = dice[object_valid].mean() if object_valid.any() else logits.sum() * 0.0
+        return bce + dice
+
+    def _sample_case(self):
+        generator = torch.Generator().manual_seed(20260923)
+        logits = torch.randn(2, 3, 37, generator=generator)
+        targets = torch.zeros(2, 3, 37, dtype=torch.bool)
+        targets[0, 0, 3:6] = True
+        targets[0, 1, 11:19] = True
+        targets[0, 2, :2] = True
+        targets[1, 0, 20:25] = True
+        targets[1, 2, 30:31] = True
+        valid = torch.ones(2, 3, 37, dtype=torch.bool)
+        valid[1, :, -4:] = False
+        valid[1, 1, :] = False
+        return logits, targets, valid
+
+    def _mask_loss(self, logits, targets, valid, **overrides):
+        options = {
+            "bce_mode": "plain",
+            "region_loss": "dice",
+            "tversky_alpha": 0.3,
+            "tversky_beta": 0.7,
+        }
+        options.update(overrides)
+        return _mask_loss(logits, targets, valid, **options)
+
+    def test_plain_dice_matches_reference_implementation(self):
+        logits, targets, valid = self._sample_case()
+        expected = self._reference_bce_dice(logits, targets, valid)
+        actual = self._mask_loss(logits, targets, valid)
+        self.assertTrue(torch.allclose(expected, actual, atol=1e-6), (expected, actual))
+
+    def test_dice_is_symmetric_tversky(self):
+        logits, targets, valid = self._sample_case()
+        dice = self._mask_loss(logits, targets, valid, region_loss="dice")
+        symmetric = self._mask_loss(
+            logits,
+            targets,
+            valid,
+            region_loss="tversky",
+            tversky_alpha=0.5,
+            tversky_beta=0.5,
+        )
+        self.assertTrue(torch.allclose(dice, symmetric, atol=1e-6), (dice, symmetric))
+
+    def test_balanced_bce_removes_flat_direction_between_silence_and_hedging(self):
+        """20 个同类候选时，plain 损失在"沉默"与"对冲"之间几乎是平的。
+
+        这正是掩码塌缩的成因：梯度没有压力去分辨到底是哪一个实例。balanced
+        必须显著加大这段下坡，同时保持"全对"仍优于"对冲"。断言写成两种模式的
+        相对倍数而非绝对阈值，避免依赖具体的沉默 logit 水平。
+        """
+        points = 34688
+        candidates = 20
+        size = 11
+        stride = points // (candidates + 1)
+        groups = [torch.arange(k * stride, k * stride + size) for k in range(candidates)]
+        target = torch.zeros(1, 1, points, dtype=torch.bool)
+        target[0, 0, groups[0]] = True
+        valid = torch.ones(1, 1, points, dtype=torch.bool)
+
+        def logits_for(fired_groups):
+            values = torch.full((1, 1, points), -6.0)
+            for index in fired_groups:
+                values[0, 0, groups[index]] = 2.0
+            return values
+
+        cases = {
+            "silence": logits_for([]),
+            "hedge": logits_for(range(candidates)),
+            "exact": logits_for([0]),
+        }
+        pressures = {}
+        for bce_mode in ("plain", "balanced"):
+            losses = {
+                name: float(self._mask_loss(logits, target, valid, bce_mode=bce_mode))
+                for name, logits in cases.items()
+            }
+            self.assertLess(losses["exact"], losses["hedge"], losses)
+            self.assertLess(losses["hedge"], losses["silence"], losses)
+            pressures[bce_mode] = (losses["silence"] - losses["hedge"]) / losses["silence"]
+        self.assertGreater(pressures["balanced"], 5.0 * pressures["plain"], pressures)
 
 
 class MetricAndViewerTests(unittest.TestCase):

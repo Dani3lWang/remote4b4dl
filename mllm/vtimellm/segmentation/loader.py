@@ -69,8 +69,16 @@ def load_reasonseg_model(
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         checkpoint_config = ReasonSegConfig.from_dict(metadata["config"])
     if reasonseg_config is not None and checkpoint_config is not None:
-        if reasonseg_config.to_dict() != checkpoint_config.to_dict():
-            raise RuntimeError("requested ReasonSeg config differs from checkpoint config")
+        requested = reasonseg_config.architecture_dict()
+        stored = checkpoint_config.architecture_dict()
+        if requested != stored:
+            differing = sorted(
+                key for key in requested if requested.get(key) != stored.get(key)
+            )
+            raise RuntimeError(
+                "requested ReasonSeg architecture differs from checkpoint "
+                f"(loss-only fields are ignored); differing keys: {differing}"
+            )
     config = reasonseg_config or checkpoint_config or ReasonSegConfig(
         hidden_size=int(language_model.config.hidden_size)
     )

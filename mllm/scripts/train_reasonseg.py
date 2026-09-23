@@ -41,6 +41,15 @@ def main() -> int:
     config = ReasonSegConfig()
     if getattr(args, "dropout", None) is not None:
         config.dropout = float(args.dropout)
+    for flag, field in (
+        ("bce_mode", "bce_mode"),
+        ("region_loss", "region_loss"),
+        ("tversky_alpha", "tversky_alpha"),
+        ("tversky_beta", "tversky_beta"),
+    ):
+        value = getattr(args, flag, None)
+        if value is not None:
+            setattr(config, field, value)
     if args.resume_from_checkpoint and args.eval_checkpoint:
         raise RuntimeError(
             "--eval-checkpoint and --resume-from-checkpoint are mutually exclusive; "
@@ -604,6 +613,22 @@ def build_parser():
              "结果出现在 threshold_sweep 字段；仅 validate-only 复算时需要",
     )
     parser.add_argument("--dropout", type=float, default=None)
+    parser.add_argument(
+        "--bce-mode",
+        choices=("plain", "balanced"),
+        default=None,
+        help="balanced 把掩码/粗定位 BCE 的正负两侧各自归一后等权平均；正例占比 "
+             "3e-4 时 plain 会让“沉默”与“在所有同类候选上对冲”的损失几乎相同",
+    )
+    parser.add_argument(
+        "--region-loss",
+        choices=("dice", "tversky"),
+        default=None,
+        help="tversky 配 --tversky-alpha/--tversky-beta 降低误检代价、抬高漏检代价；"
+             "dice 等价于 alpha=beta=0.5",
+    )
+    parser.add_argument("--tversky-alpha", type=float, default=None)
+    parser.add_argument("--tversky-beta", type=float, default=None)
     parser.add_argument("--early-stopping-patience", type=int, default=5)
     parser.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=20260917)

@@ -194,8 +194,8 @@ class HierarchicalMaskDecoder(nn.Module):
             losses=losses,
         )
 
-    @staticmethod
     def compute_losses(
+        self,
         *,
         loc_logits: torch.Tensor,
         mask_logits: torch.Tensor,
@@ -217,8 +217,24 @@ class HierarchicalMaskDecoder(nn.Module):
             raise ValueError("class target shape does not match class logits")
 
         valid = point_valid_mask[:, None, :] & object_valid_mask[:, :, None]
-        seg = _bce_dice_loss(mask_logits, target_masks, valid)
-        loc = _bce_dice_loss(loc_logits, target_loc_masks, valid)
+        seg = _mask_loss(
+            mask_logits,
+            target_masks,
+            valid,
+            bce_mode=self.config.bce_mode,
+            region_loss=self.config.region_loss,
+            tversky_alpha=self.config.tversky_alpha,
+            tversky_beta=self.config.tversky_beta,
+        )
+        loc = _mask_loss(
+            loc_logits,
+            target_loc_masks,
+            valid,
+            bce_mode=self.config.bce_mode,
+            region_loss=self.config.region_loss,
+            tversky_alpha=self.config.tversky_alpha,
+            tversky_beta=self.config.tversky_beta,
+        )
         if object_valid_mask.any():
             class_loss = F.cross_entropy(
                 class_logits[object_valid_mask], target_classes.long()[object_valid_mask]
@@ -228,25 +244,53 @@ class HierarchicalMaskDecoder(nn.Module):
         return {"seg": seg, "loc": loc, "class": class_loss}
 
 
-def _bce_dice_loss(
+def _mask_loss(
     logits: torch.Tensor,
     targets: torch.Tensor,
     valid: torch.Tensor,
+    *,
+    bce_mode: str,
+    region_loss: str,
+    tversky_alpha: float,
+    tversky_beta: float,
 ) -> torch.Tensor:
     targets = targets.to(logits.dtype)
     valid_float = valid.to(logits.dtype)
-    denominator = valid_float.sum().clamp_min(1.0)
-    bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
-    bce = (bce * valid_float).sum() / denominator
+    per_point = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+    per_point = per_point * valid_float
+    object_valid = valid.any(dim=-1)
+
+    if bce_mode == "balanced":
+        # 正例只占帧内点的 3e-4，逐点平均会把正例梯度稀释约 3000 倍；此时"全不
+        # 触发"与"在所有同类候选上对冲"的损失差仅 0.004，梯度没有动力去分辨实例。
+        # 两侧各自归一再等权平均，使损失量级与正例占比无关。
+        positive_count = (targets * valid_float).sum(dim=-1)
+        negative_count = valid_float.sum(dim=-1) - positive_count
+        positive_term = (per_point * targets).sum(dim=-1) / positive_count.clamp_min(1.0)
+        negative_term = (per_point * (1.0 - targets)).sum(dim=-1) / negative_count.clamp_min(1.0)
+        per_object = 0.5 * (positive_term + negative_term)
+        bce = per_object[object_valid].mean() if object_valid.any() else logits.sum() * 0.0
+    else:
+        bce = per_point.sum() / valid_float.sum().clamp_min(1.0)
 
     probabilities = torch.sigmoid(logits) * valid_float
     target_values = targets * valid_float
     intersection = (probabilities * target_values).sum(dim=-1)
-    union = probabilities.sum(dim=-1) + target_values.sum(dim=-1)
-    dice = 1.0 - (2.0 * intersection + 1.0) / (union + 1.0)
-    object_valid = valid.any(dim=-1)
-    if object_valid.any():
-        dice = dice[object_valid].mean()
+    if region_loss == "dice":
+        union = probabilities.sum(dim=-1) + target_values.sum(dim=-1)
+        per_object_region = 1.0 - (2.0 * intersection + 1.0) / (union + 1.0)
     else:
-        dice = logits.sum() * 0.0
-    return bce + dice
+        # dice 恒等于 Tversky(0.5, 0.5) 配平滑常数 0.5，故沿用同一常数：
+        # alpha 降低误检代价、beta 抬高漏检代价，把操作点从"沉默"推向"敢触发"。
+        false_positive = (probabilities * (1.0 - target_values)).sum(dim=-1)
+        false_negative = ((1.0 - probabilities) * target_values).sum(dim=-1)
+        denominator = (
+            intersection + tversky_alpha * false_positive + tversky_beta * false_negative
+        )
+        per_object_region = 1.0 - (intersection + 0.5) / (denominator + 0.5)
+    region = (
+        per_object_region[object_valid].mean()
+        if object_valid.any()
+        else logits.sum() * 0.0
+    )
+    return bce + region
