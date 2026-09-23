@@ -109,6 +109,9 @@ ReasonSeg（单帧点级推理分割）在 `seg` 分支开发，运行环境是�
 - 模型选择只能用 `reasonseg_val_internal*.jsonl`（官方 train 场景内划分，由 `scripts/reasonseg_experiments/repartition_reasonseg_val.py` 产出）。`reasonseg_val_thin.jsonl` 的 20 个场景属 nuScenes 官方 val，即 B4DL 测试集，只能作最终测试报告，不得用于 early stopping。
 - 训练一律显式 `--validation-samples 0`（默认 32 只测 manifest 前 32 条，且几乎落在同一场景）。
 - 自由生成评测固定 `--dtype fp16 --encoder-dtype fp32`：编码器进 fp16 会让部分帧特征 NaN，贪心解码随即锁死在 `<unk>`。metrics 的 `cIoU` 是面积加权、`gIoU` 是逐对均值，键名与惯例相反。
+- 掩码与粗定位损失可调 `--bce-mode {plain,balanced}` 与 `--region-loss {dice,tversky}`（后者配 `--tversky-alpha/--tversky-beta`）。默认 `plain`+`dice` 与 2026-09-23 之前的实现逐位一致，由 `tests/test_reasonseg.py::MaskLossTests` 锁定，改损失前先跑它。掩码正例只占帧内点的 3e-4，`plain` 会让"全不触发"与"在所有同类候选上对冲"的总损失几乎持平（下坡仅占沉默损失的 4.9%），这是掩码塌缩的成因；`balanced` 把正负两侧各自归一后等权平均，实测把该下坡放大到 74.9%。
+- 上述损失项只影响损失计算、不决定任何参数形状，故已列入 `config.py:LOSS_ONLY_FIELDS`，loader 的加载期比对只比 `architecture_dict()`。新增任何纯损失/权重字段都必须同步加进该元组，否则用非默认损失训出的档将无法被默认配置的评测入口加载。
+- 接地诊断（秩 AUC、oracle top-K、LOC 包含率、相对阈值解码、LOC 先验置零臂）用 `scripts/reasonseg_experiments/diagnose_reasonseg_grounding.py`，同样必须 `--dtype fp16 --encoder-dtype fp32`——整模型 fp32 的 7B 需 28G，在 4090 上直接 OOM。
 - 实验脚本归档在 `mllm/scripts/reasonseg_experiments/`；`mllm/reasonseg_data_trainval/` 与 `mllm/training_logs/` 整体被 gitignore，脚本必须放进前者才入库。
 
 ## 约束
