@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 2.0 grounding diagnosis for ReasonSeg, teacher-forcing forward.
+"""Phase 2.0/2.1 grounding diagnosis for ReasonSeg, teacher-forcing forward.
 
 Answers one question before any architecture change is paid for: is the mask
 head's probability map informative but badly thresholded, or uninformative?
@@ -11,8 +11,14 @@ Per ground-truth object it measures
     GT-negative points), mean probability on each side;
   * threshold-free top-K recall@0.5 (K = GT point count) plus a random-K
     baseline, and the same top-K restricted to the predicted LOC region;
+  * relative-threshold decoding p >= alpha * max(p) over a sweep of alpha, the
+    only zero-training decode family not bounded by the oracle top-K ceiling;
   * context: ordinal bucket from the query and the number of same-class
     instances in the frame (from the panoptic ids).
+
+``--disable-loc-prior`` re-runs the same measurements with the LOC prior pathway
+zeroed, which tests whether a broken coarse head actively degrades the fine
+decoder rather than merely failing to help it.
 """
 
 from __future__ import annotations
@@ -80,6 +86,26 @@ def iou_from_masks(predicted: np.ndarray, target: np.ndarray) -> float:
     return float(intersection / union) if union else 0.0
 
 
+class ZeroLocationPrior(torch.nn.Module):
+    """把 LOC 先验整条通路置零，其余前向完全不变。
+
+    诊断中 LOC 包含率只有 0.25、且 top-K 限制在 LOC 区域内反而更差
+    （0.097 < 0.110），因此需要直接检验这个先验是否在污染 fine_memory。
+    """
+
+    def __init__(self, feature_dim: int):
+        super().__init__()
+        self.feature_dim = feature_dim
+
+    def forward(self, probabilities: torch.Tensor) -> torch.Tensor:
+        return torch.zeros(
+            *probabilities.shape[:-1],
+            self.feature_dim,
+            dtype=probabilities.dtype,
+            device=probabilities.device,
+        )
+
+
 def same_class_instance_count(panoptic: np.ndarray, target_panoptic_id: int) -> int:
     """Count instances sharing the target's semantic class (panoptic // 1000)."""
     semantic = target_panoptic_id // 1000
@@ -101,6 +127,17 @@ def main() -> int:
     parser.add_argument("--max-samples", type=int, default=1000)
     parser.add_argument("--model-max-length", type=int, default=2048)
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--disable-loc-prior",
+        action="store_true",
+        help="把 location_prior 换成恒零模块，检验 LOC 先验是否在污染精细解码",
+    )
+    parser.add_argument(
+        "--relative-thresholds",
+        default="0.05,0.1,0.2,0.3,0.5",
+        help="逗号分隔的相对阈值 alpha，解码规则 p >= alpha * max(p)；"
+             "不受 oracle top-K 上界约束之外的唯一免训练解码族",
+    )
     parser.add_argument("--gpu-id", type=int, default=0)
     parser.add_argument("--seed", type=int, default=20260923)
     parser.add_argument("--dtype", choices=("fp16", "bf16", "fp32"), default="fp16")
@@ -136,6 +173,13 @@ def main() -> int:
 
         model.encode_points = encode_points_fp32
     config = model.reasonseg_config
+    if args.disable_loc_prior:
+        model.mask_head.location_prior = ZeroLocationPrior(config.point_feature_dim)
+    relative_thresholds = [
+        float(value)
+        for value in str(args.relative_thresholds).split(",")
+        if value.strip()
+    ]
 
     dataset = ReasonSegDataset(args.manifest, dataroot=args.dataroot, config=config)
     collator = ReasonSegCollator(tokenizer, model_max_length=args.model_max_length)
@@ -204,7 +248,7 @@ def main() -> int:
                         panoptic = np.asarray(values["data"]).reshape(-1)
 
                 target_instance = record.targets[object_index]
-                rows.append({
+                row = {
                     "index": index,
                     "sample_token": record.sample_token,
                     "query": record.query,
@@ -236,7 +280,22 @@ def main() -> int:
                         iou_from_masks(top_k_in_loc, target) >= 0.5
                     ),
                     "hit_random_k": float(iou_from_masks(random_k, target) >= 0.5),
-                })
+                }
+                probabilities = mask_prob[object_index][:point_count]
+                peak = float(probabilities.max()) if point_count else 0.0
+                for alpha in relative_thresholds:
+                    # fp16 下 sigmoid 会精确下溢到 0，peak 为 0 时 "p >= 0" 会选中
+                    # 全帧，必须显式退化为空掩码。
+                    relative = (
+                        probabilities >= alpha * peak if peak > 0.0 else np.zeros_like(target)
+                    )
+                    key = f"{alpha:g}"
+                    row[f"rel_{key}_size"] = int(relative.sum())
+                    row[f"rel_{key}_iou"] = iou_from_masks(relative, target)
+                    row[f"rel_{key}_hit"] = float(
+                        iou_from_masks(relative, target) >= 0.5
+                    )
+                rows.append(row)
             if (index + 1) % 100 == 0:
                 print(f"diagnosed {index + 1}/{limit}", flush=True)
 
@@ -293,12 +352,25 @@ def main() -> int:
             key: aggregate(by_class[key])
             for key in sorted(by_class, key=lambda name: -len(by_class[name]))
         },
+        "by_relative_threshold": {
+            f"{alpha:g}": {
+                "recall_at_0.5": float(np.mean([row[f"rel_{alpha:g}_hit"] for row in rows])),
+                "iou_mean": float(np.mean([row[f"rel_{alpha:g}_iou"] for row in rows])),
+                "predicted_size_median": float(
+                    np.median([row[f"rel_{alpha:g}_size"] for row in rows])
+                ),
+            }
+            for alpha in relative_thresholds
+            if rows
+        },
         "config": {
             "manifest": args.manifest,
             "seg_checkpoint": args.seg_checkpoint,
             "samples": limit,
             "objects": len(rows),
             "threshold": args.threshold,
+            "disable_loc_prior": bool(args.disable_loc_prior),
+            "relative_thresholds": relative_thresholds,
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -308,7 +380,8 @@ def main() -> int:
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8"
     )
     print(json.dumps({key: report[key] for key in ("overall", "by_ordinal_bucket",
-                                                    "by_same_class_instances")},
+                                                    "by_same_class_instances",
+                                                    "by_relative_threshold")},
                      ensure_ascii=False, indent=2))
     return 0
 
