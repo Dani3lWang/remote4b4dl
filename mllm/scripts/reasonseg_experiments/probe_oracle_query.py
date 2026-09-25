@@ -103,21 +103,43 @@ def oracle_inputs(sample: dict, config: ReasonSegConfig, device) -> tuple | None
 
 
 def decode_per_object(query_net, decoder, centers, class_ids, features, point_valid):
-    """Mirror HierarchicalMaskDecoder: one query per object against its own memory."""
+    """Mirror HierarchicalMaskDecoder: one query per object against its own memory.
+
+    Returns [object_count, point_count]. QueryMaskDecoder emits [B, K, N] with K=1
+    here; squeezing inside this helper keeps both call sites from having to track
+    that extra axis, which otherwise silently slices the wrong dimension.
+    """
     object_count = centers.shape[0]
     point_count, feature_dim = features.shape[1], features.shape[2]
     queries = query_net(centers, class_ids).reshape(object_count, 1, feature_dim)
     memory = features.expand(object_count, point_count, feature_dim)
     valid_memory = point_valid.expand(object_count, point_count)
     _, logits = decoder(queries, memory, valid_memory)
+    logits = logits.squeeze(1)
+    if logits.shape != (object_count, point_count):
+        raise RuntimeError(
+            f"decoder returned {tuple(logits.shape)}, expected "
+            f"{(object_count, point_count)}; the K=1 axis must be squeezed or the "
+            "eval path silently slices the wrong dimension"
+        )
     return logits
 
 
 def evaluate(dataset, encoder, query_net, decoder, config, device, limit) -> dict:
+    """Final-epoch metrics on the encoder's in-range points.
+
+    Scoring uses the `point_valid` mask directly rather than a `[:point_count]`
+    prefix slice. The prefix convention — used by diagnose_reasonseg_grounding.py —
+    is only equivalent when out-of-range points sit at the tail of the file, and on
+    val_thin they do not: out-of-range points are 6.2% of a frame but only 5.9% of
+    them fall in the tail, so the prefix keeps ~2035 forced-zero points and drops
+    ~2035 valid ones, and truncates 2.4% of objects to empty.
+    """
     was_training = query_net.training
     query_net.eval()
     decoder.eval()
     rows = []
+    skipped_unreachable = 0
     try:
         with torch.no_grad():
             for index in range(min(limit, len(dataset))):
@@ -136,11 +158,15 @@ def evaluate(dataset, encoder, query_net, decoder, config, device, limit) -> dic
                     query_net, decoder, centers, class_ids, features, point_valid
                 )
                 probabilities = torch.sigmoid(logits).cpu().numpy()
-                point_count = int(point_valid[0].sum())
+                in_range = point_valid[0].bool().cpu().numpy()
                 for row, k in enumerate(keep):
-                    target = sample["target_masks"][k].numpy()[:point_count]
-                    predicted = probabilities[row][:point_count] >= 0.5
-                    scores = probabilities[row][:point_count]
+                    target = sample["target_masks"][k].numpy()[in_range]
+                    if not target.any():
+                        # GT 全在编码器视野外，无法评分；单独计数而不是静默丢弃。
+                        skipped_unreachable += 1
+                        continue
+                    scores = probabilities[row][in_range]
+                    predicted = scores >= 0.5
                     iou = iou_from_masks(predicted, target)
                     rows.append({
                         "index": index,
@@ -157,12 +183,13 @@ def evaluate(dataset, encoder, query_net, decoder, config, device, limit) -> dic
             query_net.train()
             decoder.train()
     if not rows:
-        return {"objects": 0}
+        return {"objects": 0, "skipped_unreachable": skipped_unreachable}
     return {
         "objects": len(rows),
+        "skipped_unreachable": skipped_unreachable,
         "recall_at_0.5": float(np.mean([row["hit"] for row in rows])),
         "iou_mean": float(np.mean([row["iou"] for row in rows])),
-        "auc_mean": float(np.nanmean([row["auc"] for row in rows])),
+        "auc_mean": float(np.mean([row["auc"] for row in rows])),
         "mean_prob_positive": float(np.mean([row["mean_prob_positive"] for row in rows])),
         "target_size_median": float(np.median([row["target_size"] for row in rows])),
         "predicted_size_median": float(np.median([row["predicted_size"] for row in rows])),
