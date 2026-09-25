@@ -114,6 +114,14 @@ ReasonSeg（单帧点级推理分割）在 `seg` 分支开发，运行环境是�
 - 接地诊断（秩 AUC、oracle top-K、LOC 包含率、相对阈值解码、LOC 先验置零臂）用 `scripts/reasonseg_experiments/diagnose_reasonseg_grounding.py`，同样必须 `--dtype fp16 --encoder-dtype fp32`——整模型 fp32 的 7B 需 28G，在 4090 上直接 OOM。
 - 实验脚本归档在 `mllm/scripts/reasonseg_experiments/`；`mllm/reasonseg_data_trainval/` 与 `mllm/training_logs/` 整体被 gitignore，脚本必须放进前者才入库。
 
+## 项目记忆
+
+跨会话要记住的结论放在 **`docs/memory/`**（git 跟踪）：`MEMORY.md` 是索引，每条记忆一个 `b4dl-<主题>.md`，格式与写记忆的规矩见 `docs/memory/README.md`。带日期的单次实验记录仍放 `docs/learn docs/`。
+
+原先的 `AgentMEM/` 已于 2026-09-25 解散删除，记忆本体迁入 `docs/memory/`，ZCode 65 个会话全文移到仓库外 `/root/autodl-tmp/AgentMEM_zcode_sessions_20260925/`（不随 clone 走）；清单见 `docs/memory/b4dl-agentmem-archive.md`。
+
+`docs/memory/` 已进 git，**写入前必须手工 grep 密钥模式**（`sk-`、`api_key=`、`BEGIN PRIVATE KEY`、`ghp_`、`password=`）——原先做这件事的扫描脚本已随 `AgentMEM/tools/` 删除。
+
 ## 约束
 
 - 训练和评测必须使用同代际的数据构造和输入参数。

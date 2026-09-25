@@ -71,8 +71,9 @@ models/
 # 显存冒烟实测采样产物（mem_trace.csv / runner.log / train.log / beat 等，临时文件、不入库）
 mllm/_vram_smoke_*/
 
-# Agent 记忆归档（2026-09-11 起取消 git 跟踪，仅本地保留）
-AgentMEM/
+# Agent 记忆：原 AgentMEM/（2026-09-11 起取消跟踪）已于 2026-09-25 解散删除，
+# 记忆本体改放 git 跟踪的 docs/memory/；ZCode 65 个会话全文移到仓库外
+# /root/autodl-tmp/AgentMEM_zcode_sessions_20260925/，详见 docs/memory/b4dl-agentmem-archive.md
 
 # ReasonSeg 生成产物与训练过程文件（可由 scripts/build_reasonseg_nuscenes.py 重建）
 mllm/reasonseg_data/
