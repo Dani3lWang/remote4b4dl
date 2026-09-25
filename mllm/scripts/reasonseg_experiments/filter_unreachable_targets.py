@@ -54,9 +54,9 @@ def main() -> int:
     dropped_by_class: Counter = Counter()
     partial_targets = 0
     total_targets = 0
-    # 同一帧在训练 manifest 里会被多条 query 复用，按 sample_token 缓存越界判定。
-    unreachable_cache: dict[str, set] = {}
-    partial_cache: dict[str, set] = {}
+    # 同一帧会被多条 query 复用，但各记录的 targets 列表不同，所以缓存必须按
+    # panoptic_id 存"框内点数 / 总点数"这种与记录无关的量，不能存列表下标。
+    frame_cache: dict[str, tuple[dict, dict]] = {}
 
     with manifest.open(encoding="utf-8") as handle:
         for line in handle:
@@ -67,7 +67,7 @@ def main() -> int:
             targets = record.get("targets", [])
             total_targets += len(targets)
 
-            if token not in unreachable_cache:
+            if token not in frame_cache:
                 points = np.fromfile(root / record["lidar_path"], dtype=np.float32)
                 points = points.reshape(-1, 5)[:, :3]
                 with np.load(root / record["panoptic_path"]) as values:
@@ -78,23 +78,29 @@ def main() -> int:
                         f"{points.shape[0]} != {panoptic.shape[0]}"
                     )
                 in_range = ((points >= lower) & (points < upper)).all(axis=1)
-                unreachable, partial = set(), set()
-                for index, target in enumerate(targets):
-                    mask = panoptic == target["panoptic_id"]
-                    if not mask.any():
-                        raise RuntimeError(
-                            f"target {target['panoptic_id']} absent in {token}"
-                        )
-                    inside = int((mask & in_range).sum())
-                    if inside == 0:
-                        unreachable.add(index)
-                    elif inside < int(mask.sum()):
-                        partial.add(index)
-                unreachable_cache[token] = unreachable
-                partial_cache[token] = partial
+                all_ids, all_counts = np.unique(panoptic, return_counts=True)
+                in_ids, in_counts = np.unique(
+                    panoptic[in_range], return_counts=True
+                )
+                frame_cache[token] = (
+                    dict(zip(all_ids.tolist(), all_counts.tolist())),
+                    dict(zip(in_ids.tolist(), in_counts.tolist())),
+                )
+            totals_map, inside_map = frame_cache[token]
 
-            unreachable = unreachable_cache[token]
-            partial_targets += len(partial_cache[token])
+            unreachable, partial = [], 0
+            for index, target in enumerate(targets):
+                panoptic_id = target["panoptic_id"]
+                size = totals_map.get(panoptic_id, 0)
+                if size == 0:
+                    raise RuntimeError(f"target {panoptic_id} absent in {token}")
+                inside = inside_map.get(panoptic_id, 0)
+                if inside == 0:
+                    unreachable.append(index)
+                elif inside < size:
+                    partial += 1
+            partial_targets += partial
+
             if unreachable:
                 dropped_records += 1
                 dropped_targets += len(unreachable)
