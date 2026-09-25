@@ -8,23 +8,41 @@ the real thing: the same spconv point encoder, the same QueryMaskDecoder, the sa
 `_mask_loss`, and the same per-object memory expansion the real head uses, so the
 only difference from a full model run is where the query comes from.
 
-This measures a CEILING, not a model, and it splits the remaining hypothesis space
-in one shot:
+This measures a CEILING, not a model. Read it on two axes, because the first run
+showed a single recall@0.5 threshold cannot discriminate: it reported 0.045 (which
+the original trichotomy mapped to "encoder is the bottleneck") alongside AUC 0.978,
+which flatly contradicts that verdict. recall@0.5 conflates ranking quality with
+size calibration, so it is the wrong discriminator here.
 
-  recall@0.5 >= 0.50 -> point features + decoder are sufficient. The bottleneck is
-                        the LM query pathway; invest in scene-query capacity,
-                        instance-contrastive supervision or CoT-style queries.
-  recall@0.5 <= 0.20 -> the encoder / point features are the bottleneck; invest in
-                        voxel size, multi-scale features or resolution.
-  in between          -> both contribute, and neither alone will close the gap.
+  * AUC — ranking quality given perfect localization. Compare against the
+    full model's 0.858: the gap is what the LM query pathway costs.
+  * recall_top_k (K = GT point count) — magnitude-free, so it isolates ranking
+    from threshold/size calibration.
+
+The decisive threshold is derived a priori, not fitted to any observation: for
+top-K recall to work with K ~= 11 positives among N ~= 32500 in-range points you
+need AUC >= 1 - K/N ~= 0.99966 (Phase 2.0 measured the full model at 0.858, where
+each positive has ~4938 negatives ranked above it). So:
+
+  AUC >= 0.995      -> features + decoder are close to sufficient; the remaining
+                       gap is the LM query pathway
+  0.90 <= AUC < 0.995 -> informative but nowhere near separable at point level;
+                       the limit is encoder resolution / receptive field, and no
+                       amount of query-side work closes a four-order-of-magnitude
+                       ranking gap
+  AUC < 0.90        -> the frozen encoder's features cannot support instance masks
+
+Independently of the above, a predicted/target size median ratio outside
+[0.7, 1.5] is its own defect: it means the decoder cannot calibrate extent even
+when told exactly where the object is.
 
 The centre+class oracle is deliberately the weakest useful oracle: it states
 "segment the car at (x, y, z)" and nothing more. Feeding the GT extent as well
 would leak the answer's scale and inflate the ceiling.
 
-No model selection is performed, so no manifest is used twice: the final epoch is
-reported on both the dev manifest and the held-out test manifest, and neither
-influences training.
+Epoch selection uses dev iou_mean (recall@0.5 is too coarse over a few hundred
+objects); the test manifest is evaluated once at the selected epoch and never
+influences training or selection.
 """
 
 from __future__ import annotations
@@ -168,13 +186,22 @@ def evaluate(dataset, encoder, query_net, decoder, config, device, limit) -> dic
                     scores = probabilities[row][in_range]
                     predicted = scores >= 0.5
                     iou = iou_from_masks(predicted, target)
+                    # top-K（K = GT 点数）是免幅值的上界：它把"排序够不够好"与
+                    # "阈值/尺寸校准够不够好"分开。首跑只报 recall@0.5，结果 AUC
+                    # 0.978 与 recall 0.045 互相矛盾却无法归因，就是因为缺这一项。
+                    target_size = int(target.sum())
+                    order = np.argsort(-scores, kind="stable")
+                    top_k = np.zeros(scores.shape[0], dtype=bool)
+                    top_k[order[:target_size]] = True
                     rows.append({
                         "index": index,
                         "class_name": dataset.records[index].targets[k].class_name,
-                        "target_size": int(target.sum()),
+                        "target_size": target_size,
                         "predicted_size": int(predicted.sum()),
                         "iou": iou,
                         "hit": float(iou >= 0.5),
+                        "iou_top_k": iou_from_masks(top_k, target),
+                        "hit_top_k": float(iou_from_masks(top_k, target) >= 0.5),
                         "auc": auc_from_scores(scores[target], scores[~target]),
                         "mean_prob_positive": float(scores[target].mean()),
                     })
@@ -188,7 +215,9 @@ def evaluate(dataset, encoder, query_net, decoder, config, device, limit) -> dic
         "objects": len(rows),
         "skipped_unreachable": skipped_unreachable,
         "recall_at_0.5": float(np.mean([row["hit"] for row in rows])),
+        "recall_top_k": float(np.mean([row["hit_top_k"] for row in rows])),
         "iou_mean": float(np.mean([row["iou"] for row in rows])),
+        "iou_top_k_mean": float(np.mean([row["iou_top_k"] for row in rows])),
         "auc_mean": float(np.mean([row["auc"] for row in rows])),
         "mean_prob_positive": float(np.mean([row["mean_prob_positive"] for row in rows])),
         "target_size_median": float(np.median([row["target_size"] for row in rows])),
@@ -204,8 +233,8 @@ def main() -> int:
     parser.add_argument("--test-manifest", required=True)
     parser.add_argument("--dataroot", required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--epochs", type=int, default=4)
-    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--epochs", type=int, default=6)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--max-train-records", type=int, default=0)
     parser.add_argument("--eval-records", type=int, default=600)
     parser.add_argument("--region-loss", choices=("dice", "tversky"), default="tversky")
@@ -247,14 +276,19 @@ def main() -> int:
     print(f"trainable params: {sum(p.numel() for p in trainable):,}", flush=True)
 
     history = []
+    best = None
+    best_state = None
     for epoch in range(args.epochs):
         query_net.train()
         decoder.train()
         started = time.time()
         running = 0.0
         scored = 0
+        # 每轮重新洗牌：首跑按固定顺序遍历且 lr 3e-4，末轮 loss 从 0.779 跳到
+        # 1.332 再回落到 1.029，而评的正是这个最差末轮。
+        order = np.random.permutation(train_limit)
         for step in range(train_limit):
-            sample = train_dataset[step]
+            sample = train_dataset[int(order[step])]
             prepared = oracle_inputs(sample, config, device)
             if prepared is None:
                 continue
@@ -301,12 +335,36 @@ def main() -> int:
                       f"loss={running / max(scored, 1):.4f} "
                       f"elapsed={time.time() - started:.0f}s", flush=True)
         mean_loss = running / max(scored, 1)
-        print(f"epoch {epoch} mean loss {mean_loss:.4f} over {scored} records "
-              f"in {time.time() - started:.0f}s", flush=True)
-        history.append({"epoch": epoch, "train_loss": mean_loss, "records": scored})
+        dev_metrics = evaluate(dev_dataset, encoder, query_net, decoder, config,
+                               device, args.eval_records)
+        entry = {"epoch": epoch, "train_loss": mean_loss, "records": scored,
+                 "dev": dev_metrics}
+        history.append(entry)
+        print(f"epoch {epoch} loss {mean_loss:.4f} | dev recall@0.5 "
+              f"{dev_metrics.get('recall_at_0.5', float('nan')):.4f} topK "
+              f"{dev_metrics.get('recall_top_k', float('nan')):.4f} AUC "
+              f"{dev_metrics.get('auc_mean', float('nan')):.4f} IoU "
+              f"{dev_metrics.get('iou_mean', float('nan')):.4f} size "
+              f"{dev_metrics.get('predicted_size_median', float('nan')):.0f}/"
+              f"{dev_metrics.get('target_size_median', float('nan')):.0f} "
+              f"({time.time() - started:.0f}s)", flush=True)
+        # 用 dev 的 iou_mean 选轮次：recall@0.5 在几百个物体上太粗、抖动大。
+        # test 只在选定轮次上评一次，不参与任何选择。
+        if dev_metrics.get("iou_mean") is not None and (
+            best is None or dev_metrics["iou_mean"] > best["dev"]["iou_mean"]
+        ):
+            best = entry
+            best_state = (
+                {k: v.detach().cpu().clone() for k, v in query_net.state_dict().items()},
+                {k: v.detach().cpu().clone() for k, v in decoder.state_dict().items()},
+            )
 
-    dev = evaluate(dev_dataset, encoder, query_net, decoder, config, device,
-                   args.eval_records)
+    if best_state is not None:
+        query_net.load_state_dict({k: v.to(device) for k, v in best_state[0].items()})
+        decoder.load_state_dict({k: v.to(device) for k, v in best_state[1].items()})
+    print(f"selected epoch {best['epoch']} by dev iou_mean "
+          f"{best['dev']['iou_mean']:.4f}", flush=True)
+    dev = best["dev"]
     test = evaluate(test_dataset, encoder, query_net, decoder, config, device,
                     args.eval_records)
     report = {
@@ -323,7 +381,9 @@ def main() -> int:
             "bce_mode": args.bce_mode,
             "learning_rate": args.learning_rate,
             "oracle": "gt_center_normalized + one_hot_class",
+            "selection": "epoch with best dev iou_mean; test evaluated once at that epoch",
         },
+        "selected_epoch": best["epoch"],
         "history": history,
         "dev": dev,
         "test": test,
