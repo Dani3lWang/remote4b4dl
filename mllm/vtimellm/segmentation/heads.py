@@ -133,18 +133,27 @@ class HierarchicalMaskDecoder(nn.Module):
         _, loc_logits = self.region_decoder(
             loc_queries, point_features, point_valid_mask
         )
-        loc_probabilities = torch.sigmoid(loc_logits)
 
         # Each object gets a different continuous region prior.  Flatten B*K
         # so the same decoder weights process variable object counts.
-        prior = self.location_prior(loc_probabilities.unsqueeze(-1))
-        fine_memory = point_features[:, None, :, :] + prior
+        point_count, feature_dim = point_features.shape[1], point_features.shape[2]
+        if self.config.use_loc_prior:
+            loc_probabilities = torch.sigmoid(loc_logits)
+            prior = self.location_prior(loc_probabilities.unsqueeze(-1))
+            fine_memory = point_features[:, None, :, :] + prior
+        else:
+            # 关掉先验后 K 个物体共享同一份 memory，区分它们的只剩 seg_query——
+            # 这正是这次消融要问的问题。LOC 头仍然训练、loc 损失仍然算，好让
+            # loc 指标保持可比，只是不再影响精细解码。
+            fine_memory = point_features[:, None, :, :].expand(
+                batch_size, object_count, point_count, feature_dim
+            )
         fine_memory = fine_memory.reshape(
-            batch_size * object_count, point_features.shape[1], point_features.shape[2]
+            batch_size * object_count, point_count, feature_dim
         )
         fine_valid = point_valid_mask[:, None, :].expand(
-            batch_size, object_count, point_features.shape[1]
-        ).reshape(batch_size * object_count, point_features.shape[1])
+            batch_size, object_count, point_count
+        ).reshape(batch_size * object_count, point_count)
         seg_queries = self.seg_projection(seg_hidden_states).reshape(
             batch_size * object_count, 1, self.config.point_feature_dim
         )

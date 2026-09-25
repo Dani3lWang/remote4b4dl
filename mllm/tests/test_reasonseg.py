@@ -298,6 +298,88 @@ class MaskLossTests(unittest.TestCase):
         self.assertGreater(pressures["balanced"], 5.0 * pressures["plain"], pressures)
 
 
+class LocPriorAblationTests(unittest.TestCase):
+    """--no-loc-prior 必须真的切断先验注入，且不能顺手把 LOC 头也停掉。"""
+
+    CONFIG_KWARGS = dict(
+        hidden_size=12,
+        point_feature_dim=8,
+        decoder_layers=1,
+        decoder_heads=2,
+        decoder_ffn_dim=16,
+        max_objects=3,
+        class_names=["car", "pedestrian", "truck"],
+        dropout=0.0,
+    )
+
+    def _inputs(self):
+        generator = torch.Generator().manual_seed(7)
+        point_features = torch.randn(2, 11, 8, generator=generator)
+        valid_points = torch.ones(2, 11, dtype=torch.bool)
+        loc_hidden = torch.randn(2, 2, 12, generator=generator)
+        seg_hidden = torch.randn(2, 2, 12, generator=generator)
+        object_valid = torch.tensor([[True, True], [True, False]])
+        target_masks = torch.zeros(2, 2, 11, dtype=torch.bool)
+        target_masks[0, 0, :3] = True
+        target_masks[0, 1, 4:7] = True
+        target_masks[1, 0, 2:6] = True
+        target_classes = torch.tensor([[0, 1], [2, 0]])
+        return (point_features, valid_points, loc_hidden, seg_hidden, object_valid,
+                target_masks, target_masks.clone(), target_classes)
+
+    def _forward(self, decoder, inputs):
+        with torch.no_grad():
+            return decoder(*inputs)
+
+    def _perturb_prior(self, decoder):
+        with torch.no_grad():
+            decoder.location_prior[0].weight.mul_(7.0).add_(3.0)
+            decoder.location_prior[0].bias.mul_(2.0).sub_(1.0)
+
+    def test_disabled_prior_leaves_mask_logits_untouched(self):
+        inputs = self._inputs()
+        torch.manual_seed(0)
+        decoder = HierarchicalMaskDecoder(
+            ReasonSegConfig(use_loc_prior=False, **self.CONFIG_KWARGS)
+        ).eval()
+        before = self._forward(decoder, inputs)
+        self._perturb_prior(decoder)
+        after = self._forward(decoder, inputs)
+        self.assertTrue(
+            torch.allclose(before.mask_logits, after.mask_logits, atol=0),
+            "先验已关闭，扰动其权重不应改变 mask_logits",
+        )
+        # LOC 头仍要参与训练，否则 loc 指标失去可比性
+        self.assertGreater(float(before.losses["loc"]), 0.0)
+        self.assertTrue(torch.equal(before.loc_logits, after.loc_logits))
+
+    def test_enabled_prior_does_change_mask_logits(self):
+        """对照组：确认上一个测试不是因为先验通路本来就死了而空洞通过。"""
+        inputs = self._inputs()
+        torch.manual_seed(0)
+        decoder = HierarchicalMaskDecoder(
+            ReasonSegConfig(use_loc_prior=True, **self.CONFIG_KWARGS)
+        ).eval()
+        before = self._forward(decoder, inputs)
+        self._perturb_prior(decoder)
+        after = self._forward(decoder, inputs)
+        self.assertFalse(
+            torch.allclose(before.mask_logits, after.mask_logits, atol=1e-5),
+            "先验开启时扰动其权重必须改变 mask_logits，否则消融测试无意义",
+        )
+
+    def test_disabled_prior_keeps_shapes_and_gradients(self):
+        inputs = self._inputs()
+        config = ReasonSegConfig(use_loc_prior=False, **self.CONFIG_KWARGS)
+        decoder = HierarchicalMaskDecoder(config).eval()
+        point_features = inputs[0].clone().requires_grad_(True)
+        output = decoder(point_features, *inputs[1:])
+        self.assertEqual(output.mask_logits.shape, (2, 2, 11))
+        self.assertTrue(torch.isfinite(output.loss))
+        output.loss.backward()
+        self.assertIsNotNone(point_features.grad)
+
+
 class MetricAndViewerTests(unittest.TestCase):
     def test_exact_matching_prefers_maximum_total_iou(self):
         matrix = np.array([[0.9, 0.8], [0.85, 0.1]])

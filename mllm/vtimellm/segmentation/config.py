@@ -47,6 +47,11 @@ class ReasonSegConfig:
     dropout: float = 0.1
     max_objects: int = 8
     num_scene_queries: int = 128
+    # Phase 2.1 实测：推理期把 LOC 先验置零后 AUC 从 0.858 升到 0.917、prob_pos 升
+    # 62%，但预测尺寸从 3 点跳到 63 点（GT 11）。即先验是个强空间抑制器，压尺寸的
+    # 同时在破坏排序。关掉它需要在训练期就关，故作为行为字段而非损失字段——它会改
+    # 变权重的含义，加载时必须参与兼容性比对。
+    use_loc_prior: bool = True
     voxel_size: float = 0.1
     point_cloud_range: List[float] = field(
         default_factory=lambda: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]

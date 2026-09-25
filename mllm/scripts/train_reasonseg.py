@@ -50,6 +50,8 @@ def main() -> int:
         value = getattr(args, flag, None)
         if value is not None:
             setattr(config, field, value)
+    if getattr(args, "no_loc_prior", False):
+        config.use_loc_prior = False
     if args.resume_from_checkpoint and args.eval_checkpoint:
         raise RuntimeError(
             "--eval-checkpoint and --resume-from-checkpoint are mutually exclusive; "
@@ -635,6 +637,13 @@ def build_parser():
     )
     parser.add_argument("--tversky-alpha", type=float, default=None)
     parser.add_argument("--tversky-beta", type=float, default=None)
+    parser.add_argument(
+        "--no-loc-prior",
+        action="store_true",
+        help="训练期切断 LOC 先验注入 fine_memory 的通路（LOC 头仍训练、loc 损失仍算）。"
+             "该旗标改变权重含义，属架构字段：用它训出的档在 validate-only 复算时也必须带上，"
+             "否则 loader 会以 differing keys 拒绝加载",
+    )
     parser.add_argument("--early-stopping-patience", type=int, default=5)
     parser.add_argument("--early-stopping-min-delta", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=20260917)
