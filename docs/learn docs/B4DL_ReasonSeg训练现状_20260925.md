@@ -1,30 +1,31 @@
-# B4DL ReasonSeg 训练现状（2026-09-25 18:25 CST 快照）
+# B4DL ReasonSeg 训练现状（2026-09-25 20:50 CST 快照）
 
 **采集方式**：在 autodl3（`/root/autodl-tmp/mmb4dl`）上直接读 tmux / driver 日志 / 训练日志 / `eval_results` 报告得到，**不是引用任何对话记录**。快照会过期，复核命令见文末。
 
-**一句话现状**：Phase 2.3 串行链（tmux `p23`）**五步全 `rc=0`，18:21:57 `PHASE2.3 CHAIN DONE`**；B1 臂（切除 LOC 先验 + Tversky）四个数全部出齐，**预注册 PASS 判据四条全部未达、FAIL 判据两条都未触发，落在未决中间档**，且 held-out 口径上 mean IoU 低于对照；`probe2` watcher 已于 **18:22:06** 自动接手，修正版 oracle 探针正在跑（约 2.6 h，预计 21:00 前后出数）。
+**一句话现状**：**Phase 2.3 全部跑完，GPU 已空、无 tmux 会话。** 两个结论：① B1 臂（切除 LOC 先验 + Tversky）落在预注册判据的**未决中间档**，held-out mean IoU 低于对照；② 修正版 oracle 探针 20:26:31 出数（`rc=0`，选 ep4），test AUC **0.99110**，按先验判据（需 ≳0.99963）**仍差约 24×** ⇒ **点特征分辨率是硬约束，query 侧改进有天花板**。下一步该投向 `voxel_size` / 多尺度 / 感受野，而不是 scene query 容量。
 
 ---
 
-## 1. 在跑什么
+## 1. 跑完了什么
 
-| 会话 | 内容 | 状态（18:25） |
+| 会话 | 内容 | 结果 |
 |---|---|---|
-| tmux `p23` | Phase 2.3 串行链 `scripts/reasonseg_experiments/chain_phase23.sh`（12:58:25 启动） | **已完成**：S0/S0b/S0c/S1/S2/S3/S4 全 `rc=0`，18:21:57 打出 `PHASE2.3 CHAIN DONE` |
-| tmux `probe2` | watcher `watch_then_rerun_oracle_probe.sh`（14:37:04 启动） | **18:22:06 已启动修正版探针**（轮次 225 检测到主链完成，`probe2_decision.txt` = `GO probe_rerun`），6 epoch / lr 1e-4 / 400 条评测 |
-| GPU | 4090 24G | 由修正版探针占用（不加载 7B LM，显存远低于全模型） |
+| tmux `p23` | Phase 2.3 串行链 `scripts/reasonseg_experiments/chain_phase23.sh`（12:58:25 启动） | **18:21:57 `PHASE2.3 CHAIN DONE`**，S0/S0b/S0c/S1/S2/S3/S4 全 `rc=0`，会话已退出 |
+| tmux `probe2` | watcher `watch_then_rerun_oracle_probe.sh`（14:37:04 启动） | 18:22:06 检测到主链完成并自动接手，**20:26:31 `probe_v2 rc=0`、watcher 退出** |
+| GPU | 4090 24G | **空闲**（0% / 1 MiB，无计算进程） |
 
-代码状态：分支 `seg`，HEAD `6b65cef`，工作树全净。（服务器本地 `origin/seg` 远端跟踪 ref 停在 `ea39c94`，因为推送是从 Windows 侧完成的、服务器未 fetch —— 只是 ref 陈旧，不代表未同步。）
+代码状态：分支 `seg`，HEAD `6bc7208`，工作树全净。（服务器本地 `origin/seg` 远端跟踪 ref 停在 `ea39c94`，因为推送是从 Windows 侧完成的、服务器未 fetch —— 只是 ref 陈旧，不代表未同步。）
 
 ### 主链五步
 
 | 步 | 内容 | 时间 | rc |
 |---|---|---|---|
 | S0 / S0b / S0c | 三个冒烟中止门：oracle 探针（40 训 / 20 评）、`--no-loc-prior` 通路（60 条 / 1ep）、该档能否被同旗标 `validate-only` 重载 | 12:58:25 → 13:07:59 | 0 / 0 / 0 |
-| S1 | B0 oracle-query 探针，4 epoch / lr 3e-4 / 600 条评测 | 13:07:59 → 14:30:50 | 0 |
+| S1 | B0 oracle-query 探针首跑，4 epoch / lr 3e-4 / 600 条评测 | 13:07:59 → 14:30:50 | 0 |
 | S2 | **B1 = 切除 LOC 先验 + Tversky(0.3/0.7)**，4 epoch（465 step/ep × 4 = 1860 step） | 14:30:50 → 18:07:17 | 0 |
 | S3 | B1 接地诊断（val_thin 1000 条，与对照/A2 同口径） | 18:07:17 → 18:14:08 | 0 |
 | S4 | B1 在**过滤后** `reasonseg_val_thin_reachable.jsonl`（2108 条）上的 TF，与 verify 链的 s4/s5 同口径 | 18:14:08 → 18:21:57 | 0 |
+| — | 修正版 oracle 探针（`probe2`，6 epoch / lr 1e-4 / 400 条评测） | 18:22:06 → 20:26:31 | 0 |
 
 ---
 
@@ -90,32 +91,62 @@ ep2 与 ep3 的 recall 逐位相同是因为 `recall = hits/objects = 222/2161`�
 
 ---
 
-## 3. oracle 探针：首跑已出数，修正版待跑
+## 3. oracle 探针：修正版已出数，**裁定 = 点特征是硬约束**
 
-**首跑**（S1，`eval_results/_oracle_probe/report.json`；4 epoch / lr 3e-4 / 600 条 / 编码器冻结 / 完全不加载 7B LM）：
+修正版（`057cf1e`：每轮洗牌、lr 1e-4、逐轮 dev 评测并按 dev `iou_mean` 选轮、test 只评一次、补 `recall_top_k` 免幅值轴）18:22:06 → **20:26:31 `rc=0`**，报告 `eval_results/_oracle_probe_v2/report.json`，日志 `training_logs/phase23/probe_v2.log`。配置：6 epoch / 7436 训练记录 / 每轮 dev 400 条 / test 只在选定轮评一次 / Tversky(0.3,0.7) + plain BCE / 编码器冻结 / **完全不加载 7B LM**。
 
-| | dev (internal_es) | test (val_thin) |
+**选定 ep4**（dev `iou_mean` 0.2036 最高）：
+
+| | dev (internal_es, 381 obj +22 不可达) | **test (val_thin, 416 obj +23 不可达)** |
 |---|---|---|
-| AUC | 0.9735 | **0.9776** |
-| recall@0.5 | 0.0471 | 0.0449 |
-| iou_mean | 0.1071 | 0.0917 |
-| 尺寸 pred/target | 57 / 15 | 37 / 11（3.4× 过触发） |
-| objects（+ 跳过的不可达） | 573（+29） | 623（+30） |
+| **AUC** | 0.99272 | **0.99110** |
+| recall@0.5 | 0.16010 | **0.09615** |
+| **recall_top_k**（免幅值） | 0.20735 | **0.11058** |
+| iou_mean / iou_top_k_mean | 0.20359 / 0.23680 | 0.15856 / 0.18386 |
+| mean_prob_positive | 0.4732 | 0.3971 |
+| 尺寸 pred/target | 33 / 12（2.75×） | 29 / 12（2.42×） |
 
-train_loss 逐轮 0.9233 → 0.8146 → 0.7784 → **1.0274**（末轮失稳在盘上可见），而评的正是这个最差末轮。
+逐轮 dev（train_loss 单调下降，**首跑的末轮失稳没有复现**）：
 
-**首跑的预注册判据已被明确撤回**：它按 `recall@0.5` 分档，0.045 落进"≤0.20 → 编码器/点特征是瓶颈"，但同一份数据的 AUC 0.978 直接反驳该裁定。这是**判据挑错轴的第三次复发**（前两次：Phase 2.0 四条判据、Phase 2.2 尺寸护栏），根因相同 —— `recall@0.5` 把"排序够不够好"与"尺寸/阈值校不校得准"混成一个数。
+| epoch | train_loss | AUC | recall@0.5 | top_k | iou_mean | 尺寸 |
+|---|---|---|---|---|---|---|
+| 0 | 0.8067 | 0.98440 | 0.0866 | 0.1102 | 0.1060 | 0 / 12 |
+| 1 | 0.7133 | 0.99052 | 0.1155 | 0.1417 | 0.1538 | **12 / 12** |
+| 2 | 0.6611 | 0.99241 | 0.1024 | 0.1549 | 0.1669 | 50 / 12 |
+| 3 | 0.6446 | 0.99254 | 0.1024 | 0.1444 | 0.1638 | 28 / 12 |
+| **4（选定）** | 0.6252 | 0.99272 | **0.1601** | **0.2073** | **0.2036** | 33 / 12 |
+| 5 | 0.6105 | **0.99395** | 0.1207 | 0.1732 | 0.1622 | **11 / 12** |
 
-**改用先验推导的读法**（阈值与观测无关，不构成事后拟合）：正点上方的负点数 = (1−AUC)×N，N≈32530 框内点。
+### 3.1 裁定：按先验判据仍差约 24×
 
-| | AUC | 正点上方的负点数 | top-K（K≈11）需要 |
-|---|---|---|---|
-| 完整模型 | 0.858 | ~4619 | ≤ 11 |
-| oracle query | 0.978 | ~716 | ≤ 11 |
+判据是**先验推导**的、与本次观测无关（不构成事后拟合）：top-K 解码要能命中，需 AUC ≥ 1 − K/N，K = GT 尺寸中位 **12**、N ≈ **32530** 框内点 ⇒ **门槛 ≈ 0.99963**。用"压在某个正点之上的负点数" = (1−AUC)×N 换算：
 
-⇒ 给了完美定位，改善 6.5×，**仍差 65 倍**（门槛 AUC ≳ 1−K/N ≈ 0.99966）。方向含义：**query 侧有硬天花板，约束在点特征的分辨率/感受野**（`voxel_size` 0.1 m、单尺度、U-Net 感受野）。失稳只会压低指标 ⇒ 0.978 是下界 ⇒ "LM query 通路吃掉 ≥0.12 AUC"这条更稳。**但这仍建立在一次有缺陷的运行上，只当方向、不当定论。**
+| | AUC | 正点上方的负点数 | 需要 | 差距 |
+|---|---|---|---|---|
+| 完整模型（对照，诊断口径） | 0.8576 | ~4630 | ≤ 12 | ~386× |
+| oracle 首跑（4ep / lr 3e-4 / 600 条） | 0.9776 | ~729 | ≤ 12 | ~61× |
+| **oracle 修正版（ep4 test）** | **0.99110** | **~289** | ≤ 12 | **~24×** |
+| oracle 修正版（ep5 dev，AUC 最高轮） | 0.99395 | ~197 | ≤ 12 | ~16× |
 
-**修正版**（`057cf1e`：每轮洗牌、lr 1e-4、逐轮 dev 评测并按 dev `iou_mean` 选轮、test 只评一次、补 `recall_top_k` 免幅值轴）**已于 18:22:06 由 `probe2` watcher 自动启动**（轮次 225 检测到 `PHASE2.3 CHAIN DONE`，GPU 无残留进程，`probe2_decision.txt` = `GO probe_rerun`）：6 epoch / 400 条评测，输出 `eval_results/_oracle_probe_v2/report.json`，日志 `training_logs/phase23/probe_v2.log`。按首跑 0.183 s/步外推（6 epoch 训练 + 6 次 dev 评测 + 1 次 test），**约 2.6 h，预计 21:00 前后出数**。
+⇒ **给了完美定位（GT 中心 + one-hot 类别，完全绕过 7B LM），排序质量从 ~4630 个干扰负点改善到 ~289 个（≥16×），但仍差约 24× 才够 top-K 命中。**
+
+**裁定：点特征的分辨率/感受野是硬约束**（`voxel_size` 0.1 m、单尺度、U-Net 感受野）—— 一个 12 点的物体在 32530 个框内点里，靠现有特征无法被锐利分出来。**query 侧的任何改进都有天花板**：更多 scene query、实例对比监督、CoT 查询都填不上这 24×。
+
+而且"继续训就能到"这条路可以排除：(1−AUC) 逐轮是 0.0156 → 0.0095 → 0.0076 → 0.0075 → 0.0073 → 0.0061，**已在 0.006–0.007 平台**，而达标需要 0.00037，差 16–20 倍且趋势已平。
+
+顺带一个交叉印证：探针 test 的 `recall@0.5` 只有 0.09615、`recall_top_k` 0.11058 —— 即便 query 完美、即便用免幅值的 top-K 解码，命中率也只是从完整模型的 ~0.086 抬到 ~0.11。这与"289 个负点压在正点之上 ⇒ top-12 被污染 ⇒ IoU 上不去"的机制自洽。
+
+### 3.2 三处必须诚实标注的局限
+
+1. **选轮的量与裁定的量不是同一个轴。** 选轮用 dev `iou_mean` → 选了 ep4；但判据轴是 AUC / top-K，而 **ep5 的 AUC 更高（0.99395 vs 0.99272）、尺寸校准最好（11/12 = 0.92× vs ep4 的 2.75×）**，只是 `iou_mean` 更低（0.1622 vs 0.2036）。test 只在 ep4 评了一次，**ep5 的 test 数没有**。若按 AUC 轴选轮，结论只会更强（差距从 24× 收到 16×，仍远不达标），所以裁定方向不变；但要引用"最好那一轮"的 test 数，需重跑（约 20 min/epoch + 评测）。**不在看过数据后改选轮规则**，这条按原样报。
+2. **dev 与 test 差一大截，且 dev 参与选轮有乐观偏差。** top_k 0.2073(dev) vs 0.1106(test)、recall@0.5 0.1601 vs 0.0962、iou_mean 0.2036 vs 0.1586。dev 是官方 train 场景内划分（in-distribution），test 是官方 val 场景（unseen）。**对外只引用 test 列。**
+3. **与接地诊断的数不可直接相减。** 探针用正确的 in-range 掩码 + 400 条 / 416 物体；`diagnose_reasonseg_grounding.py` 仍带前缀掩码 bug（故意没改，见记忆待办 #20）+ 1000 条 / 1068 物体。前缀 bug 会把约 2035 个"必为 0 的简单负例"塞进 AUC，**抬高**完整模型的 0.8576 ⇒ 上表"完整模型 ~4630"是**低估**，oracle 的改善倍数 ≥16× 是下界，裁定因此更稳、不是更弱。
+
+### 3.3 首跑留档（已被修正版取代，不要再引用）
+
+首跑（S1，`eval_results/_oracle_probe/report.json`；4 epoch / lr 3e-4 / 600 条）：dev AUC 0.9735 / recall@0.5 0.0471 / iou_mean 0.1071 / 尺寸 57:15；test AUC 0.9776 / recall@0.5 0.0449 / iou_mean 0.0917 / 尺寸 37:11（3.4× 过触发）。train_loss 0.9233 → 0.8146 → 0.7784 → **1.0274**，末轮失稳而评的正是这个最差末轮。
+
+它的预注册判据（按 `recall@0.5` 分档）**已被明确撤回** —— 那是**判据挑错轴的第三次复发**（前两次：Phase 2.0 四条判据、Phase 2.2 尺寸护栏），根因是 `recall@0.5` 把"排序够不够好"与"尺寸/阈值校不校得准"混成一个数。修正版换成先验 AUC 阈值 + `recall_top_k` 后，**两个轴指向同一档，首跑那个"AUC 高但 recall 低"的矛盾消失了**。
 
 ---
 
@@ -134,16 +165,17 @@ verify 链（`training_logs/verify_v123/`，11:25:02 → 12:07:48，七步全 `r
 
 ---
 
-## 5. 下一步（等数，不要提前动）
+## 5. 下一步（GPU 已空，方向由 §3 裁定给出）
 
-| 优先 | 事项 | 触发条件 / 状态 |
+| 优先 | 事项 | 说明 / 状态 |
 |---|---|---|
 | ~~1~~ | ~~读 S4 的过滤后 val_thin TF~~ | **已完成**，见 §2.4 |
-| 1 | 等修正版探针出数，用**先验 AUC 阈值（≳0.99966）+ `recall_top_k`** 裁定"LM query 通路 vs 点特征"。注意按 dev `iou_mean` 选的轮次，不要再看末轮 | 探针 18:22:06 起跑，约 21:00 出数 |
-| 2 | 探针裁定后再定架构方向：若确认点特征是硬约束，投向 `voxel_size` / 多尺度 / 感受野；若确认 query 通路，才考虑 scene query 容量 / 实例对比监督 / CoT 查询 | 第 1 项出数 |
-| 3 | B1 的处置：预注册判据落在未决中间档（PASS 四条全不中、FAIL 两条都不触发）。要么按判据原文报"未决"，要么补一个 4-epoch 的 A2 对照在同一过滤后 manifest 上重测以对齐口径 —— **不要在看过数据后临时改判据阈值**（这是已经复发三次的错误） | 需要用户定方向 |
-| 4 | 待办 #20：单独量化诊断脚本前缀掩码偏差（**裁定完 Phase 2.3 之后再做**，避免移动球门） | 第 1 项收口后 |
-| — | V4（追 AUC 随训练退化 0.9167→0.8371 的轨迹）已明确**先记下不做**：中间档被 `keep-last 2` 轮转掉，要拿轨迹得重训并保留每 4 轮的档 | — |
+| ~~2~~ | ~~等修正版探针裁定"LM query 通路 vs 点特征"~~ | **已完成**，裁定 = 点特征是硬约束，见 §3.1 |
+| 1 | **投向点特征分辨率**：`voxel_size`（现 0.1 m）/ 多尺度特征 / U-Net 感受野 | 这是 §3.1 裁定的直接后果 —— query 侧（scene query 容量、实例对比监督、CoT 查询）填不上 24×，不应再投。建议先做**最便宜的那个**：只改 `voxel_size` 重训空间编码器，用探针（而非完整模型）量 AUC 是否从 0.9911 往 0.99963 走，约 2 h 就能判方向 |
+| 2 | B1 的处置：预注册判据落在**未决中间档**（PASS 四条全不中、FAIL 两条都不触发） | 要么按判据原文报"未决"，要么补一个 4-epoch 的 A2 对照在同一过滤后 manifest 上重测以对齐口径。**不要在看过数据后临时改判据阈值**（已复发三次）。注意：既然裁定指向点特征，B1 这条 query/损失侧的路线优先级已下降 |
+| 3 | 待办 #20：单独量化诊断脚本的前缀掩码偏差 | Phase 2.3 已裁定完，**现在可以做**（此前刻意压后，避免裁定前移动球门）。做完才能把完整模型的 AUC 0.8576 换成无偏值，§3.1 表里"~4630 / ≥16×"也才能从下界变成点估计 |
+| 4 | 若要引用"最好那一轮"的 test 数 | 选轮用的 dev `iou_mean` 选了 ep4，但 AUC 轴上 ep5 更好（0.99395、尺寸 11/12）而 test 未评。补测约 20 min + 评测。**裁定方向不受影响**（24× → 16×，都远不达标） |
+| — | V4（追 AUC 随训练退化 0.9167→0.8371 的轨迹） | 仍**先记下不做**：中间档被 `keep-last 2` 轮转掉，要拿轨迹得重训并保留每 4 轮的档 |
 
 ---
 
@@ -151,13 +183,16 @@ verify 链（`training_logs/verify_v123/`，11:25:02 → 12:07:48，七步全 `r
 
 ```bash
 cd /root/autodl-tmp/mmb4dl/mllm
-tmux ls; tail -5 training_logs/phase23/driver.log          # 链在哪一步
-tail -3 training_logs/phase23/watcher_probe2.log           # probe2 是否已启动
+tmux ls; tail -5 training_logs/phase23/driver.log          # 链在哪一步（现已 DONE）
+tail -3 training_logs/phase23/watcher_probe2.log           # probe2 是否已启动/退出
 cat training_logs/phase23/probe2_decision.txt 2>/dev/null   # GO / NOGO
 grep teacher_forcing_mean_iou training_logs/phase23/s2_train_b1.log   # B1 逐轮 TF
 grep teacher_forcing_mean_iou training_logs/phase23/s4_tfval_b1.log   # B1 过滤后 val_thin
+tr '\r' '\n' < training_logs/phase23/probe_v2.log | grep -E '^epoch|selected'  # 探针逐轮 dev + 选定轮
 # 接地诊断（n / AUC / 尺寸 / recall）：
 /root/autodl-tmp/.conda-stuff/envs/reasonseg/bin/python -c "import json;d=json.load(open('eval_results/_grounding_reasonseg-lossB1-noprior-tversky/report.json'))['overall'];print({k:d[k] for k in ('n','auc_mean','recall_thresholded','recall_top_k','predicted_size_median','target_size_median','loc_containment_mean')})"
+# oracle 探针修正版（选定轮 + dev/test）：
+/root/autodl-tmp/.conda-stuff/envs/reasonseg/bin/python -c "import json;d=json.load(open('eval_results/_oracle_probe_v2/report.json'));print('selected',d['selected_epoch']);print({k:d['test'][k] for k in ('objects','auc_mean','recall_at_0.5','recall_top_k','iou_mean','predicted_size_median','target_size_median')})"
 ```
 
 > 注意：服务器系统 `python3` 不可用，一律走 `/root/autodl-tmp/.conda-stuff/envs/reasonseg/bin/python`。
