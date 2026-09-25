@@ -16,7 +16,7 @@ ReasonSeg 在 `seg` 分支、autodl3（4090 24G）上跑，conda 环境是独立
 | 环境（09-18） | `reasonseg-mini-4090` | epoch 1 崩于 ENOSPC（单档 16G 无轮转） | `--no-resume-state` + `--keep-last` 修（`2d4b8ec`），单档 1.2G |
 | 口径纠偏（09-19） | mini（10 场景） | best 0.0075，训练 loss 全 0 | 完全记忆化、零泛化；`--validation-samples` 默认 32 造成的"val mIoU≈0"是单场景探针假象 |
 | 数据规模（09-19~20） | thin（200 场景 / 7910 条 / 495 step） | 20ep best mean IoU **0.01652 @ ep14** | 较 mini 抬 9×，但排除"数据规模是唯一瓶颈"；lr 5e-4 与 head dropout 0 两个旋钮均否决 |
-| 编码器（09-20~21） | `reasonseg-spatial-tv` | lidarseg mIoU **0.2876 @ ep3**（旧线上编码器 0.1244 且只训过 1 epoch） | fp32 训 12 epoch；bf16 会触发 spconv NaN |
+| 编码器（09-20~21） | `reasonseg-spatial-tv` | lidarseg mIoU **0.2876 @ ep3**（旧线上编码器 0.1244 且只训过 1 epoch） | fp32 训 12 epoch；bf16 会触发 spconv NaN。⚠ 0.2876 是**已退役口径**：当年 `split="val"` = nuScenes 官方 val（6,019 条），`c51c644`（09-22）改成官方 train 场景内的防泄漏内部划分（2,806 条）；且档内**只存了 point_encoder、分类头从未保存**，故该数用现存产物**无法复算**，只能当历史记录，不可与任何现行测量相比（详见第六节） |
 | 编码器（09-21） | `reasonseg-tvenc` | TF 全量 val best mean IoU **0.1037 @ ep13** = 基线 **6.3×** | 判据 PASS，台阶式提升成立。自由生成 cIoU 0.2922 / recall@0.5 0.0534 |
 | 编码器 A/B（09-21） | 同 300 条自由生成 | cIoU 2.68× / gIoU 1.82× / recall@0.5 **18.5×**（0.00289→0.0534） | 两侧 token_failure 均 0 ⇒ 同质可比；换编码器收益在自由生成口径同样成立 |
 | 复核（09-22 00:14） | `--validate-only` 独立进程 | **0.10370878** vs 训练记录 0.10366375，objects 2322 逐位一致，2248 batch 零 non-finite | 0.1037 是干净可引用的结果，训练期 TF 未踩评测侧 fp16 NaN |
@@ -162,6 +162,8 @@ dev AUC 逐轮 **单调上升**：0.9839 → 0.9921 → 0.9927 → 0.9937 → 0.
 - **`tar cf - .` 同步会 chown 目标目录**：它把 `./` 这个目录条目本身也存进归档，以 root 解包时 tar 保留归档属主，仓库根被 chown 成 Windows 侧 uid（197612）而 `.git` 仍是 root → git 报 `detected dubious ownership`。修法是 `chown root:root`，**不要**去加 `git config --add safe.directory`（那是掩盖问题）。
 - **服务器 ref 前移不能用 `update-ref` 抄近路**：服务器没有那个对象时 git 会拒绝（`nonexistent object`，自我保护生效）。autodl3 无 GitHub 直连且是 blob 过滤的 partial clone，同步一律走区间 bundle（`git bundle create x.bundle <base>..seg`；全历史 bundle 会因缺 blob 反复回源卡死）。
 - **per-arm 新建的 DataLoader 必须过 `accelerator.prepare`**，否则 batch 留在 CPU，spconv 直接 `AssertionError: implicit gemm only support cuda`（修于 `531664c`）。
+- **空间编码器档里没有分类头，"加载后直接验证"会静默给出垃圾数。** `save_spatial_encoder_checkpoint` 只存 `point_encoder.state_dict()`（52 个张量，无 `classifier.*`），预训练那个 `nn.Linear(256,32)` 是随机初始化的。实测同一份 `spatial-best` 权重：随机头 + 内部 val 2,806 条 → miou 0.19633 / accuracy 0.89530（后者只是塌到多数类的频率）；随机头 + 官方 val 前 100 条 → miou 0.00706 / accuracy 0.0348。**不报错、JSON 格式完全正常**，所以极容易被当成真数引用。要量编码器语义质量只能用**线性探针**（冻结编码器且永久 `eval`、只从零训分类头），入口是 `train_reasonseg_spatial.py --validate-only --spatial-checkpoint <dir|*.pt> --probe-epochs N`（`d745653`），输出里带 `comparable_to_recorded_miou: false`。探针数只能与**同协议**（同 seed/轮数/lr/划分/精度）的其他编码器横比。
+- **引用任何历史指标前先确认它的划分还存不存在。** `c51c644`（09-22）把 lidarseg 的 `split="val"` 从官方 val（6,019 条）换成内部防泄漏划分（2,806 条），09-21 之前的所有 lidarseg mIoU（含被到处引用的 0.2876 与 0.1244）都属于旧口径。判据：看训练日志的**每轮步数**能否与今天的 `len(dataset)` 对上 —— 28,000+ 步 = 官方 train 全量 28,130，今天是 25,324。
 
 ## 七、关键提交与产物路径
 

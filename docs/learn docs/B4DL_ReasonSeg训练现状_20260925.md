@@ -318,6 +318,26 @@ tmux `v4`，脚本 `scripts/reasonseg_experiments/run_oracle_probe_v4.sh`，日�
 
 辅助轴：`recall_top_k`（免幅值）与尺寸比 pred/target（应落在 [0.7, 1.5]）。
 
+### 6.6 A1 已做完，但结论是"原计划的量法根本行不通"（09-26 02:10）
+
+A1 的目标是量 v4 那个被**实例目标**微调过的编码器、其**语义**质量还在不在。给 `train_reasonseg_spatial.py` 加 `--validate-only --spatial-checkpoint` 入口时（`d745653`）查清了两件事，都推翻了原计划：
+
+**① 档内那个 `validation_miou = 0.2875778349554002` 用现存产物无法复算。** `save_spatial_encoder_checkpoint` 只存 `point_encoder.state_dict()`（52 个张量，无任何 `classifier.*`），预训练那个 `nn.Linear(256, 32)` 分类头**从未被保存**。所以"加载编码器 → 直接验证"会拿一个**随机初始化的头**去算指标，得到一个看着正常、实际无意义的数：
+
+| 量法 | miou | point_accuracy |
+|---|---|---|
+| 档内记录（09-21，头还在时） | 0.28757783 | 0.894382 |
+| 随机头 + 当前内部 val 2,806 条 | 0.19633 | 0.89530 ← 只是塌到多数类（地面）的频率 |
+| 随机头 + 官方 val 前 100 条 | 0.00706 | 0.0348 |
+
+同一份权重、换个样本集就从 0.196 掉到 0.007 ⇒ **这个数是随机头的偏好，不是编码器质量**。这是个静默陷阱（不报错、JSON 格式完全正常），所以入口改成**标准线性探针**：冻结编码器且永久 `eval`（BN 用自身 running stats，不被 batch size=1 的噪声统计污染），只从零训分类头 `--probe-epochs` 轮。冒烟 300 条训练样本 / 1 轮即得 miou 0.2998，反证问题确实在头。
+
+**② 验证集也换过，与 0.2876 不可比的第二个独立原因。** `c51c644`（09-22「数据管线改为官方 train 场景内防泄漏划分」）把 `split="val"` 从 nuScenes **官方 val（6,019 条）**改成了官方 train 场景内的内部划分（**2,806 条**）；而该档是 **09-21** 训的。证据：`/root/spatpretrain2.log` 里每轮 28,000+ 步 = 官方 train 全量 28,130 条（旧代码 `split_key = split` 直接用官方划分），而现在的划分是 train 25,324 / val 2,806（和为 28,130）。
+
+⇒ 输出 JSON 里显式写了 `comparable_to_recorded_miou: false`。**线性探针数只能与同协议的其他编码器横比**（同 seed / 同轮数 / 同 lr / 同划分 / 同精度），不能与 0.2876 比。这也意味着文档与记忆里凡是把 0.2876 当作"编码器语义质量"引用的地方，都要标注它属于已退役的官方-val 口径。
+
+**基线正在跑**（tmux `probsem`，01:59:43 起）：预训练档 `reasonseg-spatial-tv/spatial-best`，2 轮，fp32，train 25,324 / val 2,806，输出 `training_logs/phase23/linear_probe_spatial_tv_best.json`。因与 v4 争卡约 23 min/轮，预计 **~02:55** 出数。v4 结束后用**逐字相同的协议**量它的 `report_encoder.pt`，两者相减才是"语义质量掉了多少"。
+
 ---
 
 ## 7. 复核命令
