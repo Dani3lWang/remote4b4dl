@@ -19,6 +19,27 @@ Per ground-truth object it measures
 ``--disable-loc-prior`` re-runs the same measurements with the LOC prior pathway
 zeroed, which tests whether a broken coarse head actively degrades the fine
 decoder rather than merely failing to help it.
+
+SCORING SET CHANGED on 2026-09-25, so absolute numbers from before that date are
+NOT comparable with numbers produced now. Until then every per-point array was cut
+with a ``[:point_count]`` prefix where ``point_count = point_valid.sum()`` — i.e.
+the in-range COUNT was used as a prefix LENGTH. That is only equivalent when
+out-of-range points sit at the tail of the file, and on val_thin they do not: they
+are 6.18% of a frame (median ~2035 points) but only 5.9% of them fall in the tail
+(tail concentration 0.0585). The prefix therefore kept ~2035 points whose logits
+are masked to -1e4 and whose probability is exactly 0 — free negatives that inflate
+AUC — while dropping the same number of in-range points from the tail, and it
+truncated the GT of 2.42% of objects to empty. Those objects then vanished through
+``if target_size == 0: continue``, which is why 1000 val_thin records reported 1068
+objects instead of 1091 and why no NaN ever surfaced. Scoring now boolean-masks
+with ``point_valid`` and counts the unreachable objects as ``skipped_unreachable``.
+
+The distortion was identical for every run (same manifest, same records, same point
+sets), so comparisons between control / A1 / A2 / A3 / prior-off / B1 remain valid;
+only the absolute values were biased, and the bias inflated AUC — so the pre-fix
+conclusion "top-K is not viable, it would need AUC >= 1-K/N ~= 0.99966" is
+strengthened, not weakened, by this fix. Re-run the diagnosis for each checkpoint
+you want an unbiased absolute number for.
 """
 
 from __future__ import annotations
@@ -187,6 +208,7 @@ def main() -> int:
     rng = np.random.default_rng(args.seed)
 
     rows: list[dict] = []
+    skipped_unreachable = 0
     with torch.no_grad():
         for index in range(limit):
             sample = dataset[index]
@@ -214,29 +236,45 @@ def main() -> int:
             targets = batch["target_masks"][0].bool().cpu().numpy()
             loc_targets = batch["target_loc_masks"][0].bool().cpu().numpy()
             valid_objects = batch["object_valid_mask"][0].bool().cpu().numpy()
+            # 下面全部按 point_valid 布尔掩码取子集，绝不能切 [:point_count] 前缀。
+            # 前缀切法只在"越界点都堆在文件尾"时才等价，而实测并非如此：越界点占帧内
+            # 6.18%（中位约 2035 点）但尾部集中度只有 0.0585，是散布的。切前缀会留下
+            # 约 2035 个 logit 被 mask 成 -1e4、概率恒 0 的越界点（把 AUC 抬高），同时
+            # 丢掉尾部同样多的框内点，并把 2.42% 的物体 GT 截成空。
+            if not (point_valid.shape[0] == mask_prob.shape[1] == targets.shape[1]):
+                raise RuntimeError(
+                    f"record {index}: 长度不一致 point_valid={point_valid.shape[0]} "
+                    f"mask_prob={mask_prob.shape[1]} targets={targets.shape[1]}"
+                )
 
             record = dataset.records[index]
             panoptic = None
             for object_index in range(int(valid_objects.sum())):
-                target = targets[object_index][:point_count]
-                loc_target = loc_targets[object_index][:point_count]
-                positive_probability = mask_prob[object_index][:point_count][target]
-                negative_probability = mask_prob[object_index][:point_count][~target]
+                target = targets[object_index][point_valid]
+                loc_target = loc_targets[object_index][point_valid]
+                object_mask_prob = mask_prob[object_index][point_valid]
+                object_loc_prob = loc_prob[object_index][point_valid]
+                positive_probability = object_mask_prob[target]
+                negative_probability = object_mask_prob[~target]
                 target_size = int(target.sum())
                 if target_size == 0:
+                    # GT 点全在 point_cloud_range 之外，物理上不可分割。计数上报而不是
+                    # 静默 continue：静默跳过会让报告里的物体数对不上 manifest（1000 条
+                    # 本应 1091 个物体却只报 1068），而且看不出指标的分母被谁改了。
+                    skipped_unreachable += 1
                     continue
 
-                predicted_loc = loc_prob[object_index][:point_count] >= args.threshold
-                predicted_mask = mask_prob[object_index][:point_count] >= args.threshold
+                predicted_loc = object_loc_prob >= args.threshold
+                predicted_mask = object_mask_prob >= args.threshold
 
-                order = np.argsort(-mask_prob[object_index][:point_count], kind="stable")
+                order = np.argsort(-object_mask_prob, kind="stable")
                 top_k = np.zeros(point_count, dtype=bool)
                 top_k[order[:target_size]] = True
                 top_k_in_loc = np.zeros(point_count, dtype=bool)
                 candidates = np.flatnonzero(predicted_loc)
                 if candidates.size:
                     ranked = candidates[np.argsort(
-                        -mask_prob[object_index][:point_count][candidates], kind="stable"
+                        -object_mask_prob[candidates], kind="stable"
                     )]
                     top_k_in_loc[ranked[:target_size]] = True
                 random_k = np.zeros(point_count, dtype=bool)
@@ -281,7 +319,7 @@ def main() -> int:
                     ),
                     "hit_random_k": float(iou_from_masks(random_k, target) >= 0.5),
                 }
-                probabilities = mask_prob[object_index][:point_count]
+                probabilities = object_mask_prob
                 peak = float(probabilities.max()) if point_count else 0.0
                 for alpha in relative_thresholds:
                     # fp16 下 sigmoid 会精确下溢到 0，peak 为 0 时 "p >= 0" 会选中
@@ -368,9 +406,11 @@ def main() -> int:
             "seg_checkpoint": args.seg_checkpoint,
             "samples": limit,
             "objects": len(rows),
+            "skipped_unreachable": skipped_unreachable,
             "threshold": args.threshold,
             "disable_loc_prior": bool(args.disable_loc_prior),
             "relative_thresholds": relative_thresholds,
+            "scoring": "in-range mask (point_valid); not a [:point_count] prefix",
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
