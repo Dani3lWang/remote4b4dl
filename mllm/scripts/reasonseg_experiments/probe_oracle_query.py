@@ -168,6 +168,63 @@ def decode_per_object(query_net, decoder, centers, class_ids, features, point_va
     return logits
 
 
+def pin_encoder_bn_eval(encoder) -> int:
+    """把编码器里所有 BN 钉在 eval 模式，返回被钉住的模块数。
+
+    batch size = 1（单帧）时 BN 的 train 模式用逐帧统计量归一化，并把 running
+    stats 往那个噪声方向拽——v3 实测 6 轮漂了 18.71%。这一项**即使权重一个都不
+    更新也会改变特征**，所以它会让"冻结 vs 解冻"不再是单变量对照。钉在 eval
+    之后归一化一律用预训练的 running stats，"解冻"才真的只意味着"权重可学"。
+    每次调用 encoder.train() 之后都要重新钉一遍。
+    """
+    pinned = 0
+    for module in encoder.modules():
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+            module.eval()
+            pinned += 1
+    return pinned
+
+
+def encoder_weight_delta(current, initial) -> dict:
+    """编码器相对预训练权重的变化量，按卷积权重 / BN 仿射 / BN 统计量分开报。
+
+    必须分开：BN running stats 只要编码器进 train 模式就会漂移，与"有没有学到
+    东西"无关；只有卷积权重与 BN 仿射参数的变化才代表特征本身被改造了。v3 整体
+    ‖ΔW‖/‖W‖ = 18.28% 看着不小，拆开才发现卷积权重只动了 3.52%——即编码器其实
+    几乎没被微调，"点特征能否变得实例判别"根本没被检验到。
+    """
+    buckets: dict = {}
+    for key, value in current.items():
+        if not torch.is_tensor(value) or not torch.is_floating_point(value):
+            continue
+        if key not in initial or initial[key].shape != value.shape:
+            continue
+        if "running_mean" in key or "running_var" in key:
+            name = "bn_stats"
+        elif key.endswith(".bias") or value.dim() == 1:
+            name = "bn_affine"
+        elif key.endswith(".weight"):
+            name = "conv_weight"
+        else:
+            name = "other"
+        reference = initial[key].float()
+        base = float(reference.norm())
+        if base == 0.0:
+            continue
+        delta = float((value.detach().float().cpu() - reference).norm())
+        acc = buckets.setdefault(name, [0.0, 0.0, 0])
+        acc[0] += delta * delta
+        acc[1] += base * base
+        acc[2] += 1
+    return {
+        name: {
+            "relative_delta": (d ** 0.5) / (n ** 0.5),
+            "tensors": count,
+        }
+        for name, (d, n, count) in buckets.items()
+    }
+
+
 def evaluate(dataset, encoder, query_net, decoder, config, device, limit) -> dict:
     """Final-epoch metrics on the encoder's in-range points.
 
@@ -270,6 +327,12 @@ def main() -> int:
         help="微调空间编码器而不是冻结它；编码器用 --encoder-lr 这个更低的独立学习率",
     )
     parser.add_argument("--encoder-lr", type=float, default=1e-5)
+    parser.add_argument(
+        "--freeze-encoder-bn",
+        action="store_true",
+        help="解冻编码器时把 BN 钉在 eval 模式（归一化用预训练 running stats、且不再更新），"
+             "使 batch size=1 下的 BN 统计量漂移不再成为第二个变量",
+    )
     parser.add_argument("--max-train-records", type=int, default=0)
     parser.add_argument("--eval-records", type=int, default=600)
     parser.add_argument("--region-loss", choices=("dice", "tversky"), default="tversky")
@@ -294,6 +357,16 @@ def main() -> int:
     load_spatial_encoder_checkpoint(encoder, args.spatial_checkpoint, config=config)
     encoder = encoder.to(device=device, dtype=torch.float32).eval()
     encoder.requires_grad_(args.unfreeze_encoder)
+    # 变化量的基准：预训练权重原样留一份在 CPU，每轮与它比，直接盯住"到底学没学"。
+    initial_encoder_state = {
+        key: value.detach().float().cpu().clone()
+        for key, value in encoder.state_dict().items()
+        if torch.is_floating_point(value)
+    }
+    pinned_bn = (
+        pin_encoder_bn_eval(encoder)
+        if args.unfreeze_encoder and args.freeze_encoder_bn else 0
+    )
 
     query_net = OracleQueryNet(config).to(device)
     decoder = QueryMaskDecoder(config).to(device)
@@ -345,6 +418,9 @@ def main() -> int:
         decoder.train()
         if args.unfreeze_encoder:
             encoder.train()
+            if pinned_bn:
+                # train() 会把 BN 一起切回 train 模式，必须重新钉住
+                pin_encoder_bn_eval(encoder)
         started = time.time()
         running = 0.0
         scored = 0
@@ -423,11 +499,20 @@ def main() -> int:
         if args.unfreeze_encoder:
             entry["encoder_grad_params"] = encoder_grad_params
             entry["encoder_grad_norm"] = encoder_grad_norm
+            entry["encoder_delta"] = encoder_weight_delta(
+                encoder.state_dict(), initial_encoder_state
+            )
         history.append(entry)
-        encoder_note = (
-            f" | enc grad {encoder_grad_norm:.3e} over {encoder_grad_params} tensors"
-            if args.unfreeze_encoder else ""
-        )
+        if args.unfreeze_encoder:
+            delta = entry["encoder_delta"]
+            encoder_note = (
+                f" | enc grad {encoder_grad_norm:.3e}/{encoder_grad_params}t"
+                f" | dW conv {delta.get('conv_weight', {}).get('relative_delta', 0.0):.3%}"
+                f" bn {delta.get('bn_affine', {}).get('relative_delta', 0.0):.3%}"
+                f" stats {delta.get('bn_stats', {}).get('relative_delta', 0.0):.3%}"
+            )
+        else:
+            encoder_note = ""
         print(f"epoch {epoch} loss {mean_loss:.4f}{encoder_note} | dev recall@0.5 "
               f"{dev_metrics.get('recall_at_0.5', float('nan')):.4f} topK "
               f"{dev_metrics.get('recall_top_k', float('nan')):.4f} AUC "
@@ -472,6 +557,7 @@ def main() -> int:
             "learning_rate": args.learning_rate,
             "encoder_frozen": not args.unfreeze_encoder,
             "encoder_lr": args.encoder_lr if args.unfreeze_encoder else None,
+            "encoder_bn_pinned_eval": pinned_bn if args.unfreeze_encoder else 0,
             "oracle": "gt_center_normalized + one_hot_class",
             "selection": "epoch with best dev iou_mean; test evaluated once at that epoch",
         },
