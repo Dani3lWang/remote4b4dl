@@ -430,17 +430,23 @@ def validate_teacher_forcing(accelerator, model, loader, *, threshold: float,
                 target = target[:, : probabilities.shape[1]]
             point_valid = output.point_valid_mask[:, None, :]
             valid = point_valid & object_valid[:, :, None]
+            # 分母只能由数据与编码器有效性决定，绝不能含 predicted。原本写的是
+            # object_valid & union.gt(0)：GT 全部越界的物体在模型恰好触发时也会被
+            # 计入（IoU 必为 0），于是触发越多的模型背的不可能项越多——val_thin 上
+            # 对照报 2325 个物体而 A2 报 2329 个就是这么来的。三项指标统一只在
+            # scorable 上求和，避免 mean IoU 修好了而 global IoU 仍随触发量漂移。
+            scorable = object_valid & (target & valid).any(dim=-1)
             for offset, cut in enumerate(thresholds):
                 predicted = probabilities >= cut
                 intersection = (predicted & target & valid).sum(dim=-1).double()
                 union = ((predicted | target) & valid).sum(dim=-1).double()
-                present = object_valid & union.gt(0)
                 base = 5 * offset
-                per_object_iou = intersection[present] / union[present]
+                # scorable 保证 union >= |target & valid| > 0，不会除零。
+                per_object_iou = intersection[scorable] / union[scorable]
                 totals[base] += per_object_iou.sum()
-                totals[base + 1] += present.sum()
-                totals[base + 2] += intersection.sum()
-                totals[base + 3] += union.sum()
+                totals[base + 1] += scorable.sum()
+                totals[base + 2] += intersection[scorable].sum()
+                totals[base + 3] += union[scorable].sum()
                 # mean IoU 对阈值平坦不代表硬计数平坦：recall@0.5 数的是越过
                 # 0.5 边界的实例数，阈值可能把它们整体推过去而均值几乎不动。
                 totals[base + 4] += (per_object_iou >= 0.5).sum()
