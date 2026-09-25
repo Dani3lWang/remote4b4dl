@@ -26,10 +26,13 @@ each positive has ~4938 negatives ranked above it). So:
 
   AUC >= 0.995      -> features + decoder are close to sufficient; the remaining
                        gap is the LM query pathway
-  0.90 <= AUC < 0.995 -> informative but nowhere near separable at point level;
-                       the limit is encoder resolution / receptive field, and no
-                       amount of query-side work closes a four-order-of-magnitude
-                       ranking gap
+  0.90 <= AUC < 0.995 -> informative but not separable at the point level. Read it
+                       as "expected negatives ranked above a positive" =
+                       (1 - AUC) * N: at AUC 0.858 that is ~4615, at 0.978 ~715,
+                       and top-K needs it down to ~K = 11. So oracle localization
+                       buys a 6.5x reduction but still leaves a 65x shortfall —
+                       the limit is encoder resolution / receptive field, and
+                       query-side work alone cannot close it.
   AUC < 0.90        -> the frozen encoder's features cannot support instance masks
 
 Independently of the above, a predicted/target size median ratio outside
