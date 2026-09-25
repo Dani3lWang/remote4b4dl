@@ -43,6 +43,28 @@ The centre+class oracle is deliberately the weakest useful oracle: it states
 "segment the car at (x, y, z)" and nothing more. Feeding the GT extent as well
 would leak the answer's scale and inflate the ceiling.
 
+Everything above was measured with the encoder FROZEN, so it bounds "the existing
+semantic-pretrained features + a perfect query" — NOT "point features in general".
+The encoder was trained on lidarseg (semantic) only, so its features encode "this
+is a car point" and were never asked to be instance-discriminative. v2 (6 epochs,
+lr 1e-4, selected ep4) reached test AUC 0.99110 / recall_top_k 0.11058: ~289
+negatives above each positive where top-K needs <= 12, still ~24x short.
+
+`--unfreeze-encoder` runs the decisive follow-up: fine-tune the encoder under the
+same oracle supervision, at its own lower lr (`--encoder-lr`), and see whether AUC
+moves toward 0.99963. If it also plateaus near 0.99 then single-frame point
+features genuinely cannot separate instances at this resolution, and the honest
+options are a coarser output target, temporal multi-frame input, or reporting the
+negative result. Unfreezing also switches the encoder to train mode (dropout
+active) and makes the per-epoch snapshot include encoder weights, so that the
+selected-epoch test eval is not "last encoder + selected head".
+
+voxel_size is NOT the lever, and this is measured rather than assumed: points are
+scored per raw LiDAR point, so voxel_size changes neither N nor K (the 1-K/N
+threshold is invariant), and same-voxel feature ties — the only way voxel granularity
+could cap a per-point AUC — are ~0 in practice (T median 0 at 0.1 m, tie-implied AUC
+ceiling 0.99999996). See probe_voxel_tie_ceiling.py.
+
 Epoch selection uses dev iou_mean (recall@0.5 is too coarse over a few hundred
 objects); the test manifest is evaluated once at the selected epoch and never
 influences training or selection.
@@ -157,8 +179,10 @@ def evaluate(dataset, encoder, query_net, decoder, config, device, limit) -> dic
     ~2035 valid ones, and truncates 2.4% of objects to empty.
     """
     was_training = query_net.training
+    was_encoder_training = encoder.training
     query_net.eval()
     decoder.eval()
+    encoder.eval()
     rows = []
     skipped_unreachable = 0
     try:
@@ -212,6 +236,8 @@ def evaluate(dataset, encoder, query_net, decoder, config, device, limit) -> dic
         if was_training:
             query_net.train()
             decoder.train()
+        if was_encoder_training:
+            encoder.train()
     if not rows:
         return {"objects": 0, "skipped_unreachable": skipped_unreachable}
     return {
@@ -238,6 +264,12 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=6)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument(
+        "--unfreeze-encoder",
+        action="store_true",
+        help="微调空间编码器而不是冻结它；编码器用 --encoder-lr 这个更低的独立学习率",
+    )
+    parser.add_argument("--encoder-lr", type=float, default=1e-5)
     parser.add_argument("--max-train-records", type=int, default=0)
     parser.add_argument("--eval-records", type=int, default=600)
     parser.add_argument("--region-loss", choices=("dice", "tversky"), default="tversky")
@@ -257,16 +289,29 @@ def main() -> int:
     config = ReasonSegConfig()
     config.validate()
 
-    # 编码器冻结且必须留 fp32：spconv 内部转 fp16 在 4090 上硬崩，bf16 出 NaN。
+    # 编码器必须留 fp32：spconv 内部转 fp16 在 4090 上硬崩，bf16 出 NaN。
     encoder = SparseUNetPointEncoder(config)
     load_spatial_encoder_checkpoint(encoder, args.spatial_checkpoint, config=config)
     encoder = encoder.to(device=device, dtype=torch.float32).eval()
-    encoder.requires_grad_(False)
+    encoder.requires_grad_(args.unfreeze_encoder)
 
     query_net = OracleQueryNet(config).to(device)
     decoder = QueryMaskDecoder(config).to(device)
-    trainable = list(query_net.parameters()) + list(decoder.parameters())
-    optimizer = torch.optim.AdamW(trainable, lr=args.learning_rate, weight_decay=0.01)
+    head_params = list(query_net.parameters()) + list(decoder.parameters())
+    if args.unfreeze_encoder:
+        # 分组学习率：编码器是 lidarseg 语义预训练来的，用比头低一个量级的 lr 微调，
+        # 否则语义特征会在几百步内被实例目标冲掉。
+        encoder_params = list(encoder.parameters())
+        param_groups = [
+            {"params": head_params, "lr": args.learning_rate},
+            {"params": encoder_params, "lr": args.encoder_lr},
+        ]
+        trainable = head_params + encoder_params
+    else:
+        encoder_params = []
+        param_groups = [{"params": head_params, "lr": args.learning_rate}]
+        trainable = head_params
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=0.01)
 
     train_dataset = ReasonSegDataset(
         args.train_manifest, dataroot=args.dataroot, config=config
@@ -276,14 +321,30 @@ def main() -> int:
     test_dataset = ReasonSegDataset(args.test_manifest, dataroot=args.dataroot, config=config)
     print(f"train records: {train_limit} / dev: {len(dev_dataset)} / test: {len(test_dataset)}",
           flush=True)
-    print(f"trainable params: {sum(p.numel() for p in trainable):,}", flush=True)
+    encoder_state = (
+        f"unfrozen, {sum(p.numel() for p in encoder_params):,} params @ lr {args.encoder_lr}"
+        if args.unfreeze_encoder
+        else "frozen"
+    )
+    print(f"trainable params: {sum(p.numel() for p in trainable):,} "
+          f"(head {sum(p.numel() for p in head_params):,}; encoder {encoder_state})",
+          flush=True)
+
+    # 选轮快照要还原的模块：解冻时编码器也在其中（见下面 best_state 处）
+    snapshot_modules = [query_net, decoder]
+    if args.unfreeze_encoder:
+        snapshot_modules.append(encoder)
 
     history = []
     best = None
     best_state = None
+    encoder_grad_norm = None
+    encoder_grad_params = 0
     for epoch in range(args.epochs):
         query_net.train()
         decoder.train()
+        if args.unfreeze_encoder:
+            encoder.train()
         started = time.time()
         running = 0.0
         scored = 0
@@ -299,9 +360,12 @@ def main() -> int:
             batch_indices = torch.zeros(
                 sample["points"].shape[0], dtype=torch.long, device=device
             )
-            with torch.no_grad():
-                encoding = encoder(sample["points"].to(device, dtype=torch.float32),
-                                   batch_indices)
+            points = sample["points"].to(device, dtype=torch.float32)
+            if args.unfreeze_encoder:
+                encoding = encoder(points, batch_indices)
+            else:
+                with torch.no_grad():
+                    encoding = encoder(points, batch_indices)
             features, point_valid, _ = pad_point_features(encoding)
             logits = decode_per_object(
                 query_net, decoder, centers, class_ids, features, point_valid
@@ -329,7 +393,21 @@ def main() -> int:
             )
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(trainable, 1.0)
+            if args.unfreeze_encoder and step == 0:
+                # 硬校验梯度真的到了编码器：解冻臂最大的风险是"看着在微调、其实
+                # 一步没走"，那样它会与冻结臂逐位相同却报成一个新的数。
+                grads = [p.grad for p in encoder_params if p.grad is not None]
+                encoder_grad_params = len(grads)
+                encoder_grad_norm = (
+                    float(torch.norm(torch.stack([g.norm() for g in grads])))
+                    if grads else 0.0
+                )
+            # 分开裁剪：head 仍按冻结臂那样裁到 1.0，编码器独立裁。合成一个全局
+            # 裁剪会让编码器那一大堆参数的范数反过来压小 head 的有效步长，破坏
+            # "只改冻结与否"这个单变量。
+            torch.nn.utils.clip_grad_norm_(head_params, 1.0)
+            if args.unfreeze_encoder:
+                torch.nn.utils.clip_grad_norm_(encoder_params, 1.0)
             optimizer.step()
             running += float(loss.detach())
             scored += 1
@@ -342,8 +420,15 @@ def main() -> int:
                                device, args.eval_records)
         entry = {"epoch": epoch, "train_loss": mean_loss, "records": scored,
                  "dev": dev_metrics}
+        if args.unfreeze_encoder:
+            entry["encoder_grad_params"] = encoder_grad_params
+            entry["encoder_grad_norm"] = encoder_grad_norm
         history.append(entry)
-        print(f"epoch {epoch} loss {mean_loss:.4f} | dev recall@0.5 "
+        encoder_note = (
+            f" | enc grad {encoder_grad_norm:.3e} over {encoder_grad_params} tensors"
+            if args.unfreeze_encoder else ""
+        )
+        print(f"epoch {epoch} loss {mean_loss:.4f}{encoder_note} | dev recall@0.5 "
               f"{dev_metrics.get('recall_at_0.5', float('nan')):.4f} topK "
               f"{dev_metrics.get('recall_top_k', float('nan')):.4f} AUC "
               f"{dev_metrics.get('auc_mean', float('nan')):.4f} IoU "
@@ -357,14 +442,16 @@ def main() -> int:
             best is None or dev_metrics["iou_mean"] > best["dev"]["iou_mean"]
         ):
             best = entry
-            best_state = (
-                {k: v.detach().cpu().clone() for k, v in query_net.state_dict().items()},
-                {k: v.detach().cpu().clone() for k, v in decoder.state_dict().items()},
-            )
+            # 解冻后编码器权重也逐轮变化，选轮快照必须连它一起存；否则 test 评的
+            # 会是"末轮编码器 + 选定轮的头"这个从未存在过的组合。
+            best_state = [
+                {k: v.detach().cpu().clone() for k, v in module.state_dict().items()}
+                for module in snapshot_modules
+            ]
 
     if best_state is not None:
-        query_net.load_state_dict({k: v.to(device) for k, v in best_state[0].items()})
-        decoder.load_state_dict({k: v.to(device) for k, v in best_state[1].items()})
+        for module, state in zip(snapshot_modules, best_state):
+            module.load_state_dict({k: v.to(device) for k, v in state.items()})
     print(f"selected epoch {best['epoch']} by dev iou_mean "
           f"{best['dev']['iou_mean']:.4f}", flush=True)
     dev = best["dev"]
@@ -383,6 +470,8 @@ def main() -> int:
             "tversky_beta": args.tversky_beta,
             "bce_mode": args.bce_mode,
             "learning_rate": args.learning_rate,
+            "encoder_frozen": not args.unfreeze_encoder,
+            "encoder_lr": args.encoder_lr if args.unfreeze_encoder else None,
             "oracle": "gt_center_normalized + one_hot_class",
             "selection": "epoch with best dev iou_mean; test evaluated once at that epoch",
         },
@@ -395,6 +484,12 @@ def main() -> int:
     args.output.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    if args.unfreeze_encoder:
+        # 选定轮的编码器权重必须落盘：解冻臂若赢了，下一步（量 lidarseg 语义质量
+        # 是否被实例目标冲掉、把它插回完整模型）都要用这份权重，否则得重跑 3 小时。
+        encoder_path = args.output.with_name(args.output.stem + "_encoder.pt")
+        torch.save(snapshot_modules[-1].state_dict(), encoder_path)
+        print(f"selected-epoch encoder weights -> {encoder_path}", flush=True)
     print(json.dumps({"dev": dev, "test": test}, ensure_ascii=False, indent=2))
     return 0
 
