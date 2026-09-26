@@ -7,12 +7,13 @@
 encoder that has been fine-tuned on the *instance* objective (oracle probe v3/v4) gets
 compared against the pretrained one.
 
-It cannot reproduce the ``validation_miou`` recorded inside a checkpoint, for two
+Legacy encoder-only artifacts cannot reproduce their recorded ``validation_miou``, for two
 independent reasons — the classifier head was never saved (``spatial_encoder.pt`` holds
 only the 52 ``point_encoder`` tensors), and commit c51c644 (2026-09-22) changed
 ``split="val"`` from the official nuScenes val (6,019 samples) to a leak-free internal
 partition of official-train scenes (2,806 samples). Probe numbers are only comparable
-to other probes run under an identical protocol. See ``validate_only`` for details.
+to other probes run under an identical protocol. New pretraining artifacts save both
+modules and support --validate-only --restore-semantic-head with strict protocol checks. See ``validate_only`` for details.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ if str(MLLM_ROOT) not in sys.path:
 from vtimellm.segmentation.checkpoint import (
     load_spatial_encoder_checkpoint,
     save_spatial_encoder_checkpoint,
+    load_semantic_checkpoint,
 )
 from vtimellm.segmentation.config import ReasonSegConfig
 from vtimellm.segmentation.semantic_pretrain import (
@@ -41,6 +43,7 @@ from vtimellm.segmentation.semantic_pretrain import (
     SpatialPretrainModel,
     confusion_matrix,
     semantic_metrics,
+    semantic_validation_protocol,
 )
 
 
@@ -52,6 +55,10 @@ def main() -> int:
     accelerator = Accelerator(mixed_precision=args.mixed_precision)
     set_seed(args.seed)
     config = ReasonSegConfig()
+    if args.restore_semantic_head:
+        if not args.validate_only or not args.spatial_checkpoint:
+            raise ValueError("--restore-semantic-head requires --validate-only --spatial-checkpoint")
+        return validate_saved_semantic(accelerator, args, config)
     if args.validate_only:
         return validate_only(accelerator, args, config)
     common = {
@@ -125,6 +132,8 @@ def main() -> int:
                 epoch=epoch,
                 validation_miou=metrics["miou"],
                 num_classes=train_dataset.num_classes,
+                classifier=unwrapped.classifier,
+                semantic_protocol=semantic_validation_protocol(val_dataset, args),
             )
             if metrics["miou"] > best_miou:
                 save_spatial_encoder_checkpoint(
@@ -134,9 +143,36 @@ def main() -> int:
                     epoch=epoch,
                     validation_miou=metrics["miou"],
                     num_classes=train_dataset.num_classes,
+                    classifier=unwrapped.classifier,
+                    semantic_protocol=semantic_validation_protocol(val_dataset, args),
                 )
         best_miou = max(best_miou, metrics["miou"])
         accelerator.wait_for_everyone()
+    return 0
+
+
+def validate_saved_semantic(accelerator, args, config):
+    dataset = NuScenesLidarsegDataset(
+        split="val", max_samples=args.max_val_samples, dataroot=args.dataroot,
+        version=args.version, exclude_scenes=args.exclude_scenes,
+        label_source=args.label_source, validation_fraction=args.validation_fraction, seed=args.seed,
+    )
+    protocol = semantic_validation_protocol(dataset, args)
+    model = SpatialPretrainModel(config, dataset.num_classes, ignore_label=args.ignore_label)
+    metadata = load_semantic_checkpoint(model, args.spatial_checkpoint, config=config, semantic_protocol=protocol)
+    loader = DataLoader(dataset, batch_size=args.per_device_batch_size, shuffle=False,
+                        num_workers=args.dataloader_num_workers, collate_fn=LidarsegCollator())
+    model, loader = accelerator.prepare(model, loader)
+    metrics = validate(accelerator, model, loader, dataset.num_classes)
+    payload = {"protocol": "restored encoder and semantic classifier", "semantic_protocol": protocol,
+               "comparable_to_recorded_miou": True,
+               "recorded_miou_in_checkpoint": metadata["validation_miou"], **metrics}
+    if accelerator.is_main_process:
+        text = json.dumps(payload, indent=2)
+        print(text)
+        if args.validate_output:
+            args.validate_output.parent.mkdir(parents=True, exist_ok=True)
+            args.validate_output.write_text(text + "\n", encoding="utf-8")
     return 0
 
 
@@ -359,6 +395,7 @@ def build_parser():
         "--spatial-checkpoint",
         help="标准档目录（含 spatial_config.json + spatial_encoder.pt）或裸 state_dict 的 .pt",
     )
+    parser.add_argument("--restore-semantic-head", action="store_true", help="Restore both encoder and saved classifier; reject legacy encoder-only artifacts")
     parser.add_argument("--probe-epochs", type=int, default=2)
     parser.add_argument("--validate-output", type=Path, help="可选：把探针结果写成 json")
     return parser

@@ -20,9 +20,11 @@ if str(MLLM_ROOT) not in sys.path:
     sys.path.insert(0, str(MLLM_ROOT))
 
 from vtimellm.segmentation.checkpoint import save_reasonseg_checkpoint
-from vtimellm.segmentation.config import ReasonSegConfig
 from vtimellm.segmentation.data import ReasonSegCollator, ReasonSegDataset
 from vtimellm.segmentation.loader import load_reasonseg_model
+from vtimellm.segmentation.training_state import (
+    EpochRandomSampler, resolve_training_config, resume_contract, resume_position,
+)
 
 
 def main() -> int:
@@ -38,25 +40,12 @@ def main() -> int:
         from accelerate.utils import set_seed
 
         set_seed(args.seed)
-    config = ReasonSegConfig()
-    if getattr(args, "dropout", None) is not None:
-        config.dropout = float(args.dropout)
-    for flag, field in (
-        ("bce_mode", "bce_mode"),
-        ("region_loss", "region_loss"),
-        ("tversky_alpha", "tversky_alpha"),
-        ("tversky_beta", "tversky_beta"),
-    ):
-        value = getattr(args, flag, None)
-        if value is not None:
-            setattr(config, field, value)
-    if getattr(args, "no_loc_prior", False):
-        config.use_loc_prior = False
     if args.resume_from_checkpoint and args.eval_checkpoint:
         raise RuntimeError(
             "--eval-checkpoint and --resume-from-checkpoint are mutually exclusive; "
             "the former loads weights only, the latter also requires accelerator_state"
         )
+    config = resolve_training_config(args)
     tokenizer, model, _ = load_reasonseg_model(
         args,
         b3_checkpoint=args.b3_checkpoint,
@@ -66,13 +55,21 @@ def main() -> int:
         trainable=True,
     )
     train_dataset = ReasonSegDataset(
-        args.train_manifest, dataroot=args.dataroot, config=config
+        args.train_manifest, dataroot=args.dataroot, config=config, require_reachable=True
     )
     collator = ReasonSegCollator(tokenizer, model_max_length=args.model_max_length)
+    negative_count = sum(not record.targets for record in train_dataset.records)
+    accelerator.print(json.dumps({"train_records": len(train_dataset),
+                                  "train_negative_records": negative_count}))
+    if not negative_count:
+        accelerator.print("WARNING: no NOOBJ supervision; prepare an audited manifest before a new production run")
+    train_sampler = EpochRandomSampler(train_dataset, args.seed)
+    loader_generator = torch.Generator()
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.per_device_train_batch_size,
-        shuffle=True,
+        sampler=train_sampler,
+        generator=loader_generator,
         num_workers=args.dataloader_num_workers,
         pin_memory=True,
         collate_fn=collator,
@@ -119,7 +116,9 @@ def main() -> int:
         return _validate_dtype_variants(
             accelerator, model, full_val_dataset, collator, args
         )
+    args._resume_contract = resume_contract(args, accelerator.num_processes, len(train_loader))
     start_epoch = 0
+    start_batch = 0
     global_step = 0
     best_validation_iou = -1.0
     epochs_without_improvement = 0
@@ -130,16 +129,22 @@ def main() -> int:
             raise RuntimeError(
                 "resume checkpoint must contain accelerator_state and trainer_state.json"
             )
-        accelerator.load_state(str(accelerator_state))
         state = json.loads(trainer_state.read_text(encoding="utf-8"))
-        start_epoch = int(state["epoch"]) + 1
+        start_epoch, start_batch = resume_position(state, args._resume_contract)
+        accelerator.load_state(str(accelerator_state))
         global_step = int(state["global_step"])
         best_validation_iou = float(state.get("best_validation_iou", -1.0))
         epochs_without_improvement = int(state.get("epochs_without_improvement", 0))
 
     model.train()
     for epoch in range(start_epoch, args.num_train_epochs):
-        for batch in train_loader:
+        train_sampler.set_epoch(epoch)
+        if hasattr(train_loader, "set_epoch"):
+            train_loader.set_epoch(epoch)
+        loader_generator.manual_seed(args.seed + epoch)
+        offset = start_batch if epoch == start_epoch else 0
+        epoch_loader = accelerator.skip_first_batches(train_loader, offset) if offset else train_loader
+        for batch_index, batch in enumerate(epoch_loader, start=offset):
             with accelerator.accumulate(model):
                 output = model(
                     input_ids=batch["input_ids"],
@@ -188,6 +193,8 @@ def main() -> int:
                         global_step,
                         best_validation_iou,
                         epochs_without_improvement,
+                        next_batch_index=batch_index + 1,
+                        epoch_completed=False,
                     )
         validation = None
         if val_loader is not None:
@@ -218,6 +225,8 @@ def main() -> int:
             global_step,
             best_validation_iou,
             epochs_without_improvement,
+            next_batch_index=len(train_loader),
+            epoch_completed=True,
         )
         if validation is not None and improved:
             save_checkpoint(
@@ -232,6 +241,8 @@ def main() -> int:
                 best_validation_iou,
                 epochs_without_improvement,
                 destination_name="checkpoint-best",
+                next_batch_index=len(train_loader),
+                epoch_completed=True,
             )
         if (
             val_loader is not None
@@ -536,6 +547,8 @@ def save_checkpoint(
     best_validation_iou,
     epochs_without_improvement,
     destination_name=None,
+    next_batch_index=0,
+    epoch_completed=False,
 ):
     accelerator.wait_for_everyone()
     destination = Path(args.output_dir) / (
@@ -557,6 +570,10 @@ def save_checkpoint(
         (destination / "trainer_state.json").write_text(
             json.dumps(
                 {
+                    "resume_format_version": 2,
+                    "resume_contract": args._resume_contract,
+                    "next_batch_index": next_batch_index,
+                    "epoch_completed": epoch_completed,
                     "epoch": epoch,
                     "global_step": global_step,
                     "best_validation_iou": best_validation_iou,
@@ -641,8 +658,8 @@ def build_parser():
         "--no-loc-prior",
         action="store_true",
         help="训练期切断 LOC 先验注入 fine_memory 的通路（LOC 头仍训练、loc 损失仍算）。"
-             "该旗标改变权重含义，属架构字段：用它训出的档在 validate-only 复算时也必须带上，"
-             "否则 loader 会以 differing keys 拒绝加载",
+             "该旗标改变权重含义；恢复检查点时自动继承，"
+             "完整续训不允许改变该字段",
     )
     parser.add_argument("--early-stopping-patience", type=int, default=5)
     parser.add_argument("--early-stopping-min-delta", type=float, default=1e-4)

@@ -22,6 +22,7 @@ from vtimellm.mm_utils import tokenizer_image_token
 from vtimellm.segmentation.data import ReasonSegDataset
 from vtimellm.segmentation.loader import load_reasonseg_model
 from vtimellm.segmentation.metrics import SegmentationMetricAccumulator
+from vtimellm.segmentation.negative_metrics import NegativeQueryMetrics
 
 
 def main() -> int:
@@ -80,6 +81,8 @@ def main() -> int:
     masks_dir.mkdir(parents=True, exist_ok=True)
     accumulator = SegmentationMetricAccumulator(model.reasonseg_config.num_classes)
     predictions = []
+    negative_metrics = NegativeQueryMetrics()
+    positive_accumulator = SegmentationMetricAccumulator(model.reasonseg_config.num_classes)
     inference_latency_ms = []
     torch.cuda.reset_peak_memory_stats(device)
     sample_count = len(dataset) if not args.max_samples else min(len(dataset), args.max_samples)
@@ -115,6 +118,10 @@ def main() -> int:
         target_masks = sample["target_masks"].numpy()[valid_targets]
         target_classes = sample["target_classes"].numpy()[valid_targets]
         status = generated.status[0]
+        negative_metrics.update(len(target_masks), predicted_masks, status)
+        if len(target_masks):
+            positive_accumulator.update(predicted_masks, predicted_classes, target_masks,
+                                        target_classes, token_status=status)
         accumulator.update(
             predicted_masks,
             predicted_classes,
@@ -145,6 +152,8 @@ def main() -> int:
         if (index + 1) % 100 == 0:
             print(f"evaluated {index + 1}/{sample_count}")
     metrics = accumulator.compute()
+    metrics.update(negative_metrics.compute())
+    metrics['positive_queries_metrics'] = positive_accumulator.compute()
     metrics.update(
         {
             "evaluated_samples": sample_count,

@@ -199,7 +199,7 @@ def main() -> int:
     # ---- 实例侧 ----
     query_net = OracleQueryNet(config).to(device)
     decoder = QueryMaskDecoder(config).to(device)
-    inst_train = ReasonSegDataset(args.train_manifest, dataroot=args.dataroot, config=config)
+    inst_train = ReasonSegDataset(args.train_manifest, dataroot=args.dataroot, config=config, require_reachable=True)
     inst_dev = ReasonSegDataset(args.dev_manifest, dataroot=args.dataroot, config=config)
     inst_test = ReasonSegDataset(args.test_manifest, dataroot=args.dataroot, config=config)
     train_limit = args.max_train_records or len(inst_train)

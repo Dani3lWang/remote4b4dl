@@ -22,29 +22,17 @@
 #      且选定轮就是最后一轮 —— 是被预算截断的，不是收敛。
 # 每轮日志会打印编码器权重的相对变化量（conv / bn / stats 分开），直接盯住"到底学没学"。
 #
-# 预注册判据（先验推导，与 v3 观测无关，故不构成事后拟合）：
-#   top-K 解码要能命中需 AUC >= 1 - K/N，K = GT 尺寸中位 12、N ~= 32530 框内点
-#   => **门槛 0.99963**，等价于"压在正点上的负点 <= 12"。
-# 裁定分支（test，选定轮只评一次）：
-#   AUC >= 0.99963            -> top-K 可行；点特征**不是**硬约束，v2/v3 的裁定被推翻，
-#                                投向"让编码器适应实例目标"这条线
-#   0.998 <= AUC < 0.99963    -> 大幅逼近但仍不够（负点 65~12）；看 ep19 是否仍在升，
-#                                仍在升就续跑，已平则判"接近但不足"
-#   AUC < 0.998 且已平，且卷积权重变化 >= 15%
-#                             -> 特征确实被大幅改造过仍分不开实例 ⇒ **单帧点特征撑不起
-#                                实例接地**成立，转去改输出目标（粗区域）/ 引入时序多帧 /
-#                                如实报负结果
-#   AUC < 0.998 但卷积权重变化 < 5%
-#                             -> 编码器仍没被真正训练，判据无效，先解决 lr/可训练性再谈裁定
-# 辅助轴：recall_top_k（免幅值）与尺寸比 pred/target（应落在 [0.7,1.5]）。
-#
-# 成本：v3 实测 22.3 min/epoch（0.178 s/步 × 7436 步），20 epoch ≈ **7.4 h**。
-set -uo pipefail
-cd /root/autodl-tmp/mmb4dl/mllm || exit 1
+# Report measured per-object top-K IoU/recall; AUC is auxiliary, not a feasibility gate.
+# This experiment cannot establish a universal limit of single-frame features.
+set -euo pipefail
+cd "$(dirname "$0")/../.." || exit 1
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 WANDB_MODE=offline PYTHONUNBUFFERED=1
 E=/root/autodl-tmp/.conda-stuff/envs/reasonseg
-V=./reasonseg_data_trainval
+ASSETS=${REASONSEG_ASSET_ROOT:-/root/autodl-tmp/mmb4dl/mllm}
+V=${REASONSEG_MANIFEST_DIR:?set REASONSEG_MANIFEST_DIR to an audited manifest directory}
 L=./training_logs/phase23
+REPORT=./eval_results/_oracle_probe_v4_unfrozen_bnfix/report.json
+[ ! -e "$REPORT" ] || { echo "report already exists: $REPORT" >&2; exit 2; }
 mkdir -p "$L"
 
 log () { echo "[$(date '+%F %T')] $*" | tee -a "$L/run_probe_v4.log"; }
@@ -57,12 +45,12 @@ fi
 
 log "=== oracle 探针 v4：解冻编码器 lr 5e-5 + BN 钉 eval + 20 epoch（约 7.4 h）==="
 $E/bin/python scripts/reasonseg_experiments/probe_oracle_query.py \
-  --spatial-checkpoint ./checkpoints/reasonseg-spatial-tv/spatial-best \
+  --spatial-checkpoint "$ASSETS/checkpoints/reasonseg-spatial-tv/spatial-best" \
   --train-manifest "$V/reasonseg_train_internal679x11.jsonl" \
   --dev-manifest "$V/reasonseg_val_internal_es.jsonl" \
   --test-manifest "$V/reasonseg_val_thin.jsonl" \
   --dataroot /root/autodl-tmp/nuScenes \
-  --output ./eval_results/_oracle_probe_v4_unfrozen_bnfix/report.json \
+  --output "$REPORT" \
   --epochs 20 --learning-rate 1e-4 --eval-records 400 \
   --unfreeze-encoder --encoder-lr 5e-5 --freeze-encoder-bn \
   --bce-mode plain --region-loss tversky --tversky-alpha 0.3 --tversky-beta 0.7 \
@@ -70,20 +58,17 @@ $E/bin/python scripts/reasonseg_experiments/probe_oracle_query.py \
 RC=$?
 log "probe_v4 rc=$RC"
 if [ $RC -eq 0 ]; then
-  $E/bin/python - <<'PY' | tee -a "$L/run_probe_v4.log"
-import json
-d = json.load(open("eval_results/_oracle_probe_v4_unfrozen/report.json"))
-N, K = 32530.0, 12.0
-need = 1.0 - K / N
-print(f"selected epoch {d['selected_epoch']} | encoder_lr {d['config']['encoder_lr']} "
-      f"| BN pinned {d['config']['encoder_bn_pinned_eval']}")
+  $E/bin/python - "$REPORT" <<'PY' | tee -a "$L/run_probe_v4.log"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d['config']['encoder_bn_pinned_eval'] > 0
+assert d['config']['encoder_lr'] == 5e-5
+assert d['config']['epochs'] == 20
+print(f"selected epoch {d['selected_epoch']}; diagnostic only, no AUC feasibility gate")
 for split in ("dev", "test"):
     s = d[split]
-    neg = (1.0 - s["auc_mean"]) * N
-    print(f"{split}: AUC {s['auc_mean']:.5f} (门槛 {need:.5f}) -> 正点上方负点 "
-          f"{neg:.0f} 个，需 <= {K:.0f}，差 {neg / K:.1f}x | R@0.5 {s['recall_at_0.5']:.4f} "
-          f"topK {s['recall_top_k']:.4f} IoU {s['iou_mean']:.4f} "
-          f"尺寸 {s['predicted_size_median']:.0f}/{s['target_size_median']:.0f}")
+    print(f"{split}: AUC {s['auc_mean']:.5f} | R@0.5 {s['recall_at_0.5']:.4f} "
+          f"topK recall {s['recall_top_k']:.4f} topK IoU {s['iou_top_k_mean']:.4f}")
 last = d["history"][-1]
 print("末轮编码器权重相对变化:",
       {k: f"{v['relative_delta']:.2%}" for k, v in last.get("encoder_delta", {}).items()})

@@ -1,0 +1,66 @@
+{
+  "seed": 20260917,
+  "point_cloud_range": [
+    -51.2,
+    -51.2,
+    -5.0,
+    51.2,
+    51.2,
+    3.0
+  ],
+  "scene_overlap": 0,
+  "evaluation_protocol": "derived reachable + negative diagnostic sets; not original official full evaluation",
+  "manifests": [
+    {
+      "records_in": 7436,
+      "records_out": 7522,
+      "positive_records": 6770,
+      "negative_records": 752,
+      "requested_negative_fraction": 0.1,
+      "actual_negative_fraction": 0.0999734113267748,
+      "replaced_existing_negative_records": 0,
+      "unreachable_targets": 670,
+      "dropped_positive_records": 666,
+      "partially_out_of_range_targets_kept": 224,
+      "negative_policy": "class absent from all panoptic semantic labels, including tiny/out-of-range/instance-zero points",
+      "source": "/root/autodl-tmp/mmb4dl/mllm/reasonseg_data_trainval/reasonseg_train_internal679x11.jsonl",
+      "source_sha256": "de987601164425d8e1724086ae96f9c29e0afd229f1ded2c58a0d772a83b47ec",
+      "output_sha256": "e4d2586f9beabf8acec0257674beeebb36bf70b75f62fc541964cab6e92525d1",
+      "filename": "reasonseg_train_internal679x11.jsonl"
+    },
+    {
+      "records_in": 2248,
+      "records_out": 2242,
+      "positive_records": 2018,
+      "negative_records": 224,
+      "requested_negative_fraction": 0.1,
+      "actual_negative_fraction": 0.09991079393398751,
+      "replaced_existing_negative_records": 141,
+      "unreachable_targets": 90,
+      "dropped_positive_records": 89,
+      "partially_out_of_range_targets_kept": 24,
+      "negative_policy": "class absent from all panoptic semantic labels, including tiny/out-of-range/instance-zero points",
+      "source": "/root/autodl-tmp/mmb4dl/mllm/reasonseg_data_trainval/reasonseg_val_internal_es.jsonl",
+      "source_sha256": "f53a28df8290417dc78887a3d161c3a9e78798522a22bb5ee892d86868045d0d",
+      "output_sha256": "f53561e04ad0d4391f22dceb88279908172e391394c31ed2b87999ca16b2777d",
+      "filename": "reasonseg_val_internal_es.jsonl"
+    },
+    {
+      "records_in": 2248,
+      "records_out": 2342,
+      "positive_records": 2108,
+      "negative_records": 234,
+      "requested_negative_fraction": 0.1,
+      "actual_negative_fraction": 0.09991460290350128,
+      "replaced_existing_negative_records": 0,
+      "unreachable_targets": 143,
+      "dropped_positive_records": 140,
+      "partially_out_of_range_targets_kept": 37,
+      "negative_policy": "class absent from all panoptic semantic labels, including tiny/out-of-range/instance-zero points",
+      "source": "/root/autodl-tmp/mmb4dl/mllm/reasonseg_data_trainval/reasonseg_val_thin.jsonl",
+      "source_sha256": "9d4edf5057cb1bb618c0b2b68e54c9309aa89007a27668ab5f2243fc017313d8",
+      "output_sha256": "6e9779c829d60ac4cea2a225ab9b4342140e4399f237c01570c04e2abca2d131",
+      "filename": "reasonseg_val_thin.jsonl"
+    }
+  ]
+}

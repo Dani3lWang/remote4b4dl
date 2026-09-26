@@ -57,10 +57,12 @@ class ReasonSegDataset(Dataset):
         *,
         dataroot: Optional[str] = None,
         config: Optional[ReasonSegConfig] = None,
+        require_reachable: bool = False,
     ):
         self.manifest_path = Path(manifest_path).resolve()
         self.dataroot = Path(dataroot).resolve() if dataroot else self.manifest_path.parent
         self.config = config or ReasonSegConfig()
+        self.require_reachable = require_reachable
         self.records = _load_jsonl(self.manifest_path)
         if not self.records:
             raise ValueError(f"empty ReasonSeg manifest: {self.manifest_path}")
@@ -104,6 +106,14 @@ class ReasonSegDataset(Dataset):
                 raise RuntimeError(
                     f"target panoptic id {target.panoptic_id} is absent in {record.sample_token}"
                 )
+            if self.require_reachable:
+                lower, upper = self.config.point_cloud_range[:3], self.config.point_cloud_range[3:]
+                inside = ((xyz[mask] >= lower) & (xyz[mask] < upper)).all(axis=1)
+                if not inside.any():
+                    raise ValueError(
+                        f"unreachable target {target.panoptic_id} in {record.sample_token}; "
+                        "prepare_audited_manifests.py must filter the whole record before training"
+                    )
             center = xyz[mask].mean(axis=0)
             radius = np.linalg.norm(xyz[mask] - center, axis=1).max()
             loc_mask = np.linalg.norm(xyz - center, axis=1) <= (

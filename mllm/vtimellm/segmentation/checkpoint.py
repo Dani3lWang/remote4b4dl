@@ -125,6 +125,8 @@ def save_spatial_encoder_checkpoint(
     epoch: int,
     validation_miou: float,
     num_classes: int,
+    classifier=None,
+    semantic_protocol=None,
 ) -> None:
     """Save a lidarseg-pretrained encoder without coupling it to the LLM."""
 
@@ -141,6 +143,11 @@ def save_spatial_encoder_checkpoint(
         "validation_miou": float(validation_miou),
         "num_classes": int(num_classes),
     }
+    if classifier is not None:
+        if semantic_protocol is None:
+            raise ValueError("a saved semantic classifier requires its validation protocol")
+        torch.save(_cpu_state_dict(classifier.state_dict()), destination / "semantic_classifier.pt")
+        metadata["semantic_protocol"] = semantic_protocol
     (destination / "spatial_config.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
@@ -179,6 +186,18 @@ def load_spatial_encoder_checkpoint(point_encoder, checkpoint_dir: str, *, confi
         raise RuntimeError(f"spatial checkpoint config mismatch: {differences}")
     state = torch.load(weights_path, map_location="cpu", weights_only=True)
     point_encoder.load_state_dict(state, strict=True)
+    return metadata
+
+
+def load_semantic_checkpoint(model, checkpoint_dir, *, config, semantic_protocol):
+    source = Path(checkpoint_dir)
+    metadata = json.loads((source / "spatial_config.json").read_text())
+    if not (source / "semantic_classifier.pt").is_file() or "semantic_protocol" not in metadata:
+        raise ValueError("legacy encoder-only checkpoint: use the linear-probe protocol, not direct mIoU reproduction")
+    if metadata["semantic_protocol"] != semantic_protocol:
+        raise ValueError("semantic validation protocol differs from checkpoint")
+    load_spatial_encoder_checkpoint(model.point_encoder, checkpoint_dir, config=config)
+    model.classifier.load_state_dict(torch.load(source / "semantic_classifier.pt", map_location="cpu", weights_only=True), strict=True)
     return metadata
 
 

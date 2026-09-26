@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
@@ -92,6 +93,7 @@ class NuScenesLidarsegDataset(Dataset):
             raise ValueError(f"no lidarseg samples found for internal {split} split")
         self.records = records
         mapping = getattr(nusc, "lidarseg_name2idx_mapping", None) or {}
+        self.label_mapping = {str(key): int(value) for key, value in mapping.items()}
         self.num_classes = max((int(value) for value in mapping.values()), default=31) + 1
 
     def __len__(self) -> int:
@@ -200,6 +202,17 @@ def semantic_metrics(confusion: torch.Tensor) -> dict[str, float]:
     return {
         "miou": float(iou[present].mean()) if present.any() else 0.0,
         "point_accuracy": float(accuracy),
+    }
+
+
+def semantic_validation_protocol(dataset, args):
+    samples = [record[0] for record in dataset.records]
+    return {
+        "sample_tokens_sha256": hashlib.sha256(json.dumps(samples).encode()).hexdigest(),
+        "samples": len(samples), "label_mapping": dataset.label_mapping,
+        "num_classes": dataset.num_classes, "label_source": dataset.label_source,
+        "version": args.version, "ignore_label": args.ignore_label,
+        "mixed_precision": args.mixed_precision,
     }
 
 

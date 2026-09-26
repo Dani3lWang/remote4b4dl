@@ -37,13 +37,15 @@
 # 成本：冒烟实测 0.25 s/步 × 7,436 步 ≈ 31 min/epoch，20 epoch ≈ 10.4 h；加逐轮
 # 实例 dev（400 条）与语义 val（2,806 条）约 1.3 min/epoch ⇒ **训练约 10.8 h**，
 # 之后 6 次线性探针（选定轮 + 5 个快照）约 11 min/次 ⇒ **合计约 12 h**。
-set -uo pipefail
-cd /root/autodl-tmp/mmb4dl/mllm || exit 1
+set -euo pipefail
+cd "$(dirname "$0")/../.." || exit 1
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 WANDB_MODE=offline PYTHONUNBUFFERED=1
 E=/root/autodl-tmp/.conda-stuff/envs/reasonseg
-V=./reasonseg_data_trainval
+ASSETS=${REASONSEG_ASSET_ROOT:-/root/autodl-tmp/mmb4dl/mllm}
+V=${REASONSEG_MANIFEST_DIR:?set REASONSEG_MANIFEST_DIR to an audited manifest directory}
 L=./training_logs/phase23
 OUT=./eval_results/_multitask_encoder
+[ ! -e "$OUT" ] || { echo "output already exists: $OUT" >&2; exit 2; }
 DRIVER="$L/multitask_driver.log"
 mkdir -p "$L" "$OUT"
 
@@ -57,7 +59,7 @@ fi
 
 log "=== S1/2 多任务微调（20 epoch，约 10.8 h）==="
 $E/bin/python scripts/reasonseg_experiments/probe_multitask_encoder.py \
-  --spatial-checkpoint ./checkpoints/reasonseg-spatial-tv/spatial-best \
+  --spatial-checkpoint "$ASSETS/checkpoints/reasonseg-spatial-tv/spatial-best" \
   --train-manifest "$V/reasonseg_train_internal679x11.jsonl" \
   --dev-manifest "$V/reasonseg_val_internal_es.jsonl" \
   --test-manifest "$V/reasonseg_val_thin.jsonl" \

@@ -225,6 +225,10 @@ class HierarchicalMaskDecoder(nn.Module):
         if target_classes.shape != class_logits.shape[:2]:
             raise ValueError("class target shape does not match class logits")
 
+        # A positive target with no visible point is not an all-background example.
+        object_valid_mask = object_valid_mask & (
+            target_masks.bool() & point_valid_mask[:, None, :]
+        ).any(dim=-1)
         valid = point_valid_mask[:, None, :] & object_valid_mask[:, :, None]
         seg = _mask_loss(
             mask_logits,

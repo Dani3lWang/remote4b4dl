@@ -1,73 +1,11 @@
 #!/usr/bin/env python3
-"""Phase 2.3 oracle-query probe: how accurate can masks get with perfect localization?
+"""Oracle centre/class diagnostic under one encoder, decoder and training budget.
 
-Bypasses the language model entirely. The query handed to the fine decoder is
-built from the ground-truth object centre (normalised by point_cloud_range) plus a
-one-hot class — perfect localization, no mask leakage. Everything downstream is
-the real thing: the same spconv point encoder, the same QueryMaskDecoder, the same
-`_mask_loss`, and the same per-object memory expansion the real head uses, so the
-only difference from a full model run is where the query comes from.
-
-This measures a CEILING, not a model. Read it on two axes, because the first run
-showed a single recall@0.5 threshold cannot discriminate: it reported 0.045 (which
-the original trichotomy mapped to "encoder is the bottleneck") alongside AUC 0.978,
-which flatly contradicts that verdict. recall@0.5 conflates ranking quality with
-size calibration, so it is the wrong discriminator here.
-
-  * AUC — ranking quality given perfect localization. Compare against the
-    full model's 0.858: the gap is what the LM query pathway costs.
-  * recall_top_k (K = GT point count) — magnitude-free, so it isolates ranking
-    from threshold/size calibration.
-
-The decisive threshold is derived a priori, not fitted to any observation: for
-top-K recall to work with K ~= 11 positives among N ~= 32500 in-range points you
-need AUC >= 1 - K/N ~= 0.99966 (Phase 2.0 measured the full model at 0.858, where
-each positive has ~4938 negatives ranked above it). So:
-
-  AUC >= 0.995      -> features + decoder are close to sufficient; the remaining
-                       gap is the LM query pathway
-  0.90 <= AUC < 0.995 -> informative but not separable at the point level. Read it
-                       as "expected negatives ranked above a positive" =
-                       (1 - AUC) * N: at AUC 0.858 that is ~4615, at 0.978 ~715,
-                       and top-K needs it down to ~K = 11. So oracle localization
-                       buys a 6.5x reduction but still leaves a 65x shortfall —
-                       the limit is encoder resolution / receptive field, and
-                       query-side work alone cannot close it.
-  AUC < 0.90        -> the frozen encoder's features cannot support instance masks
-
-Independently of the above, a predicted/target size median ratio outside
-[0.7, 1.5] is its own defect: it means the decoder cannot calibrate extent even
-when told exactly where the object is.
-
-The centre+class oracle is deliberately the weakest useful oracle: it states
-"segment the car at (x, y, z)" and nothing more. Feeding the GT extent as well
-would leak the answer's scale and inflate the ceiling.
-
-Everything above was measured with the encoder FROZEN, so it bounds "the existing
-semantic-pretrained features + a perfect query" — NOT "point features in general".
-The encoder was trained on lidarseg (semantic) only, so its features encode "this
-is a car point" and were never asked to be instance-discriminative. v2 (6 epochs,
-lr 1e-4, selected ep4) reached test AUC 0.99110 / recall_top_k 0.11058: ~289
-negatives above each positive where top-K needs <= 12, still ~24x short.
-
-`--unfreeze-encoder` runs the decisive follow-up: fine-tune the encoder under the
-same oracle supervision, at its own lower lr (`--encoder-lr`), and see whether AUC
-moves toward 0.99963. If it also plateaus near 0.99 then single-frame point
-features genuinely cannot separate instances at this resolution, and the honest
-options are a coarser output target, temporal multi-frame input, or reporting the
-negative result. Unfreezing also switches the encoder to train mode (dropout
-active) and makes the per-epoch snapshot include encoder weights, so that the
-selected-epoch test eval is not "last encoder + selected head".
-
-voxel_size is NOT the lever, and this is measured rather than assumed: points are
-scored per raw LiDAR point, so voxel_size changes neither N nor K (the 1-K/N
-threshold is invariant), and same-voxel feature ties — the only way voxel granularity
-could cap a per-point AUC — are ~0 in practice (T median 0 at 0.1 m, tie-implied AUC
-ceiling 0.99999996). See probe_voxel_tie_ceiling.py.
-
-Epoch selection uses dev iou_mean (recall@0.5 is too coarse over a few hundred
-objects); the test manifest is evaluated once at the selected epoch and never
-influences training or selection.
+Report measured per-object top-K IoU/recall alongside thresholded masks and AUC.
+K uses the GT size and is diagnostic only, not deployable prediction. AUC is a
+pairwise ranking average: 1-K/N is neither a sufficient top-K success criterion
+nor evidence of an architectural upper bound. A failed finite probe cannot rule
+out single-frame instance segmentation. Select on dev only; evaluate test once.
 """
 
 from __future__ import annotations
@@ -279,6 +217,7 @@ def evaluate(dataset, encoder, query_net, decoder, config, device, limit) -> dic
                     top_k[order[:target_size]] = True
                     rows.append({
                         "index": index,
+                        "sample_token": sample["sample_token"],
                         "class_name": dataset.records[index].targets[k].class_name,
                         "target_size": target_size,
                         "predicted_size": int(predicted.sum()),
@@ -299,6 +238,15 @@ def evaluate(dataset, encoder, query_net, decoder, config, device, limit) -> dic
         return {"objects": 0, "skipped_unreachable": skipped_unreachable}
     return {
         "objects": len(rows),
+        "object_metrics": rows,
+        "by_class": {
+            name: {
+                "objects": sum(row["class_name"] == name for row in rows),
+                "recall_top_k": float(np.mean([row["hit_top_k"] for row in rows if row["class_name"] == name])),
+                "iou_top_k_mean": float(np.mean([row["iou_top_k"] for row in rows if row["class_name"] == name])),
+            }
+            for name in sorted({row["class_name"] for row in rows})
+        },
         "skipped_unreachable": skipped_unreachable,
         "recall_at_0.5": float(np.mean([row["hit"] for row in rows])),
         "recall_top_k": float(np.mean([row["hit_top_k"] for row in rows])),
@@ -387,7 +335,7 @@ def main() -> int:
     optimizer = torch.optim.AdamW(param_groups, weight_decay=0.01)
 
     train_dataset = ReasonSegDataset(
-        args.train_manifest, dataroot=args.dataroot, config=config
+        args.train_manifest, dataroot=args.dataroot, config=config, require_reachable=True
     )
     train_limit = args.max_train_records or len(train_dataset)
     dev_dataset = ReasonSegDataset(args.dev_manifest, dataroot=args.dataroot, config=config)
