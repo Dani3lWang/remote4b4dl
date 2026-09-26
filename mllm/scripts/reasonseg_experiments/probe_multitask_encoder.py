@@ -88,6 +88,26 @@ def infinite(loader):
             yield batch
 
 
+# 与 snapshot_modules 的顺序一一对应
+SNAPSHOT_MODULE_NAMES = ("instance_query_net", "instance_decoder", "encoder", "semantic_classifier")
+
+
+def save_snapshot(output_dir, tag, modules, encoder):
+    """落两份盘：`encoder_<tag>.pt` 只含编码器（线性探针与 --spatial-checkpoint 直接吃它），
+    `state_<tag>.pt` 含编码器 + 两个实例头 + 语义头的权重。
+
+    只存编码器是不够的：头不在里面，于是"从末轮接着往下训"做不到、想延长预算只能整轮
+    重跑——第一次多任务跑要补 10 轮时就撞上了这件事。注意 state_*.pt 足以**热启动**
+    （权重齐），但**不是精确续跑**：AdamW 的二阶矩没有保存。
+    """
+    torch.save(encoder.state_dict(), output_dir / f"encoder_{tag}.pt")
+    torch.save(
+        {name: module.state_dict() for name, module in zip(SNAPSHOT_MODULE_NAMES, modules)},
+        output_dir / f"state_{tag}.pt",
+    )
+    print(f"snapshot -> encoder_{tag}.pt / state_{tag}.pt", flush=True)
+
+
 @torch.inference_mode()
 def semantic_validate(model, loader, num_classes: int, device, limit: int) -> dict:
     """联合训练那个语义头在内部 val 上的 miou——只当趋势，不作裁定数（见模块 docstring）。"""
@@ -369,9 +389,7 @@ def main() -> int:
                 for m in snapshot_modules
             ]
         if args.snapshot_every and (epoch + 1) % args.snapshot_every == 0:
-            path = args.output_dir / f"encoder_ep{epoch}.pt"
-            torch.save(encoder.state_dict(), path)
-            print(f"snapshot -> {path}", flush=True)
+            save_snapshot(args.output_dir, f"ep{epoch}", snapshot_modules, encoder)
         # 每轮都把 history 落盘：9 小时的跑，中途崩了不该什么都拿不到
         (args.output_dir / "history.json").write_text(
             json.dumps(history, ensure_ascii=False, indent=1), encoding="utf-8"
@@ -382,7 +400,7 @@ def main() -> int:
             module.load_state_dict({k: v.to(device) for k, v in state.items()})
     print(f"selected epoch {best['epoch']} by dev iou_mean {best['dev']['iou_mean']:.4f}",
           flush=True)
-    torch.save(encoder.state_dict(), args.output_dir / "encoder_selected.pt")
+    save_snapshot(args.output_dir, "selected", snapshot_modules, encoder)
     test = evaluate(inst_test, encoder, query_net, decoder, config, device, args.eval_records)
     report = {
         "config": {
