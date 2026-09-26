@@ -7,7 +7,7 @@ metadata:
   originSessionId: f554c11b-93d7-4687-a2ad-c0a5d4dec88a
 ---
 
-ReasonSeg 在 `seg` 分支、autodl3（4090 24G）上跑，conda 环境是独立的 `reasonseg`（`/root/autodl-tmp/.conda-stuff/envs/reasonseg`，torch 2.8.0+cu128 / spconv 2.3.6），**不复用 `wqlc`**。原始对话见 `docs/memory/qoder-sessions/`（4 份，含会话 ID）；实时状态见 `docs/learn docs/B4DL_ReasonSeg训练现状_20260925.md`。运行口径（`--validation-samples 0`、`--dtype fp16 --encoder-dtype fp32`、`cIoU`=面积加权 / `gIoU`=逐对均值键名反直觉、模型选择只能用 internal 划分）已固化在仓库根 `CLAUDE.md`，此处不重复。
+ReasonSeg 在 `seg` 分支、autodl3（4090 24G）上跑，conda 环境是独立的 `reasonseg`（`/root/autodl-tmp/.conda-stuff/envs/reasonseg`，torch 2.8.0+cu128 / spconv 2.3.6），**不复用 `wqlc`**。原始对话见 `docs/memory/qoder-sessions/`（4 份，含会话 ID）；实时状态见 `docs/learn docs/B4DL_ReasonSeg训练现状_20260925.md`；**要一份完整的阶段性结论与可引用数字表，读 `docs/learn docs/B4DL_ReasonSeg实验总结_20260927.md`**（弧线、七杠杆判死证据、oracle 四跑、语义×实例共存、四个度量 bug、判据四次落空、产物索引）。运行口径（`--validation-samples 0`、`--dtype fp16 --encoder-dtype fp32`、`cIoU`=面积加权 / `gIoU`=逐对均值键名反直觉、模型选择只能用 internal 划分）已固化在仓库根 `CLAUDE.md`，此处不重复。
 
 ## 一、指标演进主线
 
