@@ -59,6 +59,7 @@ from vtimellm.segmentation.checkpoint import load_spatial_encoder_checkpoint  # 
 from vtimellm.segmentation.config import ReasonSegConfig  # noqa: E402
 from vtimellm.segmentation.data import ReasonSegDataset  # noqa: E402
 from vtimellm.segmentation.heads import QueryMaskDecoder, _mask_loss  # noqa: E402
+from vtimellm.segmentation.multiframe import ARMS, MultiFrameReasonSegDataset  # noqa: E402
 from vtimellm.segmentation.semantic_pretrain import (  # noqa: E402
     LidarsegCollator,
     NuScenesLidarsegDataset,
@@ -131,6 +132,22 @@ def semantic_validate(model, loader, num_classes: int, device, limit: int) -> di
     return semantic_metrics(confusion.cpu())
 
 
+def _instance_dataset(args, manifest: str, config: ReasonSegConfig,
+                      require_reachable: bool = False):
+    """实例侧数据集：单帧走原路径，多帧套 `MultiFrameReasonSegDataset`。
+
+    三臂共用同一份 manifest 与同一份 anchor 掩码，差异只在点的装配方式。
+    """
+    if args.temporal_arm == "none":
+        return ReasonSegDataset(manifest, dataroot=args.dataroot, config=config,
+                                require_reachable=require_reachable)
+    return MultiFrameReasonSegDataset(
+        manifest, dataroot=args.dataroot, config=config, arm=args.temporal_arm,
+        num_frames=args.num_frames, require_reachable=require_reachable,
+        nuscenes_version=args.version,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spatial-checkpoint", required=True)
@@ -158,6 +175,10 @@ def main() -> int:
     parser.add_argument("--tversky-beta", type=float, default=0.7)
     parser.add_argument("--bce-mode", choices=("plain", "balanced"), default="plain")
     parser.add_argument("--snapshot-every", type=int, default=4)
+    # 选项 A：实例侧改成多帧拼接。`none` = 完全走原路径（单帧），与历史跑逐位可比。
+    # 语义侧**始终单帧**（lidarseg 没有拼接后的标签），所以这里的唯一变量就是实例输入。
+    parser.add_argument("--temporal-arm", choices=("none",) + ARMS, default="none")
+    parser.add_argument("--num-frames", type=int, default=3, help="含 anchor，必须为奇数")
     parser.add_argument("--dataloader-num-workers", type=int, default=0)
     parser.add_argument("--gpu-id", type=int, default=0)
     parser.add_argument("--seed", type=int, default=20260917)
@@ -219,9 +240,9 @@ def main() -> int:
     # ---- 实例侧 ----
     query_net = OracleQueryNet(config).to(device)
     decoder = QueryMaskDecoder(config).to(device)
-    inst_train = ReasonSegDataset(args.train_manifest, dataroot=args.dataroot, config=config, require_reachable=True)
-    inst_dev = ReasonSegDataset(args.dev_manifest, dataroot=args.dataroot, config=config)
-    inst_test = ReasonSegDataset(args.test_manifest, dataroot=args.dataroot, config=config)
+    inst_train = _instance_dataset(args, args.train_manifest, config, require_reachable=True)
+    inst_dev = _instance_dataset(args, args.dev_manifest, config)
+    inst_test = _instance_dataset(args, args.test_manifest, config)
     train_limit = args.max_train_records or len(inst_train)
 
     instance_params = list(query_net.parameters()) + list(decoder.parameters())
@@ -426,6 +447,14 @@ def main() -> int:
             "encoder_bn_pinned_eval": pinned_bn,
             "seed": args.seed,
             "oracle": "gt_center_normalized + one_hot_class",
+            "temporal_arm": args.temporal_arm,
+            "num_frames": args.num_frames if args.temporal_arm != "none" else 1,
+            # 门槛 1-K/N 里的 K、N 都随臂变化（a1/a3 的 K 是跨帧同实例点并集、非线性增长），
+            # 所以裁定一律用"距本臂门槛的倍数"，不许拿裸 AUC 跨臂横比。
+            "temporal_note": (
+                "语义侧始终单帧；实例侧 " + args.temporal_arm + " 的 K/N 与先验门槛须按本臂"
+                "实测重算。oracle query 的中心现在是拼接后正例点集的质心。"
+                if args.temporal_arm != "none" else "单帧基线路径，与历史跑逐位可比"),
             "selection": "epoch with best dev iou_mean; test evaluated once at that epoch",
             "semantic_val_note": (
                 "训练期这个 miou 来自与编码器联合训练的头，偏乐观，只当趋势；"
