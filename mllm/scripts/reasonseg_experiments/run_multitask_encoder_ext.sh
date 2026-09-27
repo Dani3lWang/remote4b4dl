@@ -99,7 +99,7 @@ $E/bin/python - <<'PY' | tee -a "$DRIVER"
 import json, pathlib
 N, K = 32530.0, 12.0
 NEED = 1.0 - K / N
-PRE_MIou, BASE_SEM, BASE_MIou = 0.30785, 0.33109, 0.22073
+PRETRAIN_MIou, FIRST_MT_MIou, V4_MIou = 0.30785, 0.33109, 0.22073  # 名字必须带来源，曾因 BASE_MIou 拿到 v4 的数把 Δ 标签印反
 rep = json.load(open("eval_results/_multitask_encoder_ext/report.json"))
 h = rep["history"]
 sel = rep["selected_epoch"]
@@ -130,7 +130,7 @@ for tag in ("encoder_ep23", "encoder_ep27", "encoder_selected"):
         sem[tag] = json.load(p.open())["final"]["miou"]
 print("\n新快照线性探针语义 miou（基线 0.30785 / 首跑选定轮 0.33109 / v4 0.22073）:")
 for tag, v in sem.items():
-    print(f"  {tag:<18} {v:.5f}  Δ基线 {v-BASE_MIou:+.5f} ({(v-BASE_MIou)/BASE_MIou:+.1%})  Δv4 {v-PRE_MIou:+.5f}")
+print(f"  {tag:<18} {v:.5f}  Δ预训练 {v-PRETRAIN_MIou:+.5f} ({(v-PRETRAIN_MIou)/PRETRAIN_MIou:+.1%})  Δv4 {v-V4_MIou:+.5f}  Δ首跑 {v-FIRST_MT_MIou:+.5f}")
 
 auc = t["auc_mean"]
 if auc >= NEED:
