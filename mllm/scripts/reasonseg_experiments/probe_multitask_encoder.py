@@ -179,6 +179,12 @@ def main() -> int:
     # 语义侧**始终单帧**（lidarseg 没有拼接后的标签），所以这里的唯一变量就是实例输入。
     parser.add_argument("--temporal-arm", choices=("none",) + ARMS, default="none")
     parser.add_argument("--num-frames", type=int, default=3, help="含 anchor，必须为奇数")
+    # 4819a15 把实例侧 train 的 require_reachable 硬编码成 True，而盘上**没有**过滤过的
+    # train 清单（只有 reasonseg_val_thin_reachable.jsonl），于是直接跑会在第一条不可达
+    # 目标上抛错。默认关掉它，与 20/30ep 单帧参照保持同一份数据语义 —— 那两跑用的是合并前
+    # 的代码。要按新语义跑得先产出 audited train 清单，并且参照也得一起重算。
+    parser.add_argument("--require-reachable", action="store_true",
+                        help="训练清单必须已按记录过滤过不可达目标，否则抛错")
     parser.add_argument("--dataloader-num-workers", type=int, default=0)
     parser.add_argument("--gpu-id", type=int, default=0)
     parser.add_argument("--seed", type=int, default=20260917)
@@ -240,7 +246,8 @@ def main() -> int:
     # ---- 实例侧 ----
     query_net = OracleQueryNet(config).to(device)
     decoder = QueryMaskDecoder(config).to(device)
-    inst_train = _instance_dataset(args, args.train_manifest, config, require_reachable=True)
+    inst_train = _instance_dataset(args, args.train_manifest, config,
+                                   require_reachable=args.require_reachable)
     inst_dev = _instance_dataset(args, args.dev_manifest, config)
     inst_test = _instance_dataset(args, args.test_manifest, config)
     train_limit = args.max_train_records or len(inst_train)
