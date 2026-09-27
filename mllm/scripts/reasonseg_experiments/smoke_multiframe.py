@@ -155,6 +155,8 @@ def main() -> int:
     if np.median(extra_arr) == 0:
         failures.append("邻帧正例点中位数为 0 ⇒ 多帧没有带来任何新监督信号")
 
+    report["frame_examples"] = {str(i): a1.frame_summary(i) for i in range(min(3, len(a1)))}
+
     for name, dataset in (("a1_compensated", a1), ("a3_naive", a3), ("a2_repeat", base)):
         report[f"threshold_{name}"] = metrics_for(dataset, args.records, config)
 

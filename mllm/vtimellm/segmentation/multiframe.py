@@ -68,12 +68,19 @@ class Frame:
     origin: np.ndarray
 
     def box_of(self, annotation: Dict[str, object]) -> "OrientedBox":
-        """sample_annotation 的框在全局系；换算到本帧 ego 系。"""
+        """sample_annotation 的框在全局系；换算到本帧 ego 系。
+
+        ⚠ nuScenes 的 `size` 是 **(width, length, height)**，而框的局部 x 轴沿 **length**
+        （`nuscenes/utils/data_classes.py:613-615`：`x_corners = l/2`、`y_corners = w/2`）
+        ⇒ 半尺寸必须重排成 (length, width, height)/2。直接按数组原序用会把一辆 4.6×1.9 的
+        车变成 1.9 长 4.6 宽，框与 GT 掩码的 IoU 从 ≈1 掉到 0.1 量级 —— 冒烟门实测抓到的
+        就是这个，所以它必须先于任何 GPU 长跑。
+        """
         center_global = np.asarray(annotation["translation"], dtype=np.float64)
-        size = np.asarray(annotation["size"], dtype=np.float64)  # x_len, y_width, z_height
+        width, length, height = (float(value) for value in annotation["size"])
         return OrientedBox(
             center=(center_global - self.origin) @ self.to_global,
-            half_size=size / 2.0,
+            half_size=np.array([length / 2.0, width / 2.0, height / 2.0]),
             rotation=self.to_global.T @ quaternion_matrix(annotation["rotation"]),
         )
 
@@ -167,14 +174,14 @@ class MultiFrameReasonSegDataset(Dataset):
         frames = self._scene_frames(record.sample_token)
         reference = self._reference(frames, record.sample_token)
         # a1 把所有帧表达到 anchor 的 ego 系；a3 表达到各自的 ego 系（= 不做补偿）
-        target = reference.frame if self.arm == "a1_compensated" else None
+        target = reference["frame"] if self.arm == "a1_compensated" else None
 
         segments: List[Dict[str, object]] = [{
             "offset": 0,
             "points": anchor["points"].numpy(),
-            "panoptic": reference.panoptic,
-            "frame": reference.frame,
-            "anns": reference.anns,
+            "panoptic": reference["panoptic"],
+            "frame": reference["frame"],
+            "anns": reference["anns"],
         }]
         for entry in frames:
             if entry["offset"] == 0 or entry.get("points") is None:
@@ -293,6 +300,8 @@ class MultiFrameReasonSegDataset(Dataset):
             if entry.get("points") is None:
                 out["points"].append(0)
                 out["shift_m"].append(None)
+                out.setdefault("missing", []).append(
+                    {"offset": entry["offset"], "reason": entry.get("missing", "?")})
                 continue
             # 全帧质心的位移 = 自车运动量（背景被对齐了多少），不是目标物体的位移
             compensated = ego_to_ego(entry["points"], entry["frame"], reference["frame"])
@@ -330,6 +339,7 @@ class MultiFrameReasonSegDataset(Dataset):
         sample_data_token = sample["data"]["LIDAR_TOP"]
         sample_data = nusc.get("sample_data", sample_data_token)
         ego_pose = nusc.get("ego_pose", sample_data["ego_pose_token"])
+        calibrated = nusc.get("calibrated_sensor", sample_data["calibrated_sensor_token"])
         path = self.dataroot / sample_data["filename"]
         panoptic_path = (self.dataroot / "panoptic" / self.nuscenes_version /
                          f"{sample_data_token}_panoptic.npz")
@@ -345,12 +355,20 @@ class MultiFrameReasonSegDataset(Dataset):
         points = points.reshape(-1, 5)[:, :4]
         if panoptic.shape[0] != points.shape[0]:
             raise RuntimeError(f"point/panoptic length mismatch in {sample_data_token}")
+        ego_to_global = quaternion_matrix(ego_pose["rotation"])
         entry.update({
             "sample_data_token": sample_data_token,
             "points": points,
             "panoptic": panoptic,
-            "frame": Frame(to_global=quaternion_matrix(ego_pose["rotation"]),
-                           origin=np.asarray(ego_pose["translation"], dtype=np.float64)),
-            "anns": {nusc.get("sample_annotation", token)["instance_token"]:
-                     nusc.get("sample_annotation", token) for token in sample["anns"]},
+            "frame": Frame(
+                # 本帧的系 = LiDAR **传感器**系。sensor->ego 由 calibrated_sensor 给、
+                # ego->global 由 ego_pose 给，复合后 to_global = R_ego @ R_cs、
+                # origin = t_ego + R_ego @ t_cs。anchor 段因此与单帧跑喂进编码器的张量
+                # 逐位相同 —— "唯一变量是多了邻帧"这个前提靠这一点守住。
+                to_global=ego_to_global @ quaternion_matrix(calibrated["rotation"]),
+                origin=np.asarray(ego_pose["translation"], dtype=np.float64)
+                       + ego_to_global @ np.asarray(calibrated["translation"], dtype=np.float64)),
+            "anns": {annotation["instance_token"]: annotation
+                     for annotation in (nusc.get("sample_annotation", token)
+                                        for token in sample["anns"])},
         })
