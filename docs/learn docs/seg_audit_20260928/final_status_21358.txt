@@ -1,0 +1,18 @@
+2026-09-28 17:05:26 CST
+/root/autodl-tmp/.conda-stuff/envs/reasonseg/lib/python3.10/site-packages/spconv/pytorch/functional.py:369: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  def backward(ctx, grad_output):
+/root/autodl-tmp/.conda-stuff/envs/reasonseg/lib/python3.10/site-packages/spconv/pytorch/functional.py:389: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  def backward(ctx, grad_output):
+/root/autodl-tmp/.conda-stuff/envs/reasonseg/lib/python3.10/site-packages/spconv/pytorch/functional.py:412: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  def backward(ctx, grad_output):
+实例 train 7436 / dev 2248 / test 2248；语义 train 25324 / val 2806；num_classes 32
+trainable: encoder 1,486,592 @ 5e-05 | instance head 6,522,624 @ 0.0001 | semantic head 8,224 @ 0.001 | BN pinned eval 8
+loss = 1.0 * CE_semantic + 1.0 * mask_loss
+ep0 step200/7436 total=1.5038 sem=0.4767 inst=1.0271 elapsed=214s
+ep0 step400/7436 total=1.3877 sem=0.3916 inst=0.9962 elapsed=365s
+ep0 step600/7436 total=1.3533 sem=0.3657 inst=0.9876 elapsed=517s
+[2026-09-28 13:18:19] 链启动，等 A2 收尾
+[2026-09-28 13:20:24] 链启动，等 A2 收尾
+[2026-09-28 13:20:54] 链启动，等 A2 收尾
+[2026-09-28 13:21:24] 链启动，等 A2 收尾
+[2026-09-28 16:53:25] 启动 a1_compensated

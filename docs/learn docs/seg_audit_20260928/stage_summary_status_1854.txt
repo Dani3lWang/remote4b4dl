@@ -1,0 +1,12 @@
+Read-only SSH check: connect.bjb1.seetacloud.com:21358
+2026-09-28 18:54:18 CST
+Repository HEAD: d4c3e7f
+A1 latest log lines:
+ep1 step800/7436 total=0.9261 sem=0.2541 inst=0.6721 elapsed=606s
+ep1 step1000/7436 total=0.9343 sem=0.2592 inst=0.6751 elapsed=757s
+ep1 step1200/7436 total=0.9355 sem=0.2619 inst=0.6736 elapsed=909s
+ep1 step1400/7436 total=0.9361 sem=0.2611 inst=0.6750 elapsed=1061s
+ep1 step1600/7436 total=0.9354 sem=0.2602 inst=0.6751 elapsed=1212s
+A2 verdict stat:
+2026-09-28 13:39:49.591232119 +0800 2902 /root/autodl-tmp/mmb4dl/mllm/training_logs/temporal/a2_verdict.txt
+A1 final report.json: no file found by queried path.

@@ -1,0 +1,711 @@
+{
+  "local_head": "d4a09135285e2fcf3feb73517e62ebc48efd6903",
+  "range": "50476c2^..HEAD",
+  "commits": [
+    {
+      "commit": "50476c29d9daeef43401af8a24bd9c38a7927a5d",
+      "date": "2026-09-17T11:31:34+08:00",
+      "subject": "feat: 增加 ReasonSeg 单帧点级分割能力",
+      "files": [
+        "\"docs/B4DL_\\345\\210\\206\\345\\211\\262\\344\\270\\216\\350\\257\\206\\345\\210\\253\\346\\224\\271\\351\\200\\240\\350\\256\\241\\345\\210\\222.md\"",
+        "mllm/docs/reasonseg.md",
+        "mllm/evaluation/evaluate_reasonseg.py",
+        "mllm/requirements-seg.txt",
+        "mllm/scripts/build_reasonseg_nuscenes.py",
+        "mllm/scripts/preflight_reasonseg.py",
+        "mllm/scripts/run_reasonseg.sh",
+        "mllm/scripts/train_reasonseg.py",
+        "mllm/scripts/train_reasonseg_spatial.py",
+        "mllm/tests/test_reasonseg.py",
+        "mllm/vtimellm/demo_gradio.py",
+        "mllm/vtimellm/lidar_visualizer.py",
+        "mllm/vtimellm/segmentation/__init__.py",
+        "mllm/vtimellm/segmentation/checkpoint.py",
+        "mllm/vtimellm/segmentation/config.py",
+        "mllm/vtimellm/segmentation/data.py",
+        "mllm/vtimellm/segmentation/heads.py",
+        "mllm/vtimellm/segmentation/inference.py",
+        "mllm/vtimellm/segmentation/loader.py",
+        "mllm/vtimellm/segmentation/metrics.py",
+        "mllm/vtimellm/segmentation/model.py",
+        "mllm/vtimellm/segmentation/semantic_pretrain.py",
+        "mllm/vtimellm/segmentation/spatial_encoder.py",
+        "mllm/vtimellm/segmentation/tokens.py"
+      ]
+    },
+    {
+      "commit": "674bc59a838657b54b4c1acd4363128df6f997ca",
+      "date": "2026-09-18T21:11:44+08:00",
+      "subject": "Fix seg token adapter fp32 master weights and support mini splits",
+      "files": [
+        "mllm/scripts/build_reasonseg_nuscenes.py",
+        "mllm/vtimellm/segmentation/tokens.py"
+      ]
+    },
+    {
+      "commit": "2d4b8ecf2228d3758f137032452dd1368bafa6eb",
+      "date": "2026-09-19T00:15:10+08:00",
+      "subject": "fix: reasonseg 训练支持 --no-resume-state 精简 ckpt 与 --keep-last 轮转，避免全量 accelerator_state 写满磁盘",
+      "files": [
+        "mllm/scripts/train_reasonseg.py"
+      ]
+    },
+    {
+      "commit": "95ea3cc1d6c849d1a0b0223a6f917fc8b39c727b",
+      "date": "2026-09-21T00:56:54+08:00",
+      "subject": "chore: 归档 B4DL/ReasonSeg 训练与诊断脚本，训练脚本新增 --dropout 开关",
+      "files": [
+        ".gitignore",
+        "mllm/docs/train_2ep_frame_position.md",
+        "mllm/evaluation/recompute_dual_meteor.py",
+        "mllm/scripts/convert_lidarllm_to_stage1.py",
+        "mllm/scripts/convert_raw_to_conversations.py",
+        "mllm/scripts/create_splits.py",
+        "mllm/scripts/diagnose_reasonseg_masks.py",
+        "mllm/scripts/oversample_tg_highframe.py",
+        "mllm/scripts/probe_reasonseg_conditioning.py",
+        "mllm/scripts/resume_stage2_full.sh",
+        "mllm/scripts/run_b1_pipeline.sh",
+        "mllm/scripts/run_b2_pipeline.sh",
+        "mllm/scripts/run_b3_pipeline.sh",
+        "mllm/scripts/run_b4a_pipeline.sh",
+        "mllm/scripts/run_b4dl_eval.sh",
+        "mllm/scripts/run_metatoken.sh",
+        "mllm/scripts/run_mixed_eval_after_train.sh",
+        "mllm/scripts/run_stage2_full.sh",
+        "mllm/scripts/run_stage2_full_seq.sh",
+        "mllm/scripts/run_stage2_full_seqv2.sh",
+        "mllm/scripts/run_stage2_full_seqv3.sh",
+        "mllm/scripts/run_stage2_full_seqv3_mixed.sh",
+        "mllm/scripts/run_stage2_full_seqv3_mixed_b1.sh",
+        "mllm/scripts/run_stage2_full_seqv3_mixed_b2.sh",
+        "mllm/scripts/run_stage2_full_seqv3_mixed_b3.sh",
+        "mllm/scripts/run_stage2_full_seqv3_mixed_b4a.sh",
+        "mllm/scripts/run_stage2_full_seqv3_mixed_framepos2ep.sh",
+        "mllm/scripts/run_stage2_full_seqv3_mixed_paper2ep.sh",
+        "mllm/scripts/select_reasonseg_trainval.py",
+        "mllm/scripts/subsample_reasonseg_manifest.py",
+        "mllm/scripts/train_reasonseg.py",
+        "mllm/scripts/verify.sh",
+        "mllm/scripts/verify_frame_position.py",
+        "requirements.txt"
+      ]
+    },
+    {
+      "commit": "4ce30251569e5e8345307f6bbb42234960c748ed",
+      "date": "2026-09-21T00:56:54+08:00",
+      "subject": "docs: 归档复现方案、学习笔记与 wiki 复现记录",
+      "files": [
+        "\"docs/B4DL_\\345\\244\\215\\347\\216\\260\\346\\226\\271\\346\\241\\210.md\"",
+        "\"docs/learn docs/B4DL_RL\\345\\274\\225\\350\\277\\233\\345\\217\\257\\350\\241\\214\\346\\200\\247\\346\\267\\261\\345\\272\\246\\345\\210\\206\\346\\236\\220_20260908.md\"",
+        "\"docs/learn docs/B4DL_b4dl_dataset\\346\\225\\260\\346\\215\\256\\346\\270\\205\\347\\220\\206\\350\\256\\260\\345\\275\\225_20260910.md\"",
+        "\"docs/learn docs/B4DL_seqv2\\350\\257\\204\\346\\265\\213\\345\\257\\271\\346\\257\\224\\344\\270\\216\\345\\235\\215\\347\\274\\251\\345\\210\\206\\346\\236\\220_20260825.md\"",
+        "\"docs/learn docs/B4DL_seqv3\\346\\267\\267\\345\\220\\210\\350\\256\\255\\347\\273\\203\\350\\257\\204\\346\\265\\213\\345\\210\\206\\346\\236\\220_20260827.md\"",
+        "docs/learn docs/B4DL_vs_LiDAR-LLM_comparison.md",
+        "\"docs/learn docs/B4DL_\\344\\270\\244\\351\\230\\266\\346\\256\\265\\350\\256\\255\\347\\273\\203\\350\\257\\204\\346\\265\\213\\344\\270\\216\\346\\267\\267\\345\\220\\210\\346\\263\\225\\345\\206\\263\\347\\255\\226_20260826.md\"",
+        "\"docs/learn docs/B4DL_\\345\\205\\250\\344\\273\\223\\345\\272\\223\\350\\256\\272\\346\\226\\207\\345\\257\\271\\351\\275\\220\\345\\256\\241\\346\\237\\245_20260829.md\"",
+        "\"docs/learn docs/B4DL_\\345\\210\\206\\345\\211\\262\\346\\250\\241\\345\\235\\227\\347\\247\\273\\346\\244\\215\\346\\226\\271\\346\\241\\210_AB\\350\\267\\257\\347\\272\\277_20260909.md\"",
+        "\"docs/learn docs/B4DL_\\345\\237\\272\\347\\272\\277\\347\\211\\210\\346\\234\\254\\350\\256\\255\\347\\273\\203\\346\\226\\271\\346\\263\\225\\345\\257\\271\\346\\257\\224_20260830.md\"",
+        "\"docs/learn docs/B4DL_\\345\\237\\272\\347\\272\\277\\351\\224\\201\\345\\256\\232\\344\\270\\216\\345\\257\\271\\346\\257\\224\\350\\247\\204\\345\\210\\231_20260829.md\"",
+        "\"docs/learn docs/B4DL_\\345\\255\\246\\344\\271\\240\\350\\256\\241\\345\\210\\222\\344\\270\\216\\347\\237\\245\\350\\257\\206\\345\\211\\215\\346\\217\\220_20260831.md\"",
+        "\"docs/learn docs/B4DL_\\345\\267\\245\\344\\275\\234\\350\\277\\233\\345\\272\\246\\346\\200\\273\\347\\273\\223_20260906.md\"",
+        "\"docs/learn docs/B4DL_\\345\\276\\205\\344\\277\\256\\346\\224\\271\\346\\270\\205\\345\\215\\225_20260829.md\"",
+        "\"docs/learn docs/B4DL_\\346\\224\\271\\350\\277\\233\\346\\226\\271\\346\\263\\225\\345\\205\\250\\346\\231\\257_20260911.md\"",
+        "\"docs/learn docs/B4DL_\\350\\256\\255\\347\\273\\203\\344\\273\\243\\347\\240\\201\\345\\205\\250\\346\\231\\257\\350\\247\\243\\346\\236\\220_20260907.md\"",
+        "\"docs/learn docs/B4DL_\\350\\256\\255\\347\\273\\203\\344\\274\\230\\345\\214\\226\\350\\247\\222\\345\\272\\246\\345\\210\\206\\346\\236\\220\\344\\270\\216\\347\\255\\226\\347\\225\\245_20260908.md\"",
+        "\"docs/learn docs/B4DL_\\350\\256\\255\\347\\273\\203\\345\\205\\250\\346\\265\\201\\347\\250\\213\\345\\210\\206\\346\\255\\245\\350\\257\\246\\350\\247\\243_RL\\345\\274\\225\\350\\277\\233\\346\\214\\202\\350\\275\\275\\347\\202\\271_20260907.md\"",
+        "\"docs/learn docs/B4DL_\\350\\256\\255\\347\\273\\203\\346\\226\\271\\346\\263\\225\\345\\257\\271\\346\\257\\224_\\350\\256\\272\\346\\226\\207vs\\345\\244\\215\\347\\216\\260_20260828.md\"",
+        "\"docs/learn docs/B4DL_\\350\\256\\272\\346\\226\\207\\345\\257\\271\\351\\275\\220\\345\\256\\241\\350\\256\\241_20260824.md\"",
+        "\"docs/learn docs/B4DL_\\350\\257\\204\\346\\265\\213\\346\\225\\260\\345\\200\\274\\345\\257\\271\\346\\257\\224\\344\\270\\216\\351\\227\\256\\351\\242\\230\\346\\270\\205\\345\\215\\225_20260828.md\"",
+        "\"docs/learn docs/B4DL_\\350\\277\\201\\347\\247\\273\\346\\270\\205\\345\\215\\225\\344\\270\\216SSH\\346\\220\\254\\350\\277\\220\\346\\211\\213\\345\\206\\214_20260910.md\"",
+        "docs/learn docs/VTimeLLM_analysis.md",
+        "\"docs/\\345\\217\\202\\350\\200\\203/LiDAR LLM.py\"",
+        "\"docs/\\345\\217\\202\\350\\200\\203/\\350\\256\\260\\345\\275\\225.md\"",
+        "wiki/Paper-vs-Reproduction.md",
+        "wiki/Reproduction-Guide.md",
+        "wiki/Reproduction-Log.md"
+      ]
+    },
+    {
+      "commit": "dc3ef0429987a46a52c980b02f6379d4a4434956",
+      "date": "2026-09-22T18:42:55+08:00",
+      "subject": "fix: ReasonSeg 评测分精度加载并跳过解码图像占位 token",
+      "files": [
+        "mllm/evaluation/evaluate_reasonseg.py",
+        "mllm/vtimellm/segmentation/model.py"
+      ]
+    },
+    {
+      "commit": "92132fb5ec8381fc88a9d0e0973e9e4ca5b6b4e0",
+      "date": "2026-09-22T18:43:01+08:00",
+      "subject": "feat: ReasonSeg 训练支持 validation-manifest 与 dtype 变体对照验证",
+      "files": [
+        "mllm/scripts/train_reasonseg.py"
+      ]
+    },
+    {
+      "commit": "f6d8b6d8df4ef22ec9d0844b85660260d7d49ed4",
+      "date": "2026-09-22T18:43:07+08:00",
+      "subject": "feat: 新增 ReasonSeg 场景子集构建器并归档 tvenc 系实验脚本",
+      "files": [
+        "mllm/scripts/build_reasonseg_scene_subset.py",
+        "mllm/scripts/reasonseg_experiments/_eval_after_tvenc680.sh",
+        "mllm/scripts/reasonseg_experiments/_monitor_tvenc680.sh",
+        "mllm/scripts/reasonseg_experiments/build_subset_680x11.sh",
+        "mllm/scripts/reasonseg_experiments/run_reasonseg_tvenc.sh",
+        "mllm/scripts/reasonseg_experiments/run_reasonseg_tvenc680.sh"
+      ]
+    },
+    {
+      "commit": "c51c644afd655b2c41af89bf045f9ec41af9b804",
+      "date": "2026-09-22T19:44:26+08:00",
+      "subject": "feat: ReasonSeg 数据管线改为官方 train 场景内防泄漏划分",
+      "files": [
+        "\"docs/B4DL_\\345\\210\\206\\345\\211\\262\\344\\270\\216\\350\\257\\206\\345\\210\\253\\346\\224\\271\\351\\200\\240\\350\\256\\241\\345\\210\\222.md\"",
+        "mllm/reasonseg_splits.py",
+        "mllm/scripts/build_reasonseg_nuscenes.py",
+        "mllm/scripts/select_reasonseg_trainval.py",
+        "mllm/vtimellm/segmentation/semantic_pretrain.py"
+      ]
+    },
+    {
+      "commit": "c4c5d51cfa19c9e03db2a1f92cc27509987b1dbc",
+      "date": "2026-09-22T19:44:40+08:00",
+      "subject": "feat: ReasonSeg 预检、指标与评测方法学加固",
+      "files": [
+        "\"docs/learn docs/\\350\\256\\272\\346\\226\\207\\346\\240\\270\\345\\277\\203\\350\\247\\243\\350\\257\\273_MORE3D_Reason3D_20260921.md\"",
+        "mllm/docs/reasonseg.md",
+        "mllm/evaluation/evaluate_reasonseg.py",
+        "mllm/requirements-seg.txt",
+        "mllm/scripts/preflight_reasonseg.py",
+        "mllm/scripts/run_reasonseg.sh",
+        "mllm/scripts/run_reasonseg_eval.sh",
+        "mllm/scripts/run_reasonseg_spatial.sh",
+        "mllm/scripts/train_reasonseg_spatial.py",
+        "mllm/tests/test_reasonseg.py",
+        "mllm/tests/test_reasonseg_preflight.py",
+        "mllm/vtimellm/segmentation/metrics.py"
+      ]
+    },
+    {
+      "commit": "ffccbd50049edf89d3660580a74a2de9aae5d296",
+      "date": "2026-09-22T21:36:03+08:00",
+      "subject": "feat: ReasonSeg 无泄漏 val 重划分与四臂 TF 复评脚本",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/repartition_reasonseg_val.py",
+        "mllm/scripts/reasonseg_experiments/run_tfval_noleak.sh"
+      ]
+    },
+    {
+      "commit": "5804fd16a1ab955b0eda9e36372d6953d4480b13",
+      "date": "2026-09-22T21:39:46+08:00",
+      "subject": "docs: CLAUDE.md 补 ReasonSeg（seg 分支）开发约定",
+      "files": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "commit": "faeff52176909c67d6f3a54db01eaabebb568a37",
+      "date": "2026-09-22T22:34:48+08:00",
+      "subject": "feat: ReasonSeg 掩码阈值扫描与自由生成失败离线分解",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/analyze_reasonseg_failures.py",
+        "mllm/scripts/reasonseg_experiments/recompute_reasonseg_metrics.py",
+        "mllm/scripts/reasonseg_experiments/run_tfval_threshold_sweep.sh",
+        "mllm/scripts/train_reasonseg.py"
+      ]
+    },
+    {
+      "commit": "2a5c72a72c99d1af8c6cab975920e7d2fd61c334",
+      "date": "2026-09-22T22:48:11+08:00",
+      "subject": "fix: ReasonSeg teacher-forcing 验证关闭 autograd 图",
+      "files": [
+        "mllm/scripts/train_reasonseg.py"
+      ]
+    },
+    {
+      "commit": "890fdcbbe48c55de26860436c534facba1409e80",
+      "date": "2026-09-22T23:08:08+08:00",
+      "subject": "feat: ReasonSeg 阈值扫描同时输出 recall@0.5 命中数",
+      "files": [
+        "mllm/scripts/train_reasonseg.py"
+      ]
+    },
+    {
+      "commit": "b24ebc65b5d3940380af24e8212591a86349a944",
+      "date": "2026-09-22T23:13:47+08:00",
+      "subject": "feat: 生成无泄漏重训所需的 internal 场景清单与早停子集",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/prepare_internal_split_manifests.py"
+      ]
+    },
+    {
+      "commit": "c136d45186581ac75e72777bc44550d6dec5892b",
+      "date": "2026-09-22T23:35:46+08:00",
+      "subject": "feat: 过夜串行链——B4a 口径重跑 + 无泄漏协议重训 + 训后三评",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/chain_overnight_b4a_then_internal679.sh",
+        "mllm/scripts/reasonseg_experiments/run_reasonseg_internal679.sh",
+        "mllm/scripts/run_b4a_wholescene_eval.sh"
+      ]
+    },
+    {
+      "commit": "2092437999e907eaa1f95bb65029f3fc7e7bb35d",
+      "date": "2026-09-22T23:48:04+08:00",
+      "subject": "fix: 六任务评测指定仓库内 nltk_data 并给下载限时",
+      "files": [
+        "mllm/evaluation/evaluate_model.py",
+        "mllm/run_baseline_eval.sh",
+        "mllm/scripts/run_b4a_wholescene_eval.sh",
+        "mllm/scripts/run_mixed_eval_after_train.sh"
+      ]
+    },
+    {
+      "commit": "ea39c9401f6dfbb04b46207e17c7d753c936e009",
+      "date": "2026-09-22T23:53:56+08:00",
+      "subject": "chore: gitignore 忽略仓库内 nltk_data 语料目录",
+      "files": [
+        ".gitignore"
+      ]
+    },
+    {
+      "commit": "3bd899170ed52de058bc3a21ec586913d72c15ea",
+      "date": "2026-09-23T23:07:56+08:00",
+      "subject": "feat: 新增 ReasonSeg 接地诊断脚本（AUC/top-K/LOC 包含率）",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/diagnose_reasonseg_grounding.py"
+      ]
+    },
+    {
+      "commit": "053fcb613dfb8f9ed0290a20be287d7bccc51472",
+      "date": "2026-09-23T23:30:55+08:00",
+      "subject": "feat: 掩码损失支持 balanced BCE 与 Tversky，修复极端正例稀疏下的沉默塌缩",
+      "files": [
+        "mllm/scripts/train_reasonseg.py",
+        "mllm/tests/test_reasonseg.py",
+        "mllm/vtimellm/segmentation/config.py",
+        "mllm/vtimellm/segmentation/heads.py",
+        "mllm/vtimellm/segmentation/loader.py"
+      ]
+    },
+    {
+      "commit": "04ec539510adefed6e9676f3e45c7a71bc70cf3e",
+      "date": "2026-09-23T23:31:14+08:00",
+      "subject": "feat: 接地诊断增加 LOC 先验置零与相对阈值解码两臂",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/diagnose_reasonseg_grounding.py"
+      ]
+    },
+    {
+      "commit": "78cf410f6577e18134512defd154437f2430b2ae",
+      "date": "2026-09-23T23:31:18+08:00",
+      "subject": "feat: Phase 2 过夜串行链——推理侧两臂 + 损失再平衡三臂 + 判据自动裁定",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/chain_phase2_loss_rebalance.sh",
+        "mllm/scripts/reasonseg_experiments/run_grounding_phase21.sh",
+        "mllm/scripts/reasonseg_experiments/run_loss_rebalance_arms.sh",
+        "mllm/scripts/reasonseg_experiments/summarize_phase22.py"
+      ]
+    },
+    {
+      "commit": "51fbd7acfadb1b1eb9fdc867076ebe1d90018d52",
+      "date": "2026-09-23T23:34:57+08:00",
+      "subject": "docs: CLAUDE.md 补充掩码损失旗标、LOSS_ONLY_FIELDS 约定与接地诊断入口",
+      "files": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "commit": "590a0f4f53a3a49e0d7e8f0a2ece87c591b1d611",
+      "date": "2026-09-24T01:19:50+08:00",
+      "subject": "feat: Phase 2.2 判据无歧义时自动扩跑 20 epoch 的独立 watcher",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/decide_phase22_extension.py",
+        "mllm/scripts/reasonseg_experiments/run_loss_rebalance_extension.sh",
+        "mllm/scripts/reasonseg_experiments/watch_phase22_then_extend.sh"
+      ]
+    },
+    {
+      "commit": "a684511bf0b192af71da0eb91d20b988091fe8ff",
+      "date": "2026-09-25T11:22:50+08:00",
+      "subject": "fix: teacher-forcing 分母不再依赖模型触发量",
+      "files": [
+        "mllm/scripts/train_reasonseg.py"
+      ]
+    },
+    {
+      "commit": "a9993b3420d26da23786ff6aca60eb17acb570f5",
+      "date": "2026-09-25T11:22:54+08:00",
+      "subject": "feat: 过滤 point_cloud_range 外不可达目标，并加 V1/V2/V3 验证链",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/chain_verify_v123.sh",
+        "mllm/scripts/reasonseg_experiments/filter_unreachable_targets.py"
+      ]
+    },
+    {
+      "commit": "6bf33da0cc74ed59af82fc4b135898adf2aef64d",
+      "date": "2026-09-25T11:25:20+08:00",
+      "subject": "fix: 不可达目标过滤器的帧缓存不能再存 targets 下标",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/filter_unreachable_targets.py"
+      ]
+    },
+    {
+      "commit": "617a90db87e84c912036a7c06976243393519412",
+      "date": "2026-09-25T12:48:23+08:00",
+      "subject": "feat: 掩码头支持训练期切除 LOC 先验",
+      "files": [
+        "mllm/scripts/train_reasonseg.py",
+        "mllm/tests/test_reasonseg.py",
+        "mllm/vtimellm/segmentation/config.py",
+        "mllm/vtimellm/segmentation/heads.py"
+      ]
+    },
+    {
+      "commit": "5a343235cc6731500bf5dceb43c3673a337517f1",
+      "date": "2026-09-25T12:48:28+08:00",
+      "subject": "feat: Phase 2.3 oracle-query 探针与串行链，把接地瓶颈一分为二",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/chain_phase23.sh",
+        "mllm/scripts/reasonseg_experiments/probe_oracle_query.py"
+      ]
+    },
+    {
+      "commit": "aa8437e04eda091e7277c47b96545e4449de9dda",
+      "date": "2026-09-25T12:58:44+08:00",
+      "subject": "fix: oracle 探针评分改用 in-range 掩码而非前缀切法",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/probe_oracle_query.py"
+      ]
+    },
+    {
+      "commit": "057cf1e5fff5c6cd6b9eaae6075309e2f54ad44c",
+      "date": "2026-09-25T14:36:46+08:00",
+      "subject": "fix: oracle 探针改逐轮选优并补 top-K，判据换成先验推导的 AUC 阈值",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/probe_oracle_query.py",
+        "mllm/scripts/reasonseg_experiments/watch_then_rerun_oracle_probe.sh"
+      ]
+    },
+    {
+      "commit": "6b65cefa75f1381e136dfef0004f26893f2d0860",
+      "date": "2026-09-25T14:39:49+08:00",
+      "subject": "docs: 修正探针判据里一个算错的量级说法",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/probe_oracle_query.py"
+      ]
+    },
+    {
+      "commit": "6bc7208b84cd0e89ef986abd93cb3350b4fee1d1",
+      "date": "2026-09-25T18:27:19+08:00",
+      "subject": "docs: 记录 Phase 2.3 收尾现状与 B1 未决裁定",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\""
+      ]
+    },
+    {
+      "commit": "83ba02538ce88bcad07adbe51e9e40905fd0efe6",
+      "date": "2026-09-25T20:56:29+08:00",
+      "subject": "docs: 补 oracle 探针 v2 最终数与裁定——点特征分辨率是硬约束",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\""
+      ]
+    },
+    {
+      "commit": "9bce615a2328b7db74a2dd75156a4055e6ae0525",
+      "date": "2026-09-25T21:06:22+08:00",
+      "subject": "feat: 量体素并列给逐点 AUC 设的天花板，推翻改 voxel_size 的前提",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\"",
+        "mllm/scripts/reasonseg_experiments/probe_voxel_tie_ceiling.py"
+      ]
+    },
+    {
+      "commit": "474d522805dff7e4b6ed2590fd51f21338f922fe",
+      "date": "2026-09-25T21:30:49+08:00",
+      "subject": "chore: 解散 AgentMEM，记忆本体迁入 git 跟踪的 docs/memory",
+      "files": [
+        ".gitignore",
+        "CLAUDE.md",
+        "\"docs/learn docs/B4DL_\\350\\277\\201\\347\\247\\273\\346\\270\\205\\345\\215\\225\\344\\270\\216SSH\\346\\220\\254\\350\\277\\220\\346\\211\\213\\345\\206\\214_20260910.md\"",
+        "docs/learn docs/RTX5090_DEBUG_LOG.md",
+        "docs/memory/MEMORY.md",
+        "docs/memory/README.md",
+        "docs/memory/b4dl-agentmem-archive.md",
+        "docs/memory/b4dl-checkpoint-cleanup.md",
+        "docs/memory/b4dl-codex-project-memory.md",
+        "docs/memory/b4dl-dataset-cleanup.md",
+        "docs/memory/b4dl-disk-requirements.md",
+        "docs/memory/b4dl-eval-methodology-caveats.md",
+        "docs/memory/b4dl-git-commit-conventions.md",
+        "docs/memory/b4dl-lidarclip-weight-provenance.md",
+        "docs/memory/b4dl-metatoken-implementation.md",
+        "docs/memory/b4dl-modify-only-project-folder.md",
+        "docs/memory/b4dl-per-sequence-refactor.md",
+        "docs/memory/b4dl-project-overview.md",
+        "docs/memory/b4dl-qoder-conversation-history.md",
+        "docs/memory/b4dl-reasonseg-seg-line-2026-09.md",
+        "docs/memory/b4dl-rl-introduction-plan.md",
+        "docs/memory/b4dl-server-access-workflow.md",
+        "docs/memory/b4dl-stage1-official-162k.md",
+        "docs/memory/b4dl-training-eval-history.md",
+        "\"docs/memory/qoder-sessions/2026-09-21_SSH\\350\\277\\236\\346\\216\\245\\350\\257\\267\\346\\261\\202.md\"",
+        "\"docs/memory/qoder-sessions/2026-09-22_\\345\\210\\206\\345\\211\\262\\350\\256\\255\\347\\273\\203\\346\\200\\273\\347\\273\\223.md\"",
+        "\"docs/memory/qoder-sessions/2026-09-22_\\347\\273\\247\\347\\273\\255\\346\\237\\245\\347\\234\\213\\350\\256\\255\\347\\273\\203\\350\\277\\233\\345\\272\\246.md\"",
+        "\"docs/memory/qoder-sessions/2026-09-25_\\346\\237\\245\\347\\234\\213autodl3\\350\\256\\255\\347\\273\\203\\350\\277\\233\\345\\272\\246.md\"",
+        "docs/memory/qoder-sessions/INDEX.md"
+      ]
+    },
+    {
+      "commit": "0ad6205fb6d8f402c240081267a33f5ee61f46c4",
+      "date": "2026-09-25T21:42:10+08:00",
+      "subject": "feat: oracle 探针支持解冻编码器，把\"点特征天花板\"这个裁定补全",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/probe_oracle_query.py",
+        "mllm/scripts/reasonseg_experiments/run_oracle_probe_unfrozen.sh"
+      ]
+    },
+    {
+      "commit": "cdc29b9a77ded88132aeeebc7e8b34d0a194c313",
+      "date": "2026-09-25T21:47:42+08:00",
+      "subject": "fix: 接地诊断改用 in-range 掩码评分，不再把框内点数当前缀长度",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/diagnose_reasonseg_grounding.py",
+        "mllm/scripts/reasonseg_experiments/watch_then_rediagnose.sh"
+      ]
+    },
+    {
+      "commit": "5a6429c6e4062d8a0f51ac99c56d673189098d4f",
+      "date": "2026-09-25T21:49:39+08:00",
+      "subject": "docs: 现状文档补 v3 解冻编码器臂与诊断复算的排队状态",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\""
+      ]
+    },
+    {
+      "commit": "dd2a16e765249fdfcd7ddd9be77ce8624aa11aab",
+      "date": "2026-09-26T01:17:40+08:00",
+      "subject": "docs: 补 v3 解冻臂与无偏诊断结果，并更正两处判错",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\"",
+        "docs/memory/MEMORY.md",
+        "docs/memory/b4dl-reasonseg-seg-line-2026-09.md"
+      ]
+    },
+    {
+      "commit": "c4b7d7731b4ac0156dc50129be5b2e1843d1b9d6",
+      "date": "2026-09-26T01:28:13+08:00",
+      "subject": "feat: 探针 v4——真微调编码器并把 BN 钉在 eval，消除 v3 的两个混淆",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\"",
+        "mllm/scripts/reasonseg_experiments/probe_oracle_query.py",
+        "mllm/scripts/reasonseg_experiments/run_oracle_probe_v4.sh"
+      ]
+    },
+    {
+      "commit": "d745653a6b1a3ce5b516bc35519640c384de8252",
+      "date": "2026-09-26T02:01:49+08:00",
+      "subject": "feat: 空间编码器加线性探针入口，并挡住一个会静默给出垃圾数的陷阱",
+      "files": [
+        "mllm/scripts/train_reasonseg_spatial.py"
+      ]
+    },
+    {
+      "commit": "25aad94786287511257fa309bf411bbebc8599e6",
+      "date": "2026-09-26T02:08:42+08:00",
+      "subject": "docs: 记下 lidarseg mIoU 0.2876 不可复算的两个独立原因",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\"",
+        "docs/memory/b4dl-reasonseg-seg-line-2026-09.md"
+      ]
+    },
+    {
+      "commit": "695b235449a5f02215cd2930fa2eb4798774431f",
+      "date": "2026-09-26T12:08:13+08:00",
+      "subject": "docs: v4 裁定——单帧点特征撑不起实例接地成立；线性探针改零 worker 重跑",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\"",
+        "mllm/scripts/reasonseg_experiments/run_linear_probe_semantic.sh"
+      ]
+    },
+    {
+      "commit": "0c643a2e24c843ee603872baf1817e46a1456514",
+      "date": "2026-09-26T12:42:38+08:00",
+      "subject": "docs: 线性探针量出语义代价——v4 编码器掉了 28.3%，不能直接插回完整模型",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\"",
+        "docs/memory/b4dl-reasonseg-seg-line-2026-09.md"
+      ]
+    },
+    {
+      "commit": "572716d213f7890f9883d6a66665ec41827d2574",
+      "date": "2026-09-26T13:33:12+08:00",
+      "subject": "feat: 多任务微调空间编码器，检验语义与实例目标能否共存",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/probe_multitask_encoder.py",
+        "mllm/scripts/reasonseg_experiments/run_multitask_encoder.sh"
+      ]
+    },
+    {
+      "commit": "37909b52bc6385e8096aef718c9f226f0a1f5a76",
+      "date": "2026-09-26T13:34:15+08:00",
+      "subject": "docs: 记录多任务微调已启动、实测步时与预注册五档判据",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\""
+      ]
+    },
+    {
+      "commit": "4819a15868390412231914b3db646cb12fd6a546",
+      "date": "2026-09-26T15:54:08+08:00",
+      "subject": "fix(reasonseg): make training resume and evaluation auditable",
+      "files": [
+        "mllm/docs/reasonseg-audit-data-report-20260926.json",
+        "mllm/docs/reasonseg-training-audit-20260926.md",
+        "mllm/evaluation/evaluate_reasonseg.py",
+        "mllm/scripts/reasonseg_experiments/prepare_audited_manifests.py",
+        "mllm/scripts/reasonseg_experiments/probe_multitask_encoder.py",
+        "mllm/scripts/reasonseg_experiments/probe_oracle_query.py",
+        "mllm/scripts/reasonseg_experiments/run_loss_rebalance_extension.sh",
+        "mllm/scripts/reasonseg_experiments/run_multitask_encoder.sh",
+        "mllm/scripts/reasonseg_experiments/run_oracle_probe_v4.sh",
+        "mllm/scripts/train_reasonseg.py",
+        "mllm/scripts/train_reasonseg_spatial.py",
+        "mllm/tests/test_reasonseg_training_safety.py",
+        "mllm/vtimellm/segmentation/checkpoint.py",
+        "mllm/vtimellm/segmentation/data.py",
+        "mllm/vtimellm/segmentation/heads.py",
+        "mllm/vtimellm/segmentation/negative_metrics.py",
+        "mllm/vtimellm/segmentation/semantic_pretrain.py",
+        "mllm/vtimellm/segmentation/training_state.py"
+      ]
+    },
+    {
+      "commit": "8b7bb906a8bea42fb77bdfbdede36d1cfafd18c5",
+      "date": "2026-09-26T23:50:21+08:00",
+      "subject": "docs: 多任务微调裁定——语义与实例可共存，且这一跑加强了点特征天花板",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\350\\256\\255\\347\\273\\203\\347\\216\\260\\347\\212\\266_20260925.md\"",
+        "docs/memory/MEMORY.md",
+        "docs/memory/b4dl-reasonseg-seg-line-2026-09.md"
+      ]
+    },
+    {
+      "commit": "6e45a560a20f33a31626f23320040d53162452b6",
+      "date": "2026-09-27T00:07:56+08:00",
+      "subject": "feat: 多任务快照补全四个模块权重，并加延长到 30 epoch 的选项 C 链",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/probe_multitask_encoder.py",
+        "mllm/scripts/reasonseg_experiments/run_multitask_encoder_ext.sh"
+      ]
+    },
+    {
+      "commit": "1e7a4646643198ef2dfa281f91a5ca8baefc5546",
+      "date": "2026-09-27T00:12:54+08:00",
+      "subject": "docs: ReasonSeg 阶段性实验总结（09-18~27），报告只留结论、机制与可引用数字",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\345\\256\\236\\351\\252\\214\\346\\200\\273\\347\\273\\223_20260927.md\"",
+        "docs/memory/b4dl-reasonseg-seg-line-2026-09.md"
+      ]
+    },
+    {
+      "commit": "1031b4b0ed27af64fa1cd766dc571d9c89cf8af5",
+      "date": "2026-09-27T00:39:21+08:00",
+      "subject": "merge: 并入 ReasonSeg 探针与多任务微调线（voxel 天花板/v3/v4/多任务/线性探针）",
+      "files": []
+    },
+    {
+      "commit": "59ac3aa7b28bf945352ae2d7b2f89870b075dfa6",
+      "date": "2026-09-27T13:46:51+08:00",
+      "subject": "docs: 选项 C 裁定 D 平台定案——30 轮排序轴仍停在 AUC 0.9938，缺口扩到 16.9 倍",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\345\\256\\236\\351\\252\\214\\346\\200\\273\\347\\273\\223_20260927.md\"",
+        "docs/memory/b4dl-reasonseg-seg-line-2026-09.md"
+      ]
+    },
+    {
+      "commit": "924e72188cb569c8e2f45ff5769846c78352a5d1",
+      "date": "2026-09-27T13:46:51+08:00",
+      "subject": "fix: 线性探针基线变量改名为带来源，修掉汇总里 Δ基线/Δv4 标签互换",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/run_multitask_encoder_ext.sh"
+      ]
+    },
+    {
+      "commit": "c14ccd921740082396aa5323ed0deafe7b3dc859",
+      "date": "2026-09-27T15:15:38+08:00",
+      "subject": "docs: 选项 A 预注册——三臂设计，密度对照改用复制点而非不补偿拼接，门槛按臂重算",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\345\\244\\232\\345\\270\\247A_\\351\\242\\204\\346\\263\\250\\345\\206\\214_20260927.md\""
+      ]
+    },
+    {
+      "commit": "5de0d55f9f717caffd6f6ed29c72917632c76107",
+      "date": "2026-09-27T15:45:20+08:00",
+      "subject": "feat: 多帧数据集三臂装配与冒烟门，选项 A 的实例侧入口接上",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/probe_multitask_encoder.py",
+        "mllm/scripts/reasonseg_experiments/smoke_multiframe.py",
+        "mllm/vtimellm/segmentation/multiframe.py"
+      ]
+    },
+    {
+      "commit": "95399aff488d5155940253e3bacc99f0edd3aac2",
+      "date": "2026-09-27T16:09:45+08:00",
+      "subject": "fix: 多帧装配的框轴序与传感器系两处错，冒烟门三张清单全过",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\345\\244\\232\\345\\270\\247A_\\351\\242\\204\\346\\263\\250\\345\\206\\214_20260927.md\"",
+        "mllm/scripts/reasonseg_experiments/smoke_multiframe.py",
+        "mllm/vtimellm/segmentation/multiframe.py"
+      ]
+    },
+    {
+      "commit": "048a1d0d21945b950dd94e8d34a980678588818e",
+      "date": "2026-09-27T17:27:43+08:00",
+      "subject": "feat: 单臂时序 runner，门槛按臂实测并内置 a2 失效门预言",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/run_temporal_arm.sh"
+      ]
+    },
+    {
+      "commit": "d4c3e7fe2364c05e864da7ce85e71839acfb794a",
+      "date": "2026-09-27T17:32:08+08:00",
+      "subject": "fix: require_reachable 改成显式旗标默认关闭，A 三臂与单帧参照同数据语义",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\345\\244\\232\\345\\270\\247A_\\351\\242\\204\\346\\263\\250\\345\\206\\214_20260927.md\"",
+        "mllm/scripts/reasonseg_experiments/probe_multitask_encoder.py"
+      ]
+    },
+    {
+      "commit": "307c794ecd3bbce1dd114ed6359614b59875ba25",
+      "date": "2026-09-28T13:18:19+08:00",
+      "subject": "docs: 记下 a2 噪声地板±0.002 与失效门自动闸，A1 读数前生效",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\345\\244\\232\\345\\270\\247A_\\351\\242\\204\\346\\263\\250\\345\\206\\214_20260927.md\""
+      ]
+    },
+    {
+      "commit": "5ac84eaa34bead62fee2d5cc5a194a6cdd7dde77",
+      "date": "2026-09-28T18:25:43+08:00",
+      "subject": "feat: 三臂串行编排收进仓库，失效门拿不到 verdict 就保守停止",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/chain_three_arms.sh"
+      ]
+    },
+    {
+      "commit": "8cadfa4cf8ae888b242ad70c976fd6098f41bd9d",
+      "date": "2026-09-28T18:26:05+08:00",
+      "subject": "fix: 三臂编排补上真正的脚本体（上一提交只有注释头，空壳）",
+      "files": [
+        "mllm/scripts/reasonseg_experiments/chain_three_arms.sh"
+      ]
+    },
+    {
+      "commit": "d4a09135285e2fcf3feb73517e62ebc48efd6903",
+      "date": "2026-09-28T18:30:47+08:00",
+      "subject": "docs: A2 失效门通过并量出 test 侧噪声地板 0.003，A1 读数前生效",
+      "files": [
+        "\"docs/learn docs/B4DL_ReasonSeg\\345\\244\\232\\345\\270\\247A_\\351\\242\\204\\346\\263\\250\\345\\206\\214_20260927.md\""
+      ]
+    }
+  ]
+}

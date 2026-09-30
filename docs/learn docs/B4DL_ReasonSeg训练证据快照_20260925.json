@@ -1,0 +1,707 @@
+{
+  "captured_at_cst": "2026-09-25T18:16:12.541360",
+  "delivery_status_at_1822": {"time":"2026-09-25T18:22:39.256086","driver.log":["[2026-09-25 18:07:17] === S3/5 B1 接地诊断（val_thin 1000 条，与 A2/对照同口径）===","[2026-09-25 18:14:08] S3 rc=0","[2026-09-25 18:14:08] === S4/5 B1 在过滤后 val_thin 上的 TF（与 s4/s5 同口径）===","[2026-09-25 18:21:57] S4 rc=0","[2026-09-25 18:21:57] === PHASE2.3 CHAIN DONE ==="],"s4_tfval_b1.log":["/root/autodl-tmp/.conda-stuff/envs/reasonseg/lib/python3.10/site-packages/spconv/pytorch/functional.py:412: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.","  def backward(ctx, grad_output):","[2026-09-25 18:18:18,601] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)","{\"dtype_snapshot\": {\"point_encoder\": \"torch.float32\", \"scene_compressor\": \"torch.float32\", \"mask_head\": \"torch.float32\", \"language_model\": \"torch.float32\"}}","{\"teacher_forcing_mean_iou\": 0.1054218072221433, \"teacher_forcing_global_iou\": 0.27830190823902773, \"teacher_forcing_objects\": 2278, \"teacher_forcing_recall_at_0.5\": 0.08252853380158033, \"teacher_forcing_hits_at_0.5\": 188, \"teacher_forcing_token_failure_rate\": 0.0, \"variant\": \"as_is\", \"requested_samples\": 2108, \"point_encoder_batches\": 2108, \"point_encoder_nonfinite_batches\": 0, \"point_encoder_nonfinite_elements\": 0, \"observed_dtypes\": {\"point_encoder\": \"torch.float32\", \"language_model\": \"torch.float32\", \"mask_head\": \"torch.float32\"}}"],"watcher_probe2.log":["[2026-09-25 14:37:04] === 等待 Phase 2.3 主链收尾 ===","[2026-09-25 18:22:06] 主链已完成（轮次 225）","[2026-09-25 18:22:06] === 启动修正版 oracle 探针（6 epoch，lr 1e-4，逐轮 dev 评测）==="],"probe_v2.log":["  def backward(ctx, grad_output):","/root/autodl-tmp/.conda-stuff/envs/reasonseg/lib/python3.10/site-packages/spconv/pytorch/functional.py:412: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.","  def backward(ctx, grad_output):","train records: 7436 / dev: 2248 / test: 2248","trainable params: 6,522,624"],"gpu":"utilization.gpu [%], memory.used [MiB]\n92 %, 2529 MiB"},
+  "status_at_1818": {"time":"2026-09-25T18:18:47.169930","training_logs/phase23/driver.log":["[2026-09-25 14:30:50] === S2/5 B1 切除 LOC 先验 + Tversky（4 epoch，约 3.6 h）===","[2026-09-25 18:07:17] S2 rc=0","[2026-09-25 18:07:17] === S3/5 B1 接地诊断（val_thin 1000 条，与 A2/对照同口径）===","[2026-09-25 18:14:08] S3 rc=0","[2026-09-25 18:14:08] === S4/5 B1 在过滤后 val_thin 上的 TF（与 s4/s5 同口径）==="],"training_logs/phase23/s4_tfval_b1.log":["  def backward(ctx, grad_output):","/root/autodl-tmp/.conda-stuff/envs/reasonseg/lib/python3.10/site-packages/spconv/pytorch/functional.py:412: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.","  def backward(ctx, grad_output):","[2026-09-25 18:18:18,601] [INFO] [real_accelerator.py:222:get_accelerator] Setting ds_accelerator to cuda (auto detect)","{\"dtype_snapshot\": {\"point_encoder\": \"torch.float32\", \"scene_compressor\": \"torch.float32\", \"mask_head\": \"torch.float32\", \"language_model\": \"torch.float32\"}}"],"training_logs/phase23/watcher_probe2.log":["[2026-09-25 14:37:04] === 等待 Phase 2.3 主链收尾 ==="],"evaluation/evaluate_reasonseg.py_normalized_sha256":"d925a57a18523a3f1d88421652b21285f08ec0524ec5bc93f913e786fb9a88bc","eval_source":[{"line":29,"s":"    parser.add_argument(\"--model-base\", required=True)"},{"line":30,"s":"    parser.add_argument(\"--pretrain-mm-mlp-adapter\", required=True)"},{"line":31,"s":"    parser.add_argument(\"--b3-checkpoint\", required=True)"},{"line":32,"s":"    parser.add_argument(\"--seg-checkpoint\", required=True)"},{"line":33,"s":"    parser.add_argument(\"--manifest\", required=True)"},{"line":34,"s":"    parser.add_argument(\"--dataroot\", required=True)"},{"line":35,"s":"    parser.add_argument(\"--output-dir\", required=True)"},{"line":36,"s":"    parser.add_argument(\"--gpu-id\", type=int, default=0)"},{"line":37,"s":"    parser.add_argument(\"--threshold\", type=float, default=0.5)"},{"line":38,"s":"    parser.add_argument(\"--max-samples\", type=int, default=0)"},{"line":39,"s":"    parser.add_argument(\"--dtype\", choices=(\"fp16\", \"bf16\", \"fp32\"), default=\"fp16\")"},{"line":40,"s":"    parser.add_argument("},{"line":82,"s":"    predictions = []"},{"line":86,"s":"    for index in range(sample_count):"},{"line":165,"s":"    (output_dir / \"metrics.json\").write_text("},{"line":168,"s":"    (output_dir / \"predictions.json\").write_text("}],"vtimellm/segmentation/metrics.py_normalized_sha256":"23843108acace971390ba8a323c59ba45915cf15fee8165aca113a207cdcb8bc","metric_source":"        for predicted_index, target_index in matches:\n            iou = float(ious[predicted_index, target_index])\n            self.matched_ious.append(iou)\n            self.cumulative_intersection += intersections[predicted_index, target_index]\n            self.cumulative_union += unions[predicted_index, target_index]\n            if iou >= iou_match_threshold:\n                self.true_positive += 1\n                predicted_class = int(predicted_classes[predicted_index])\n                target_class = int(target_classes[target_index])\n                if 0 <= predicted_class < self.num_classes and 0 <= target_class < self.num_classes:\n                    self.confusion[target_class, predicted_class] += 1\n            else:\n                self.false_positive += 1\n                self.false_negative += 1\n\n        # Unmatched instances must affect both detection metrics and mask IoU.\n        # Previously they were omitted from cIoU/gIoU, while below-threshold\n        # pairs were counted twice as FP/FN (once above and once here).\n        unmatched_predictions = set(range(len(predicted_masks))) - paired_predictions\n        unmatched_targets = set(range(len(target_masks))) - paired_targets\n        self.false_positive += len(unmatched_predictions)\n        self.false_negative += len(unmatched_targets)\n        self.cumulative_union += sum(\n        precision = self.true_positive / max(1, self.true_positive + self.false_positive)\n        recall = self.true_positive / max(1, self.true_positive + self.false_negative)\n        class_f1 = []\n        for class_index in range(self.num_classes):\n            true_positive = self.confusion[class_index, class_index]\n            false_positive = self.confusion[:, class_index].sum() - true_positive\n            false_negative = self.confusion[class_index, :].sum() - true_positive\n            denominator = 2 * true_positive + false_positive + false_negative\n            if denominator:\n                class_f1.append(float(2 * true_positive / denominator))\n        return {\n            \"cIoU\": self.cumulative_intersection / max(1.0, self.cumulative_union),\n            \"gIoU\": float(np.mean(self.matched_ious)) if self.matched_ious else 0.0,\n            \"instance_precision@0.5\": precision,\n            \"instance_recall@0.5\": recall,\n            \"count_accuracy\": self.count_correct / max(1, self.sample_count),\n            \"no_object_false_positive_rate\": self.no_object_false_positive\n            / max(1, self.no_object_samples),\n            \"token_failure_rate\": self.token_failures / max(1, self.sample_count),\n            \"class_macro_f1\": float(np.mean(class_f1)) if class_f1 else 0.0,\n        }"},
+  "remote_root": "/root/autodl-tmp/mmb4dl/mllm",
+  "git_head": "6b65cefa75f1381e136dfef0004f26893f2d0860",
+  "gpu": "name, utilization.gpu [%], memory.used [MiB], memory.total [MiB]\nNVIDIA GeForce RTX 4090, 0 %, 709 MiB, 24564 MiB",
+  "tmux": "p23: 1 windows (created Fri Sep 25 12:58:25 2026)\nprobe2: 1 windows (created Fri Sep 25 14:37:04 2026)",
+  "driver_tail": [
+    "[2026-09-25 13:07:59] === S1/5 B0 oracle-query 探针（4 epoch，约 2.6 h）===",
+    "[2026-09-25 14:30:50] S1 rc=0",
+    "[2026-09-25 14:30:50] === S2/5 B1 切除 LOC 先验 + Tversky（4 epoch，约 3.6 h）===",
+    "[2026-09-25 18:07:17] S2 rc=0",
+    "[2026-09-25 18:07:17] === S3/5 B1 接地诊断（val_thin 1000 条，与 A2/对照同口径）===",
+    "[2026-09-25 18:14:08] S3 rc=0",
+    "[2026-09-25 18:14:08] === S4/5 B1 在过滤后 val_thin 上的 TF（与 s4/s5 同口径）==="
+  ],
+  "watcher_tail": [
+    "[2026-09-25 14:37:04] === 等待 Phase 2.3 主链收尾 ==="
+  ],
+  "best_checkpoints": {
+    "reasonseg-tvenc": {
+      "epoch": 13,
+      "global_step": 6930,
+      "best_validation_iou": 0.10366375307946787,
+      "epochs_without_improvement": 0
+    },
+    "reasonseg-tvenc680": {
+      "epoch": 9,
+      "global_step": 4800,
+      "best_validation_iou": 0.11280106648719569,
+      "epochs_without_improvement": 0
+    },
+    "reasonseg-internal679": {
+      "epoch": 15,
+      "global_step": 7440,
+      "best_validation_iou": 0.1300740433326675,
+      "epochs_without_improvement": 0
+    },
+    "reasonseg-lossA2-plain-tversky-ext20": {
+      "epoch": 15,
+      "global_step": 7440,
+      "best_validation_iou": 0.1443717195598174,
+      "epochs_without_improvement": 0
+    },
+    "reasonseg-lossB1-noprior-tversky": {
+      "epoch": 3,
+      "global_step": 1860,
+      "best_validation_iou": 0.12174719284762182,
+      "epochs_without_improvement": 0
+    }
+  },
+  "phase22": {
+    "control": {
+      "curve": [
+        0.060281002220423256,
+        0.0873404984667721,
+        0.09665684317627718,
+        0.10774323279092796
+      ],
+      "step_stats": {
+        "steps": 9300,
+        "mask_seg_mean": 0.6576615195079638,
+        "mask_seg_p50": 0.8032537698745728,
+        "frac_seg_below_0.05": 0.10817204301075269
+      }
+    },
+    "arms": {
+      "A1": {
+        "name": "reasonseg-lossA1-bal-dice",
+        "description": "balanced + dice",
+        "tf_miou_curve": [
+          0.03677518332459183,
+          0.04089122441571604,
+          0.06247487483548674,
+          0.061501429858423384
+        ],
+        "tf_miou_last": 0.061501429858423384,
+        "step_stats": {
+          "steps": 1860,
+          "mask_seg_mean": 1.085122385452832,
+          "mask_seg_p50": 1.0837178230285645,
+          "frac_seg_below_0.05": 0
+        },
+        "grounding": {
+          "auc": 0.9453204072164078,
+          "prob_positive": 0.8204861865954453,
+          "recall_thresholded": 0.02153558052434457,
+          "recall_top_k": 0.05805243445692884,
+          "target_size_median": 11,
+          "predicted_size_median": 1712.5
+        },
+        "verdict": "GUARDRAIL：predicted_size_median 1712 > 3x target 11，过度触发，不采纳"
+      },
+      "A2": {
+        "name": "reasonseg-lossA2-plain-tversky",
+        "description": "plain + tversky(0.3,0.7)",
+        "tf_miou_curve": [
+          0.0714409143756878,
+          0.1087247450693694,
+          0.11964889067178382,
+          0.12546246660877702
+        ],
+        "tf_miou_last": 0.12546246660877702,
+        "step_stats": {
+          "steps": 1860,
+          "mask_seg_mean": 0.7741540808146662,
+          "mask_seg_p50": 0.9041471481323242,
+          "frac_seg_below_0.05": 0.05268817204301075
+        },
+        "grounding": {
+          "auc": 0.9167363075698645,
+          "prob_positive": 0.22210717067289887,
+          "recall_thresholded": 0.07771535580524344,
+          "recall_top_k": 0.10580524344569288,
+          "target_size_median": 11,
+          "predicted_size_median": 14
+        },
+        "verdict": "PARTIAL：TF mIoU 0.1255，仅扩最优一臂到 20 epoch"
+      },
+      "A3": {
+        "name": "reasonseg-lossA3-bal-tversky",
+        "description": "balanced + tversky(0.3,0.7)",
+        "tf_miou_curve": [
+          0.04194814109139039,
+          0.04360182064294126,
+          0.06704232210527473,
+          0.06530366598111571
+        ],
+        "tf_miou_last": 0.06530366598111571,
+        "step_stats": {
+          "steps": 1860,
+          "mask_seg_mean": 1.0585395253313485,
+          "mask_seg_p50": 1.0672359466552734,
+          "frac_seg_below_0.05": 0
+        },
+        "grounding": {
+          "auc": 0.9472077977431832,
+          "prob_positive": 0.8115230070964228,
+          "recall_thresholded": 0.023408239700374533,
+          "recall_top_k": 0.06741573033707865,
+          "target_size_median": 11,
+          "predicted_size_median": 1500
+        },
+        "verdict": "GUARDRAIL：predicted_size_median 1500 > 3x target 11，过度触发，不采纳"
+      }
+    }
+  },
+  "freegen": {
+    "reasonseg-tvenc_encfp32": {
+      "metrics_path": "eval_results/reasonseg-tvenc_encfp32/metrics_recomputed_20260922.json",
+      "metrics": {
+        "cIoU": 0.2287644244300591,
+        "gIoU": 0.08811722221603832,
+        "instance_precision@0.5": 0.06666666666666667,
+        "instance_recall@0.5": 0.06666666666666667,
+        "count_accuracy": 1,
+        "no_object_false_positive_rate": 0,
+        "token_failure_rate": 0,
+        "class_macro_f1": 1,
+        "recomputed_from": "eval_results/reasonseg-tvenc_encfp32",
+        "samples": 300,
+        "stored_values": {
+          "cIoU": 0.29216391085549964,
+          "gIoU": 0.27960272433935235,
+          "instance_precision@0.5": 0.05339805825242718,
+          "instance_recall@0.5": 0.05339805825242718
+        }
+      }
+    },
+    "reasonseg-tvenc680_encfp32": {
+      "metrics_path": "eval_results/reasonseg-tvenc680_encfp32/metrics_recomputed_20260922.json",
+      "metrics": {
+        "cIoU": 0.2259743403534253,
+        "gIoU": 0.1008512117442221,
+        "instance_precision@0.5": 0.08484848484848485,
+        "instance_recall@0.5": 0.08484848484848485,
+        "count_accuracy": 1,
+        "no_object_false_positive_rate": 0,
+        "token_failure_rate": 0,
+        "class_macro_f1": 1,
+        "recomputed_from": "eval_results/reasonseg-tvenc680_encfp32",
+        "samples": 300,
+        "stored_values": {
+          "cIoU": 0.27960821901395794,
+          "gIoU": 0.3081564803295675,
+          "instance_precision@0.5": 0.06829268292682927,
+          "instance_recall@0.5": 0.06829268292682927
+        }
+      },
+      "failure": {
+        "targets": 330,
+        "failure_labels": {
+          "predicted_mask_empty": 136,
+          "near_miss_below_0.5": 80,
+          "right_class_wrong_place": 77,
+          "hit": 28,
+          "wrong_class_wrong_place": 8,
+          "overlap_stolen_by_other_target": 1
+        },
+        "mask_size_points": {
+          "predicted_mean": 95.15757575757576,
+          "predicted_median": 3,
+          "predicted_zero_count": 143,
+          "target_mean": 58.31212121212121,
+          "target_median": 12
+        },
+        "by_ordinal_bucket": {
+          "2-3": {
+            "targets": 83,
+            "hits": 3,
+            "recall": 0.03614457831325301
+          },
+          "4-9": {
+            "targets": 66,
+            "hits": 0,
+            "recall": 0
+          },
+          "10+": {
+            "targets": 16,
+            "hits": 0,
+            "recall": 0
+          },
+          "no_ordinal": {
+            "targets": 165,
+            "hits": 25,
+            "recall": 0.15151515151515152
+          }
+        }
+      }
+    },
+    "reasonseg-internal679_encfp32": {
+      "metrics_path": "eval_results/reasonseg-internal679_encfp32/metrics.json",
+      "metrics": {
+        "cIoU": 0.23689943476212907,
+        "gIoU": 0.09068661008089252,
+        "instance_precision@0.5": 0.07272727272727272,
+        "instance_recall@0.5": 0.07272727272727272,
+        "count_accuracy": 1,
+        "no_object_false_positive_rate": 0,
+        "token_failure_rate": 0,
+        "class_macro_f1": 1,
+        "evaluated_samples": 300,
+        "dataset_samples": 2248,
+        "partial_evaluation": true,
+        "mean_inference_latency_ms": 650.0859098307292,
+        "p95_inference_latency_ms": 1021.3148406982426,
+        "peak_cuda_memory_gib": 13.27496337890625
+      },
+      "failure": {
+        "targets": 330,
+        "failure_labels": {
+          "predicted_mask_empty": 140,
+          "right_class_wrong_place": 87,
+          "near_miss_below_0.5": 71,
+          "hit": 24,
+          "wrong_class_wrong_place": 7,
+          "overlap_stolen_by_other_target": 1
+        },
+        "mask_size_points": {
+          "predicted_mean": 69.0060606060606,
+          "predicted_median": 3,
+          "predicted_zero_count": 142,
+          "target_mean": 58.31212121212121,
+          "target_median": 12
+        },
+        "by_ordinal_bucket": {
+          "2-3": {
+            "targets": 83,
+            "hits": 2,
+            "recall": 0.024096385542168676
+          },
+          "4-9": {
+            "targets": 66,
+            "hits": 0,
+            "recall": 0
+          },
+          "10+": {
+            "targets": 16,
+            "hits": 0,
+            "recall": 0
+          },
+          "no_ordinal": {
+            "targets": 165,
+            "hits": 22,
+            "recall": 0.13333333333333333
+          }
+        }
+      }
+    },
+    "reasonseg-a2ext20_encfp32": {
+      "metrics_path": "eval_results/reasonseg-a2ext20_encfp32/metrics.json",
+      "metrics": {
+        "cIoU": 0.22491706042022722,
+        "gIoU": 0.09954077210841347,
+        "instance_precision@0.5": 0.07272727272727272,
+        "instance_recall@0.5": 0.07272727272727272,
+        "count_accuracy": 1,
+        "no_object_false_positive_rate": 0,
+        "token_failure_rate": 0,
+        "class_macro_f1": 1,
+        "evaluated_samples": 300,
+        "dataset_samples": 2248,
+        "partial_evaluation": true,
+        "mean_inference_latency_ms": 645.057082417806,
+        "p95_inference_latency_ms": 1072.7288452148441,
+        "peak_cuda_memory_gib": 13.27496337890625
+      },
+      "failure": {
+        "targets": 330,
+        "failure_labels": {
+          "right_class_wrong_place": 102,
+          "near_miss_below_0.5": 100,
+          "predicted_mask_empty": 99,
+          "hit": 24,
+          "wrong_class_wrong_place": 5
+        },
+        "mask_size_points": {
+          "predicted_mean": 89.37575757575758,
+          "predicted_median": 11.5,
+          "predicted_zero_count": 103,
+          "target_mean": 58.31212121212121,
+          "target_median": 12
+        },
+        "by_ordinal_bucket": {
+          "2-3": {
+            "targets": 83,
+            "hits": 4,
+            "recall": 0.04819277108433735
+          },
+          "4-9": {
+            "targets": 66,
+            "hits": 0,
+            "recall": 0
+          },
+          "10+": {
+            "targets": 16,
+            "hits": 0,
+            "recall": 0
+          },
+          "no_ordinal": {
+            "targets": 165,
+            "hits": 20,
+            "recall": 0.12121212121212122
+          }
+        }
+      }
+    }
+  },
+  "grounding": {
+    "_grounding_internal679": {
+      "n": 1068,
+      "auc_mean": 0.8575748912818959,
+      "mean_prob_positive": 0.1651205729679222,
+      "mean_prob_negative": 0.001811877451139443,
+      "loc_iou_mean": 0.059200693205780176,
+      "loc_recall_at_0.5": 0.016853932584269662,
+      "loc_containment_mean": 0.25215798311127147,
+      "recall_thresholded": 0.08614232209737828,
+      "recall_top_k": 0.1104868913857678,
+      "recall_top_k_in_loc": 0.09737827715355805,
+      "recall_random_k": 0,
+      "iou_thresholded_mean": 0.105218272802516,
+      "iou_top_k_mean": 0.12996804597118738,
+      "target_size_median": 11,
+      "predicted_size_median": 3
+    },
+    "_grounding_p21_prioroff": {
+      "n": 1068,
+      "auc_mean": 0.9165290888774479,
+      "mean_prob_positive": 0.26734195766824015,
+      "mean_prob_negative": 0.010301303830039635,
+      "loc_iou_mean": 0.059200166127120736,
+      "loc_recall_at_0.5": 0.016853932584269662,
+      "loc_containment_mean": 0.2521708483541227,
+      "recall_thresholded": 0.04307116104868914,
+      "recall_top_k": 0.060861423220973786,
+      "recall_top_k_in_loc": 0.08146067415730338,
+      "recall_random_k": 0,
+      "iou_thresholded_mean": 0.07007283226276667,
+      "iou_top_k_mean": 0.08497853285340126,
+      "target_size_median": 11,
+      "predicted_size_median": 63
+    },
+    "_grounding_reasonseg-lossA2-plain-tversky": {
+      "n": 1068,
+      "auc_mean": 0.9167363075698645,
+      "mean_prob_positive": 0.22210717067289887,
+      "mean_prob_negative": 0.003269764200578468,
+      "loc_iou_mean": 0.0682866109911404,
+      "loc_recall_at_0.5": 0.019662921348314606,
+      "loc_containment_mean": 0.35212196481929314,
+      "recall_thresholded": 0.07771535580524344,
+      "recall_top_k": 0.10580524344569288,
+      "recall_top_k_in_loc": 0.10112359550561797,
+      "recall_random_k": 0,
+      "iou_thresholded_mean": 0.10709540774939456,
+      "iou_top_k_mean": 0.12652658925090357,
+      "target_size_median": 11,
+      "predicted_size_median": 14
+    },
+    "_grounding_reasonseg-lossA2-plain-tversky-ext20": {
+      "n": 1068,
+      "auc_mean": 0.837068792391729,
+      "mean_prob_positive": 0.21351456508207856,
+      "mean_prob_negative": 0.0023769688851824414,
+      "loc_iou_mean": 0.06866014845744689,
+      "loc_recall_at_0.5": 0.0149812734082397,
+      "loc_containment_mean": 0.30595520267736226,
+      "recall_thresholded": 0.08052434456928839,
+      "recall_top_k": 0.11329588014981273,
+      "recall_top_k_in_loc": 0.10486891385767791,
+      "recall_random_k": 0,
+      "iou_thresholded_mean": 0.1117958656265728,
+      "iou_top_k_mean": 0.13532434141206973,
+      "target_size_median": 11,
+      "predicted_size_median": 11
+    },
+    "_grounding_reasonseg-lossB1-noprior-tversky": {
+      "n": 1068,
+      "auc_mean": 0.9048063157347335,
+      "mean_prob_positive": 0.19893509417437436,
+      "mean_prob_negative": 0.0033815315042095683,
+      "loc_iou_mean": 0.07126977151245957,
+      "loc_recall_at_0.5": 0.015917602996254682,
+      "loc_containment_mean": 0.3718853292426116,
+      "recall_thresholded": 0.07958801498127341,
+      "recall_top_k": 0.10205992509363296,
+      "recall_top_k_in_loc": 0.09831460674157304,
+      "recall_random_k": 0,
+      "iou_thresholded_mean": 0.10014990178304033,
+      "iou_top_k_mean": 0.12004665019247236,
+      "target_size_median": 11,
+      "predicted_size_median": 7
+    }
+  },
+  "oracle_v1": {
+    "config": {
+      "train_manifest": "./reasonseg_data_trainval/reasonseg_train_internal679x11.jsonl",
+      "dev_manifest": "./reasonseg_data_trainval/reasonseg_val_internal_es.jsonl",
+      "test_manifest": "./reasonseg_data_trainval/reasonseg_val_thin.jsonl",
+      "epochs": 4,
+      "train_records": 7436,
+      "eval_records": 600,
+      "region_loss": "tversky",
+      "tversky_alpha": 0.3,
+      "tversky_beta": 0.7,
+      "bce_mode": "plain",
+      "learning_rate": 0.0003,
+      "oracle": "gt_center_normalized + one_hot_class"
+    },
+    "history": [
+      {
+        "epoch": 0,
+        "train_loss": 0.9233361107873693,
+        "records": 7436
+      },
+      {
+        "epoch": 1,
+        "train_loss": 0.8145714878879404,
+        "records": 7436
+      },
+      {
+        "epoch": 2,
+        "train_loss": 0.7784244709870282,
+        "records": 7436
+      },
+      {
+        "epoch": 3,
+        "train_loss": 1.027350548910484,
+        "records": 7436
+      }
+    ],
+    "dev": {
+      "objects": 573,
+      "skipped_unreachable": 29,
+      "recall_at_0.5": 0.04712041884816754,
+      "iou_mean": 0.1071289361289215,
+      "auc_mean": 0.9735444486835854,
+      "mean_prob_positive": 0.33921219417015097,
+      "target_size_median": 15,
+      "predicted_size_median": 57
+    },
+    "test": {
+      "objects": 623,
+      "skipped_unreachable": 30,
+      "recall_at_0.5": 0.0449438202247191,
+      "iou_mean": 0.09168371929082206,
+      "auc_mean": 0.9776172651546166,
+      "mean_prob_positive": 0.3034344505045945,
+      "target_size_median": 11,
+      "predicted_size_median": 37
+    }
+  },
+  "oracle_v2_exists": false,
+  "fixed_tf": {
+    "s2_ctrl_unfiltered_fixed.log": [
+      {
+        "teacher_forcing_mean_iou": 0.11020134701146936,
+        "teacher_forcing_global_iou": 0.35489833116613956,
+        "teacher_forcing_objects": 2297,
+        "teacher_forcing_recall_at_0.5": 0.09055289508053983,
+        "teacher_forcing_hits_at_0.5": 208,
+        "teacher_forcing_token_failure_rate": 0,
+        "variant": "as_is",
+        "requested_samples": 2248,
+        "point_encoder_batches": 2248,
+        "point_encoder_nonfinite_batches": 0,
+        "point_encoder_nonfinite_elements": 0,
+        "observed_dtypes": {
+          "point_encoder": "torch.float32",
+          "language_model": "torch.float32",
+          "mask_head": "torch.float32"
+        }
+      }
+    ],
+    "s3_a2_unfiltered_fixed.log": [
+      {
+        "teacher_forcing_mean_iou": 0.11714357155961427,
+        "teacher_forcing_global_iou": 0.33151345348074107,
+        "teacher_forcing_objects": 2297,
+        "teacher_forcing_recall_at_0.5": 0.08184588593818024,
+        "teacher_forcing_hits_at_0.5": 188,
+        "teacher_forcing_token_failure_rate": 0,
+        "variant": "as_is",
+        "requested_samples": 2248,
+        "point_encoder_batches": 2248,
+        "point_encoder_nonfinite_batches": 0,
+        "point_encoder_nonfinite_elements": 0,
+        "observed_dtypes": {
+          "point_encoder": "torch.float32",
+          "language_model": "torch.float32",
+          "mask_head": "torch.float32"
+        }
+      }
+    ],
+    "s4_ctrl_reachable.log": [
+      {
+        "teacher_forcing_mean_iou": 0.11047016272368543,
+        "teacher_forcing_global_iou": 0.3391085270183673,
+        "teacher_forcing_objects": 2278,
+        "teacher_forcing_recall_at_0.5": 0.09086918349429324,
+        "teacher_forcing_hits_at_0.5": 207,
+        "teacher_forcing_token_failure_rate": 0,
+        "variant": "as_is",
+        "requested_samples": 2108,
+        "point_encoder_batches": 2108,
+        "point_encoder_nonfinite_batches": 0,
+        "point_encoder_nonfinite_elements": 0,
+        "observed_dtypes": {
+          "point_encoder": "torch.float32",
+          "language_model": "torch.float32",
+          "mask_head": "torch.float32"
+        }
+      }
+    ],
+    "s5_a2_reachable.log": [
+      {
+        "teacher_forcing_mean_iou": 0.11721927032728223,
+        "teacher_forcing_global_iou": 0.3170076815914203,
+        "teacher_forcing_objects": 2278,
+        "teacher_forcing_recall_at_0.5": 0.08165057067603161,
+        "teacher_forcing_hits_at_0.5": 186,
+        "teacher_forcing_token_failure_rate": 0,
+        "variant": "as_is",
+        "requested_samples": 2108,
+        "point_encoder_batches": 2108,
+        "point_encoder_nonfinite_batches": 0,
+        "point_encoder_nonfinite_elements": 0,
+        "observed_dtypes": {
+          "point_encoder": "torch.float32",
+          "language_model": "torch.float32",
+          "mask_head": "torch.float32"
+        }
+      }
+    ]
+  },
+  "b1_tf_history": [
+    {
+      "epoch": 0,
+      "teacher_forcing_mean_iou": 0.08173786864550792,
+      "teacher_forcing_global_iou": 0.4629300830174193,
+      "teacher_forcing_objects": 2161,
+      "teacher_forcing_recall_at_0.5": 0.08190652475705691,
+      "teacher_forcing_hits_at_0.5": 177,
+      "teacher_forcing_token_failure_rate": 0
+    },
+    {
+      "epoch": 1,
+      "teacher_forcing_mean_iou": 0.10687865001452673,
+      "teacher_forcing_global_iou": 0.38487046283262744,
+      "teacher_forcing_objects": 2161,
+      "teacher_forcing_recall_at_0.5": 0.0967144840351689,
+      "teacher_forcing_hits_at_0.5": 209,
+      "teacher_forcing_token_failure_rate": 0
+    },
+    {
+      "epoch": 2,
+      "teacher_forcing_mean_iou": 0.11931145678878413,
+      "teacher_forcing_global_iou": 0.4635449791335654,
+      "teacher_forcing_objects": 2161,
+      "teacher_forcing_recall_at_0.5": 0.10273021749190189,
+      "teacher_forcing_hits_at_0.5": 222,
+      "teacher_forcing_token_failure_rate": 0
+    },
+    {
+      "epoch": 3,
+      "teacher_forcing_mean_iou": 0.12174719284762182,
+      "teacher_forcing_global_iou": 0.4569521410040615,
+      "teacher_forcing_objects": 2161,
+      "teacher_forcing_recall_at_0.5": 0.10273021749190189,
+      "teacher_forcing_hits_at_0.5": 222,
+      "teacher_forcing_token_failure_rate": 0
+    }
+  ],
+  "b1_reachable_tf": [],
+  "filter_report": {
+    "manifest": "reasonseg_data_trainval/reasonseg_val_thin.jsonl",
+    "output": "reasonseg_data_trainval/reasonseg_val_thin_reachable.jsonl",
+    "point_cloud_range": [
+      -51.2,
+      -51.2,
+      -5,
+      51.2,
+      51.2,
+      3
+    ],
+    "records_in": 2248,
+    "records_kept": 2108,
+    "records_dropped": 140,
+    "targets_total": 2440,
+    "targets_unreachable_dropped": 143,
+    "targets_partially_out_of_range_kept": 38,
+    "dropped_by_class": {
+      "car": 71,
+      "truck": 53,
+      "bus": 8,
+      "barrier": 5,
+      "construction_vehicle": 4,
+      "trailer": 2
+    }
+  },
+  "manifests": {
+    "reasonseg_train_internal679x11.jsonl": {
+      "rows": 7436,
+      "scenes": 679,
+      "targets": 7843,
+      "negative_records": 0,
+      "sha256": "de987601164425d8e1724086ae96f9c29e0afd229f1ded2c58a0d772a83b47ec"
+    },
+    "reasonseg_val_internal_es.jsonl": {
+      "rows": 2248,
+      "scenes": 21,
+      "targets": 2251,
+      "negative_records": 141,
+      "sha256": "f53a28df8290417dc78887a3d161c3a9e78798522a22bb5ee892d86868045d0d"
+    },
+    "reasonseg_val_thin.jsonl": {
+      "rows": 2248,
+      "scenes": 20,
+      "targets": 2440,
+      "negative_records": 0,
+      "sha256": "9d4edf5057cb1bb618c0b2b68e54c9309aa89007a27668ab5f2243fc017313d8"
+    },
+    "reasonseg_val_thin_reachable.jsonl": {
+      "rows": 2108,
+      "scenes": 20,
+      "targets": 2278,
+      "negative_records": 0,
+      "sha256": "7d9c373aab30947c299c1b20b69459f985a0e9962c15a533fe017f0e08fd8a15"
+    }
+  },
+  "scene_overlap": {
+    "reasonseg_train_internal679x11.jsonl & reasonseg_val_internal_es.jsonl": 0,
+    "reasonseg_train_internal679x11.jsonl & reasonseg_val_thin.jsonl": 0,
+    "reasonseg_val_internal_es.jsonl & reasonseg_val_thin.jsonl": 0
+  },
+  "freegen_same_ordered_queries": true,
+  "source_sha256": {
+    "scripts/train_reasonseg.py": "7788164e776cba71c256e50337e4a5c1a90697a734e0f30f84b52d89de390cc2",
+    "scripts/reasonseg_experiments/probe_oracle_query.py": "4eff483f48c9ff4c6d9e33271b2bf449eee9662d946caff968ccb4317f032455",
+    "evaluation/evaluate_reasonseg.py": "d925a57a18523a3f1d88421652b21285f08ec0524ec5bc93f913e786fb9a88bc",
+    "vtimellm/segmentation/metrics.py": "23843108acace971390ba8a323c59ba45915cf15fee8165aca113a207cdcb8bc"
+  },
+  "official_split_verification": {
+    "reasonseg_train_internal679x11.jsonl": {
+      "official_train": 679,
+      "official_val": 0,
+      "unknown": 0
+    },
+    "reasonseg_val_internal_es.jsonl": {
+      "official_train": 21,
+      "official_val": 0,
+      "unknown": 0
+    },
+    "reasonseg_val_thin.jsonl": {
+      "official_train": 0,
+      "official_val": 20,
+      "unknown": 0
+    },
+    "s4_tail": [
+      "Loading stage2 weights...",
+      "Loading LoRA weights...",
+      "Merging stage2 weights..."
+    ]
+  }
+}

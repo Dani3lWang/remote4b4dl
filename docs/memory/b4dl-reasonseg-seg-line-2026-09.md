@@ -1,13 +1,13 @@
 ---
 name: b4dl-reasonseg-seg-line-2026-09
-description: ReasonSeg（seg 分支）单帧点级推理分割的 09-18~09-25 全过程——七条杠杆逐条判死、掩码塌缩机制、两个度量 bug、oracle 探针天花板，以及"判据挑错轴"这个复发三次的自身错误
+description: ReasonSeg（seg 分支）点级推理分割的 09-18~09-29 全过程——七条杠杆逐条判死、掩码塌缩机制、两个度量 bug、oracle 探针天花板、语义×实例共存、选项 A 时序三臂（A2 失效门通过、A1 进行中），以及"判据挑错轴"这个复发三次的自身错误
 metadata:
   node_type: memory
   type: project
   originSessionId: f554c11b-93d7-4687-a2ad-c0a5d4dec88a
 ---
 
-ReasonSeg 在 `seg` 分支、autodl3（4090 24G）上跑，conda 环境是独立的 `reasonseg`（`/root/autodl-tmp/.conda-stuff/envs/reasonseg`，torch 2.8.0+cu128 / spconv 2.3.6），**不复用 `wqlc`**。原始对话见 `docs/memory/qoder-sessions/`（4 份，含会话 ID）；实时状态见 `docs/learn docs/B4DL_ReasonSeg训练现状_20260925.md`；**要一份完整的阶段性结论与可引用数字表，读 `docs/learn docs/B4DL_ReasonSeg实验总结_20260927.md`**（弧线、七杠杆判死证据、oracle 四跑、语义×实例共存、四个度量 bug、判据四次落空、产物索引）。运行口径（`--validation-samples 0`、`--dtype fp16 --encoder-dtype fp32`、`cIoU`=面积加权 / `gIoU`=逐对均值键名反直觉、模型选择只能用 internal 划分）已固化在仓库根 `CLAUDE.md`，此处不重复。
+ReasonSeg 在 `seg` 分支、autodl3（4090 24G）上跑，conda 环境是独立的 `reasonseg`（`/root/autodl-tmp/.conda-stuff/envs/reasonseg`，torch 2.8.0+cu128 / spconv 2.3.6），**不复用 `wqlc`**。原始对话见 `docs/memory/qoder-sessions/`（4 份，含会话 ID）；实时状态见 `docs/learn docs/B4DL_ReasonSeg训练现状_20260925.md`；**要一份完整的阶段性结论与可引用数字表，读 `docs/learn docs/B4DL_ReasonSeg实验总结_20260927.md`**（弧线、七杠杆判死证据、oracle 四跑、语义×实例共存、四个度量 bug、判据四次落空、产物索引）；09-27 起进入**选项 A 时序三臂**，判据与状态见 `docs/learn docs/B4DL_ReasonSeg多帧A_预注册_20260927.md` 与本文第八节。运行口径（`--validation-samples 0`、`--dtype fp16 --encoder-dtype fp32`、`cIoU`=面积加权 / `gIoU`=逐对均值键名反直觉、模型选择只能用 internal 划分）已固化在仓库根 `CLAUDE.md`，此处不重复。
 
 ## 一、指标演进主线
 
@@ -248,5 +248,17 @@ test（oracle query，`val_thin` **416 物体 + 23 不可达**）：
 - 日志：`mllm/training_logs/phase23/`（driver.log + s0~s4）、`mllm/training_logs/verify_v123/`（s1~s7 + filter_report.json）、`mllm/training_logs/tvenc680.log`。
 - 结果：`mllm/eval_results/_oracle_probe/report.json`、`mllm/eval_results/_grounding_reasonseg-loss*/report.json`。
 - ⚠ `mllm/reasonseg_data_trainval/` 与 `mllm/training_logs/` 整体被 gitignore，脚本必须放进前者才入库。
+
+## 八、选项 A：引入时序多帧（09-27 起，进行中）
+
+预注册（三臂定义、按臂实测门槛、噪声地板闸门）在 `docs/learn docs/B4DL_ReasonSeg多帧A_预注册_20260927.md`，本条只记状态与坑。
+
+- 三臂：**A1** 邻帧按 `ego_pose`+`calibrated_sensor` 补偿到 anchor 传感器系（掩码 = 跨帧同 `instance_token` 点并集）；**A2** 复制 anchor 点三份（严格零新信息的密度对照，带可证伪预言"其 AUC ≈ 单帧带"）；**A3** 不补偿拼接（隔离 0.5 s 错位代价）。F=3、20 ep，其余与单帧多任务 30 ep 逐字对齐。
+- **冒烟门抓出两个真 bug（会烧掉 25–35 h）**：① nuScenes 框 `size` 是 (w,l,h) 而局部 x 轴沿 length（`95399af`）；② 点云在 LiDAR 传感器系却只做了 ego 变换，漏 `calibrated_sensor`（修法：每帧"系" = 该帧 LiDAR 传感器系，anchor 段与单帧输入逐位相同）。
+- A2 首跑被 `require_reachable` 硬编码 True 打回（`ValueError: unreachable target 23045`，09-27 17:28 rc=1，盘上没有过滤过的 train 清单）⇒ 改成显式旗标默认关闭（`d4c3e7f`），保持与单帧参照同数据语义。
+- **A2 完成（09-28 16:52，20 ep 选 ep19）**：test（`val_thin`，416 物体）AUC **0.99296**、R@0.5 0.2404、topK 0.3149、IoU 0.2818、尺寸 79.5/36.0（= 3× 恒等）；**失效门通过**（落在单帧各跑带 [0.99038, 0.99760] 内 ⇒ 拼接/复制没改变度量）。副产品：**test 侧噪声地板 ≈0.003**（A2 与单帧 20 ep 信息相同、test AUC 却低 0.0028）⇒ A1 的 test AUC 须比 A2 高 **>0.003** 才算信号；dev 侧地板 ±0.002。
+- **A1 进行中**：09-28 16:53 启动，实测 ~1.61 h/轮；截至 09-29 19:50 跑到 **ep16 step5000/7436**，预计 **09-30 凌晨 1 点前后**出 test 单评，之后 A3（~32 h）。⚠ dev 94% 是场景首帧 ⇒ dev 只能拼到 2 帧（N≈64k vs test 97k），**dev 读数不代表 test 内容**；A1 dev AUC 逐轮目前**略低于** A2、无一轮超过 +0.002 分辨力门槛（中期状态，未到裁定点）。
+- **链的两个已知缺陷（09-28 审计发现，截至 09-29 未修）**：① `watch_a2.sh` 预算 20 h < A2 实际 23 h20 m ⇒ 超时后**无条件**写 `DONE` + 陈旧快照，而 `chain_three_arms.sh` 只看 `^DONE$` 不看内容/时间 ⇒ **陈旧 verdict 通过了闸门**（这次实际结论恰好正确，但闸门本身不成立；根因已查明）；② A1 失败不阻断 A3（链只记 rc 不判 rc）。
+- 产物：`mllm/eval_results/_temporal_{a2_repeat,a1_compensated}_f3/`（`history.json`/`report.json`/每 4 轮快照）、`mllm/training_logs/temporal/`（driver、`chain_driver.log`、`a2_verdict.txt`）；权威脚本体 `mllm/scripts/reasonseg_experiments/{chain_three_arms,run_temporal_arm}.sh`（`8cadfa4` 补全）。服务器在 `d4c3e7f` detached；`307c794..d4a0913` 四个提交尚未同步上机。
 
 相关：[[b4dl-project-overview]]、[[b4dl-eval-methodology-caveats]]、[[b4dl-git-commit-conventions]]、[[b4dl-server-access-workflow]]
