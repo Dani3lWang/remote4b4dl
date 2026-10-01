@@ -262,3 +262,13 @@ test（oracle query，`val_thin` **416 物体 + 23 不可达**）：
 - 产物：`mllm/eval_results/_temporal_{a2_repeat,a1_compensated}_f3/`（`history.json`/`report.json`/每 4 轮快照）、`mllm/training_logs/temporal/`（driver、`chain_driver.log`、`a2_verdict.txt`）；权威脚本体 `mllm/scripts/reasonseg_experiments/{chain_three_arms,run_temporal_arm}.sh`（`8cadfa4` 补全）。服务器在 `d4c3e7f` detached；`307c794..d4a0913` 四个提交尚未同步上机。
 
 相关：[[b4dl-project-overview]]、[[b4dl-eval-methodology-caveats]]、[[b4dl-git-commit-conventions]]、[[b4dl-server-access-workflow]]
+
+### 选项 A 三臂裁定（10-01 复核）：**A-e 劣于预期**，且"多帧"在当前契约下是**负**效应
+
+A2 空对照（复制 3 份，零新信息）test AUC 0.99296（缺口 17.6×）、A3 不对齐拼接 0.99088（**21.7×**）、**A1 ego 补偿拼接 0.98730（30.1×）**，单帧参照 0.99575/10.6×（20ep）与 0.99377/15.5×（30ep）。A1 比空对照低 **0.0057**、比不对齐低 **0.0036**，均越过事前钉死的 **0.003 test 噪声地板** ⇒ 可分辨的负信号；dev 同向。
+
+- **A-e 档事前写的机制"0.5 s 错位代价"被推翻**：不对齐（a3）优于对齐（a1）⇒ 负效应来自"对齐本身"，不是"没对齐"。**教训：命中档位不等于因果判断对，档位描述里的机制句要单独标注为待验假设。**
+- **候选机制（未证）**：编码器体素均值 + 无时间通道 ⇒ 补偿后静止背景叠合无变化、运动物体被均值抹平时变信号。⇒ **a1 测的是"无时间通道的聚合"而不是"时序"**。
+- **边界（引用时必写）**：可以说"现有契约下多帧为负"；**不可以说"时序不是杠杆"**。要真测时序必须给编码器加时间通道 ⇒ 撞 `checkpoint.py:169-182` 的 strict + voxel 契约 ⇒ **要重做空间预训练**，且 2 Hz 间隔仍在（10 Hz 需再腾 230 G）。
+- **失效门（a2 应与单帧同带）已兑现**：0.99296 落在 [0.99038, 0.99760] 内，且 a2 尺寸 79.5/36 = 单帧 28/12 的 3× 恒等像 ⇒ 拼接未改变度量，A1/A3 读数可信。**a2 顺带量出 test 侧噪声地板 0.0028 AUC（同信息两跑之差）与 dev 极差容差 0.0015 本身落在噪声内**。
+- 墙钟：a2 22.5 h、a1 32.4 h、a3 32.5 h，三臂串行 87 h（每轮 49–94 分，是否真读 nuScenes 元数据决定快慢）。
