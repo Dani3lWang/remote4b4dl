@@ -133,6 +133,56 @@ class RepositoryTests(unittest.TestCase):
         self.assertIsNone(repo.samples[0].scene_id)
         self.assertTrue(repo.warnings)
 
+    def test_repeated_legacy_qa_across_scenes_is_never_linked_by_order(self):
+        predictions = {"existence": {
+            "predictions": ["Yes."], "ground_truths": ["Yes."], "questions": ["Car?"],
+        }}
+        test_data = [
+            {"task": "existence", "scene_id": scene,
+             "conversations": [{"value": "Car?"}, {"value": "Yes."}]}
+            for scene in ("scene-a", "scene-b")
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            repo = EvaluationRepository.from_files(
+                _write_json(directory, "p.json", predictions),
+                test_data_path=_write_json(directory, "test.json", test_data),
+            )
+        self.assertIsNone(repo.samples[0].scene_id)
+        self.assertTrue(repo.warnings)
+
+    def test_repeated_legacy_qa_with_different_input_frames_is_ambiguous(self):
+        predictions = {"existence": {
+            "predictions": ["Yes."], "ground_truths": ["Yes."], "questions": ["Car?"],
+        }}
+        test_data = [
+            {"task": "existence", "scene_id": "same-scene", "feat_indices": frames,
+             "conversations": [{"value": "Car?"}, {"value": "Yes."}]}
+            for frames in ([0, 1], [2, 3])
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            repo = EvaluationRepository.from_files(
+                _write_json(directory, "p.json", predictions),
+                test_data_path=_write_json(directory, "test.json", test_data),
+            )
+        self.assertIsNone(repo.samples[0].scene_id)
+
+    def test_oracle_and_meteor_provenance_are_visible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = EvaluationRepository.from_files(
+                _write_json(directory, "p.json", {"_run": {"answer_frames": True}}),
+                _write_json(directory, "m.json", {
+                    "metric_backend": {"meteor": {"reported": "nltk-meteor-1.0"}},
+                }),
+            )
+        self.assertIn("oracle", " ".join(repo.warnings))
+        self.assertIn("nltk-meteor-1.0", " ".join(repo.warnings))
+
+    def test_empty_non_object_input_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = _write_json(directory, "bad.json", [])
+            with self.assertRaisesRegex(ValueError, "顶层必须是对象"):
+                EvaluationRepository.from_files(path)
+
     def test_misaligned_arrays_fail_fast(self):
         predictions = {
             "binary_qa": {
@@ -234,6 +284,24 @@ class UIConstructionTests(unittest.TestCase):
             )
             demo = create_demo(repository, OptionalInferenceEngine(args), effects)
         self.assertTrue(callable(getattr(demo, "queue", None)))
+
+    def test_unlinked_sample_does_not_export_with_default_scene(self):
+        import gradio  # noqa: F401
+        from demo_gradio import OptionalInferenceEngine, create_demo
+        from model_effects import EvaluationSample
+        from tests.test_lidar_visualizer import FakeNuScenes, SyntheticRepository
+
+        args = argparse.Namespace(model_base=None, pretrain_mm_mlp_adapter=None,
+                                  stage2=None, stage3=None, feat_folder=None)
+        with tempfile.TemporaryDirectory() as directory:
+            repository = SyntheticRepository(dataroot=directory, nusc=FakeNuScenes())
+            sample = EvaluationSample("unlinked", "existence", 0, "Car?", "Yes", "No")
+            demo = create_demo(repository, OptionalInferenceEngine(args), EvaluationRepository([sample]))
+            callback = next(fn.fn for fn in demo.fns.values() if fn.fn.__name__ == "load_paper_sample")
+            loaded = callback("unlinked")
+        self.assertIsNone(loaded[0]["value"])
+        self.assertEqual(loaded[1], "")
+        self.assertIn("手动", loaded[-1])
 
 
 if __name__ == "__main__":

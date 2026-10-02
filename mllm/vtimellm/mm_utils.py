@@ -3,7 +3,6 @@ from io import BytesIO
 import base64
 import numpy as np
 import torch
-import decord
 from transformers import StoppingCriteria
 from vtimellm.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
 
@@ -100,6 +99,8 @@ class VideoExtractor():
         id = data['id']
         
         try:
+            # Scene chat uses precomputed LiDAR features, not a video decoder.
+            import decord
             video_reader = decord.VideoReader(video_path)
             total_frames = len(video_reader)
             start = 0

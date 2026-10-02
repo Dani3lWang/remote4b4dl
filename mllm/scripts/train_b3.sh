@@ -6,6 +6,9 @@
 # 历史 3ep B3 checkpoint 达到 mIoU 0.3467；新训练统一使用 2ep。
 # 断点续训：mllm train.py 已按步数数值排序取最新（e8639e2），此处 sort -V 与其对齐。
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/b3_runtime.sh"
+b3_configure_runtime || exit 1
+b3_check_gpu_capacity "$B3_MIN_FREE_MB" || exit 1
 PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
 
@@ -30,17 +33,18 @@ export PYTHONUNBUFFERED=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 MODEL_VERSION=vicuna-v1-5-7b
-OUT=vtimellm-$MODEL_VERSION-stage2-full-seqv3-mixed-b3
+OUT=vtimellm-$MODEL_VERSION-stage2-full-seqv3-mixed-b3$B3_OUTPUT_SUFFIX
 set -o pipefail
 mkdir -p ./training_logs
-LOG=./training_logs/stage2_full_seqv3_mixed_b3_$(date +%Y%m%d_%H%M%S).log
+LOG=./training_logs/stage2_full_seqv3_mixed_b3${B3_OUTPUT_SUFFIX}_$(date +%Y%m%d_%H%M%S).log
+echo "Profile: $B3_PROFILE; GPU: $B3_GPU_ID; micro-batch: $B3_MICRO_BATCH; accumulation: $B3_GRAD_ACCUM; effective batch: $((B3_MICRO_BATCH * B3_GRAD_ACCUM))"
 
 RESUME=""
 LATEST=$(ls -d ./checkpoints/$OUT/checkpoint-* 2>/dev/null | sort -V | tail -1)
 [ -n "$LATEST" ] && RESUME="--resume_from_checkpoint $LATEST" && echo "Resume: $LATEST"
 
-deepspeed --include localhost:0 --master_port 29583 vtimellm/train/train_mem.py \
-    --deepspeed ./scripts/zero3.json \
+deepspeed --include localhost:"$B3_GPU_ID" --master_port 29583 vtimellm/train/train_mem.py \
+    --deepspeed "$B3_ZERO_CONFIG" \
     --lora_enable True \
     --model_name_or_path ./base_model/vicuna-v1-5-7b \
     --version v1 \
@@ -51,8 +55,8 @@ deepspeed --include localhost:0 --master_port 29583 vtimellm/train/train_mem.py 
     --whole_scene True \
     --bf16 True \
     --num_train_epochs 2 \
-    --per_device_train_batch_size 8 \
-    --gradient_accumulation_steps 16 \
+    --per_device_train_batch_size "$B3_MICRO_BATCH" \
+    --gradient_accumulation_steps "$B3_GRAD_ACCUM" \
     --evaluation_strategy no \
     --save_strategy steps \
     --save_steps 200 \
@@ -72,5 +76,7 @@ deepspeed --include localhost:0 --master_port 29583 vtimellm/train/train_mem.py 
     --report_to wandb \
     $RESUME \
     2>&1 | tee "$LOG"
+TRAIN_RC=$?
 
 echo "End: $(date)" | tee -a "$LOG"
+exit "$TRAIN_RC"

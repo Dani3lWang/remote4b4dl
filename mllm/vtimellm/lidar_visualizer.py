@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -182,6 +183,8 @@ def validate_scene_features(features: np.ndarray, frame_count: int) -> None:
         raise ValueError(
             f"特征帧数 {features.shape[0]} 与 nuScenes 场景帧数 {frame_count} 不一致"
         )
+    if not np.issubdtype(features.dtype, np.floating) or not np.isfinite(features).all():
+        raise ValueError("特征必须为有限浮点数，不能包含 NaN / Inf")
 
 
 def step_frame(index: int, frame_count: int, delta: int, loop: bool = False) -> int:
@@ -243,6 +246,7 @@ class NuScenesSceneRepository:
         }
         self._sample_chain_cache: Dict[str, Tuple[str, ...]] = {}
         self._frame_cache: "OrderedDict[Tuple[str, int], FrameData]" = OrderedDict()
+        self._frame_lock = threading.RLock()
         self.scenes = self._build_scene_index()
         self._scenes_by_token = {scene.scene_token: scene for scene in self.scenes}
         self._scenes_by_id: Dict[str, SceneRef] = {}
@@ -316,6 +320,21 @@ class NuScenesSceneRepository:
         except KeyError as exc:
             raise KeyError(f"scene_metadata 中没有 scene_id：{scene_id}") from exc
 
+    def resolve_scene(self, scene_id: Optional[str], scene_token: Optional[str] = None) -> SceneRef:
+        """Resolve either key and reject contradictory evaluation metadata."""
+        by_token = self.get_scene(scene_token) if scene_token else None
+        try:
+            by_id = self.get_scene_by_id(scene_id) if scene_id else None
+        except KeyError:
+            if by_token and by_token.scene_id is None:
+                return by_token
+            raise
+        if by_id and by_token and by_id.scene_token != by_token.scene_token:
+            raise ValueError("评测样本的 scene_id 与 scene_token 指向不同场景")
+        if by_id or by_token:
+            return by_id or by_token
+        raise KeyError("评测样本没有可用的 scene_id / scene_token")
+
     def _load_points(self, lidar_path: str, sample_token: str) -> np.ndarray:
         try:
             from nuscenes.utils.data_classes import LidarPointCloud
@@ -385,6 +404,11 @@ class NuScenesSceneRepository:
         return tuple(boxes), tuple(tracks), warnings
 
     def get_frame(self, scene_token: str, frame_index: int) -> FrameData:
+        # Gradio serves concurrent render/export requests sharing this LRU.
+        with self._frame_lock:
+            return self._get_frame(scene_token, frame_index)
+
+    def _get_frame(self, scene_token: str, frame_index: int) -> FrameData:
         scene = self.get_scene(scene_token)
         frame_index = int(frame_index)
         if frame_index < 0 or frame_index >= len(scene.sample_tokens):

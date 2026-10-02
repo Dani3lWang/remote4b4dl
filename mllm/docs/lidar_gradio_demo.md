@@ -4,14 +4,17 @@
 
 ## 安装
 
-在项目的推理环境中安装独立 Demo 依赖：
+推荐新建 Python 3.10 环境（例如 `wqlc`），安装独立 Demo 依赖：
 
 ```bash
 cd mllm
 pip install -r requirements-demo.txt
 ```
 
-该文件在原有推理依赖之上追加 Plotly 和 nuScenes SDK，但不会修改原始依赖清单或训练代码。纯查看模式不加载模型权重，也不要求 CUDA。
+该清单仅安装 Gradio、Plotly、nuScenes SDK 等查看依赖，不安装 PyTorch、
+DeepSpeed 或 flash-attn。nuScenes 1.1.11 依赖旧版 matplotlib，因此使用
+NumPy 1.x；请与使用 NumPy 2.x 的训练环境分开。纯查看模式不加载模型权重，
+也不要求 CUDA。
 
 ## 纯查看模式
 
@@ -26,6 +29,18 @@ python -m vtimellm.demo_gradio \
 `--scene_metadata` 可省略。省略后仍可浏览 nuScenes 原生场景，但由于无法解析 B4DL 的随机 `scene_id`，模型问答不会启用。数据根目录也可以通过环境变量 `B4DL_NUSCENES_ROOT` 设置。
 
 ## 查看并启用模型问答
+
+在独立 Demo 环境中增加推理依赖：
+
+```bash
+pip install -r requirements-inference.txt
+```
+
+推理清单使用项目说明中的 PyTorch 2.8、transformers 4.47、PEFT 0.13.2
+和 accelerate 1.3，不需要编译 flash-attn。RTX 4090 推荐使用默认的
+`--dtype auto --attn_implementation sdpa`：支持时选择 BF16；可显式设置
+`--dtype float16` 以复核原 FP16 评测行为。改变精度后应重新评测，不能假设
+逐样本输出完全相同。
 
 以下四项必须成套提供，`--stage3` 可选：
 
@@ -44,9 +59,59 @@ python -m vtimellm.demo_gradio \
 常用参数：
 
 - `--max_points 30000`：每帧发送给浏览器的最大点数。
+- `--gpu_id 0`：CUDA 逻辑设备编号；遵循 `CUDA_VISIBLE_DEVICES`。
+- `--max_new_tokens 512`：单次答案生成上限。
+- `--max_context_tokens 4096`：上下文预算，实际还会受模型配置限制。
+- `--attn_implementation eager`：原生 SDPA 的兼容性排查选项。
 - `--server_name 0.0.0.0`：允许局域网访问。
 - `--server_port 7860`：修改监听端口。
 - `--share`：启用 Gradio 分享链接。
+
+模型请求按单并发执行；场景特征缓存在 CPU，当前推理时才传入 GPU。
+上下文预算包含 `<video>` 展开后的 LiDAR 特征；过长对话会移除最早的完整
+问答轮次并保留整场景特征，单个问题仍过长时会明确提示。生成失败不会改写
+原会话状态。4090 的 24 GB 显存通常可作为 7B 半精度单模型推理的起点，
+实际余量受 KV cache、其他 GPU 进程和权重影响；此处不构成显存实测结果。
+
+## 训练曲线
+
+增加 `--trainer_state /path/to/checkpoint/trainer_state.json` 可展示 training
+loss、已记录的 eval_loss 和 learning rate。横轴为优化器更新步数，重复步数
+保留该指标最后一条记录，非有限数值会跳过。此功能只读取已有日志，不会
+启动训练；重新启动 Demo 可载入后续 checkpoint 的更新。
+
+```bash
+python -m vtimellm.demo_gradio \
+  --nuscenes_root /path/to/nuScenes \
+  --trainer_state /path/to/checkpoint-1000/trainer_state.json \
+  --predictions /path/to/predictions.json \
+  --metrics /path/to/metrics.json
+```
+
+### RTX 4090 的 B3 训练入口
+
+在已经通过 `scripts/preflight_b3.py` 的训练 `wqlc` 环境中使用：
+
+```bash
+cd mllm
+B4DL_ENV_PREFIX=/path/to/training/wqlc \
+B4DL_TRAIN_PROFILE=rtx4090 \
+B4DL_GPU_ID=0 \
+bash scripts/run_b3.sh
+```
+
+4090 配置采用 micro-batch 1、gradient accumulation 128、现有 ZeRO-3 CPU
+offload 配置；单 GPU 的有效 batch 仍为 128。空闲显存门槛为 20000 MiB，
+检查选定 GPU，checkpoint、日志和评测目录使用 `-rtx4090` 后缀，以便独立
+恢复及对比。2 epochs、学习率和 LoRA 参数保持 B3 配方。CPU offload 需要
+足够的主机内存且可能明显降低速度；这些是配置建议，仍需真实 4090 数据
+训练测量峰值显存和吞吐。
+
+未指定配置时保留原 B3 参数（8 × 16、28000 MiB 门槛）。若显存总量小于
+门槛，入口会立即报错并提示选择 4090 配置，避免等待 72 小时。可通过
+`B4DL_TRAIN_MIN_FREE_MB` 调整空闲显存门槛；门槛只用于等待设备空闲，
+不是模型峰值显存的保证。仅重新评测 4090 checkpoint 时使用相同变量并运行
+`bash scripts/run_b3.sh 2`。
 
 ## 测试
 
@@ -100,6 +165,13 @@ POSITION 7/40` 表示数据集帧号为 6，同时它是场景中的第 7 帧。
 若旧结果无法与 `test_qa.json` 唯一匹配，页面保留文本诊断并明确显示未关联，
 不会猜测或跳转到错误场景。
 
+同一“问题 + GT”对应不同场景或输入帧时均视为歧义，不按预测顺序猜测。
+新版结果也可仅用 `scene_token` 关联 nuScenes；同时提供两种场景键时会检查
+一致性。未关联样本的论文案例场景选择会清空，需手动选择后才能导出。
+
+看板显示 `answer_frames` 的 oracle 输入选择和 METEOR 后端信息。论文柱状图
+只是参考数值，比较前须核对测试集、特征构造、输入选择和指标后端。
+
 ## 单独导出论文案例图
 
 不启动 Gradio 时，可直接调用独立渲染器。`--frames` 留空会在整段场景中
@@ -129,4 +201,11 @@ python vtimellm/paper_case_visualizer.py \
 
 ```bash
 python -m unittest tests.test_paper_case_visualizer -v
+```
+
+运行全部 CPU 回归测试（包括真实模块 CLI、场景关联、上下文预算及 Gradio
+构建）使用：
+
+```bash
+python -m unittest discover -s tests -v
 ```
