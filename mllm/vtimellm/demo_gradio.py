@@ -53,9 +53,11 @@ from effect_visualizer import (  # noqa: E402
     training_history_figure,
 )
 from paper_case_visualizer import (  # noqa: E402
+    AnswerPanel,
     build_paper_case,
     parse_frame_indices,
     select_frame_indices,
+    scene_target_choices,
     split_highlights,
 )
 from demo_inference import prepare_chat_prompt  # noqa: E402
@@ -139,7 +141,10 @@ textarea, input { font-family: "Aptos", "Segoe UI", sans-serif !important; }
   padding: 14px !important;
 }
 #paper-case-preview {
-  border: 1px solid var(--b4-line); background: #f3f0e8; padding: 8px !important;
+  border: 1px solid var(--b4-line); background: #ffffff; padding: 8px !important;
+}
+@media (min-width: 1100px) {
+  #paper-case-preview { position: sticky; top: 12px; align-self: flex-start; }
 }
 @media (max-width: 1050px) { .metric-rail { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 620px) { .metric-rail { grid-template-columns: repeat(2, 1fr); } }
@@ -604,8 +609,10 @@ def create_demo(
 
                     with gr.Tab("论文案例图 / PAPER CASE"):
                         gr.Markdown(
-                            "将评测样本组织为 **5 帧 × 前视 / 后视 / LiDAR BEV** 的论文定性案例图。"
-                            "文本高亮项用逗号分隔；留空帧号时自动均匀采样。"
+                            "参考 [B4DL 原论文 Figure 5 / 8](https://arxiv.org/abs/2508.05269)："
+                            "同步场景帧、独立 Ground Truth、模型对比或三组消融。"
+                            "**黄色＝前方目标，绿色＝后方目标**，画面与所有答案共享颜色。"
+                            "评测载入只提供真值和当前预测；其他模型答案需填写实际输出。"
                         )
                         paper_sample_picker = gr.Dropdown(
                             choices=effect_choices(effect_samples),
@@ -626,6 +633,11 @@ def create_demo(
                                     label="帧号（2–8 帧，推荐 5 帧）",
                                     placeholder="例如：0, 10, 20, 30, 39；留空自动选择",
                                 )
+                                paper_layout = gr.Dropdown(
+                                    choices=[("Figure 5 · 双模型对比 / 三视图", "comparison"),
+                                             ("Figure 8 · 三组消融 / 前视与 BEV", "ablation")],
+                                    value="comparison", label="论文版式",
+                                )
                                 paper_title = gr.Textbox(
                                     value="QUALITATIVE CASE STUDY", label="图标题",
                                 )
@@ -633,28 +645,55 @@ def create_demo(
                                     value=effect_sample.question if effect_sample else "",
                                     label="QUESTION", lines=3,
                                 )
+                                paper_ground_truth = gr.Textbox(
+                                    value=effect_sample.ground_truth if effect_sample else "",
+                                    label="独立真值 / GROUND TRUTH", lines=3,
+                                )
                                 with gr.Row():
                                     paper_baseline_label = gr.Textbox(
-                                        value="Ground truth", label="左侧模型名",
+                                        value="VTimeLLM", label="第一组模型名",
                                     )
                                     paper_b4dl_label = gr.Textbox(
-                                        value="B4DL model (Ours)", label="右侧模型名",
+                                        value="B4DL model (Ours)", label="完整模型名",
                                     )
                                 paper_baseline_answer = gr.Textbox(
-                                    value=effect_sample.ground_truth if effect_sample else "",
-                                    label="左侧答案 / BASELINE", lines=4,
+                                    label="第一组实际答案 / BASELINE", lines=4,
                                 )
-                                paper_baseline_highlights = gr.Textbox(
-                                    label="左侧黄色高亮短语",
-                                    placeholder="vehicles in front, turning left",
-                                )
+                                paper_baseline_errors = gr.Textbox(label="第一组错误短语（红字）")
+                                with gr.Group(visible=False) as paper_middle_group:
+                                    paper_middle_label = gr.Textbox(
+                                        value="B4DL without Metatoken", label="第二组消融模型名",
+                                    )
+                                    paper_middle_answer = gr.Textbox(label="第二组实际答案", lines=4)
+                                    paper_middle_errors = gr.Textbox(label="第二组错误短语（红字）")
                                 paper_b4dl_answer = gr.Textbox(
                                     value=effect_sample.prediction if effect_sample else "",
-                                    label="右侧答案 / B4DL", lines=4,
+                                    label="完整模型实际答案 / B4DL", lines=4,
                                 )
-                                paper_b4dl_highlights = gr.Textbox(
-                                    label="右侧绿色高亮短语",
-                                    placeholder="vehicles in the back view",
+                                paper_b4dl_errors = gr.Textbox(label="完整模型错误短语（红字）")
+                                with gr.Accordion("目标与证据高亮", open=False):
+                                    initial_targets = scene_target_choices(
+                                        repository, initial_paper_scene.scene_token
+                                    ) if initial_paper_scene else []
+                                    paper_front_target = gr.Dropdown(
+                                        choices=initial_targets, label="前方目标 instance（黄色，可选）",
+                                        filterable=True,
+                                    )
+                                    paper_rear_target = gr.Dropdown(
+                                        choices=initial_targets, label="后方目标 instance（绿色，可选）",
+                                        filterable=True,
+                                    )
+                                    paper_yellow_phrases = gr.Textbox(
+                                        label="前方证据短语（所有答案黄色高亮）",
+                                        placeholder="vehicles in front; the front vehicle",
+                                    )
+                                    paper_green_phrases = gr.Textbox(
+                                        label="后方证据短语（所有答案绿色高亮）",
+                                        placeholder="rear vehicles; vehicles in the back view",
+                                    )
+                                paper_conclusion = gr.Textbox(
+                                    label="观察结论 / 图注（人工填写，可选）", lines=3,
+                                    placeholder="说明哪些帧、哪个目标支持或反驳答案；留空不生成结论。",
                                 )
                                 with gr.Row():
                                     paper_boxes = gr.Checkbox(value=True, label="投影真值框")
@@ -666,7 +705,7 @@ def create_demo(
                                 )
                             with gr.Column(scale=8, min_width=640):
                                 paper_preview = gr.Image(
-                                    type="pil", interactive=False, label="PAPER FIGURE PREVIEW",
+                                    type="pil", interactive=False, height=620, label="PAPER FIGURE PREVIEW",
                                     elem_id="paper-case-preview",
                                 )
 
@@ -760,10 +799,13 @@ def create_demo(
                 )
 
             def load_paper_sample(sample_id):
+                # Clear other models and editorial marks when changing the evidence sample.
+                cleared = ("", "", "", "", "", "", "", "", None, None)
                 if not sample_id:
                     return (
-                        gr.update(), "", "", "", "",
+                        gr.update(value=None), "", "", "", "",
                         "未选择评测样本；可以手动填写场景与文案。",
+                        *cleared,
                     )
                 sample = evaluation.get(sample_id)
                 scene = None
@@ -780,6 +822,7 @@ def create_demo(
                     return (
                         gr.update(value=None), "", sample.question,
                         sample.ground_truth, sample.prediction, warning,
+                        *cleared,
                     )
 
                 candidates = [
@@ -800,6 +843,7 @@ def create_demo(
                 return (
                     gr.update(value=scene.scene_token), frame_text, sample.question,
                     sample.ground_truth, sample.prediction, status,
+                    *cleared,
                 )
 
             paper_sample_picker.change(
@@ -807,17 +851,51 @@ def create_demo(
                 paper_sample_picker,
                 [
                     paper_scene, paper_frames, paper_question,
-                    paper_baseline_answer, paper_b4dl_answer, paper_status,
+                    paper_ground_truth, paper_b4dl_answer, paper_status,
+                    paper_baseline_answer, paper_middle_answer,
+                    paper_baseline_errors, paper_middle_errors, paper_b4dl_errors,
+                    paper_yellow_phrases, paper_green_phrases, paper_conclusion,
+                    paper_preview, paper_files,
                 ],
+            )
+
+            def change_paper_scene(scene_token):
+                choices = scene_target_choices(repository, scene_token)
+                return (gr.update(choices=choices, value=None), gr.update(choices=choices, value=None),
+                        None, None)
+
+            paper_scene.change(change_paper_scene, paper_scene,
+                               [paper_front_target, paper_rear_target, paper_preview, paper_files])
+
+            def change_paper_layout(layout):
+                # Preset labels denote different experiments; old answers cannot be relabeled.
+                return (gr.update(visible=layout == "ablation"),
+                        "B4DL without HA and Metatoken" if layout == "ablation" else "VTimeLLM",
+                        "", "", "", "", "", None, None)
+
+            paper_layout.change(
+                change_paper_layout, paper_layout,
+                [paper_middle_group, paper_baseline_label, paper_baseline_answer, paper_middle_answer,
+                 paper_baseline_errors, paper_middle_errors, paper_conclusion, paper_preview, paper_files],
             )
 
             def export_paper_case(
                 scene_token, frames, title, question,
-                baseline_label, baseline_answer, baseline_highlights,
-                b4dl_label, b4dl_answer, b4dl_highlights,
-                boxes, tracks,
+                baseline_label, baseline_answer, baseline_errors,
+                b4dl_label, b4dl_answer, b4dl_errors,
+                boxes, tracks, layout, ground_truth, middle_label, middle_answer, middle_errors,
+                yellow_phrases, green_phrases, front_target, rear_target, conclusion,
             ):
                 try:
+                    panels = [AnswerPanel(baseline_label or "Baseline", baseline_answer,
+                                          split_highlights(baseline_errors))]
+                    if layout == "ablation":
+                        panels.append(AnswerPanel(middle_label or "Ablation", middle_answer,
+                                                  split_highlights(middle_errors)))
+                    panels.append(AnswerPanel(b4dl_label or "B4DL model (Ours)", b4dl_answer,
+                                              split_highlights(b4dl_errors)))
+                    if not question.strip() or any(not p.answer.strip() for p in panels):
+                        raise ValueError("请填写问题与每组模型的实际答案；评测真值已放在独立栏中")
                     scene = repository.get_scene(scene_token)
                     selected = parse_frame_indices(
                         frames, len(scene.sample_tokens), count=5
@@ -831,11 +909,14 @@ def create_demo(
                         b4dl_answer=b4dl_answer,
                         baseline_label=baseline_label or "Baseline",
                         b4dl_label=b4dl_label or "B4DL model (Ours)",
-                        baseline_highlights=split_highlights(baseline_highlights),
-                        b4dl_highlights=split_highlights(b4dl_highlights),
                         title=title or "QUALITATIVE CASE STUDY",
                         show_boxes=bool(boxes),
                         show_tracks=bool(tracks),
+                        layout=layout, ground_truth=ground_truth, answer_panels=panels,
+                        yellow_phrases=split_highlights(yellow_phrases),
+                        green_phrases=split_highlights(green_phrases),
+                        front_instance=front_target, rear_instance=rear_target,
+                        conclusion=conclusion,
                     )
                     selected_text = ", ".join(str(value) for value in artifact.frame_indices)
                     return (
@@ -851,9 +932,12 @@ def create_demo(
                 [
                     paper_scene, paper_frames, paper_title, paper_question,
                     paper_baseline_label, paper_baseline_answer,
-                    paper_baseline_highlights, paper_b4dl_label,
-                    paper_b4dl_answer, paper_b4dl_highlights,
-                    paper_boxes, paper_tracks,
+                    paper_baseline_errors, paper_b4dl_label,
+                    paper_b4dl_answer, paper_b4dl_errors,
+                    paper_boxes, paper_tracks, paper_layout, paper_ground_truth,
+                    paper_middle_label, paper_middle_answer, paper_middle_errors,
+                    paper_yellow_phrases, paper_green_phrases,
+                    paper_front_target, paper_rear_target, paper_conclusion,
                 ],
                 [paper_preview, paper_files, paper_status],
             )

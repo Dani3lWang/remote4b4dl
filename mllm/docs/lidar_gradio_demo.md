@@ -147,8 +147,9 @@ python -m vtimellm.demo_gradio \
 - **样本诊断**：按任务、状态、关键词和得分分页筛选；选择样本后显示点云、
   BEV、相机、问题、Ground Truth、预测和任务对应的单样本得分。
 - **论文案例图**：从当前评测页载入一个样本，选择 2–8 个场景帧（默认均匀
-  选择 5 帧），生成同步的前视、后视和 LiDAR BEV 三行视图；可编辑两组
-  模型答案与黄色/绿色高亮短语，并下载 180 DPI PNG 和 PDF。
+  选择 5 帧），使用原论文 Figure 5 双模型对比或 Figure 8 三组消融版式。
+  独立展示 Ground Truth，黄色/绿色分别对应前方/后方目标，在所有答案中
+  保持同一语义；可添加错误红字及人工观察结论，下载 180 DPI PNG 和 PDF。
 
 时间定位时间轴使用数据集原始 0 基帧号。界面的 `DATASET FRAME 006 ·
 POSITION 7/40` 表示数据集帧号为 6，同时它是场景中的第 7 帧。
@@ -177,6 +178,28 @@ POSITION 7/40` 表示数据集帧号为 6，同时它是场景中的第 7 帧。
 不启动 Gradio 时，可直接调用独立渲染器。`--frames` 留空会在整段场景中
 均匀选择 5 帧；高亮短语支持用逗号、分号或换行分隔。
 
+样板来自 [B4DL 论文](https://arxiv.org/abs/2508.05269) 的 Figure 5 / 8：
+
+| 版式 | 场景证据 | 答案区域 |
+|---|---|---|
+| Figure 5 / `comparison` | 前视、后视、LiDAR BEV，共用时间轴 | 可选独立真值 + 两组模型输出 |
+| Figure 8 / `ablation` | 前视、LiDAR BEV，共用时间轴 | 独立真值 + 三组消融输出 |
+
+载入评测样本时，GT 放入真值栏，prediction 放入完整模型栏，其他模型答案
+和旧高亮/结论清空。应填写同一问题、场景和输入设置下的实际基线或消融
+输出；导出按钮会检查每组模型答案已填写。版式切换只预填模型名称，不生成
+消融结果。切换版式会清空基线/消融答案及旧结论，避免旧答案被换名归属到另一
+实验；更换样本、场景或版式也会清空旧预览和下载项。观察结论完全由用户填写，
+建议明确“哪帧的哪个目标支持了哪句话”，
+同时保留失败案例；单个案例不能证明总体分数或训练效果提高。
+
+“目标与证据高亮”中选择 nuScenes `instance_token`，导出时自动映射至各帧
+的 `sample_annotation`，为相机和 BEV 加上同色目标框。目标必须至少在所选
+帧的标注中出现；框在该相机视野外时不会强行投影。关闭普通真值框不会关闭
+明确选择的目标标记。框来自数据集真值，不是模型预测的检测框。未选目标时
+只显示普通类别框；文本高亮仍可独立设置。短语匹配不区分大小写，在真值及
+每组模型答案中统一应用；重叠短语优先黄色，错误标红独立于背景颜色。
+
 ```bash
 cd mllm
 python vtimellm/paper_case_visualizer.py \
@@ -188,14 +211,25 @@ python vtimellm/paper_case_visualizer.py \
   --baseline-label "VTimeLLM" \
   --baseline-answer "Vehicles in front move forward." \
   --b4dl-answer "Front vehicles move forward while rear vehicles move away." \
-  --baseline-highlights "Vehicles in front" \
-  --b4dl-highlights "Front vehicles,rear vehicles" \
+  --ground-truth "Front vehicles move forward while rear vehicles move away." \
+  --yellow-phrases "Vehicles in front;Front vehicles" \
+  --green-phrases "rear vehicles" \
   --output-dir ./paper_cases
 ```
 
 相机行使用 nuScenes 标定将真值 3D 框投影到画面；LiDAR 行是适合打印的
 静态 BEV，并可叠加真值框和历史轨迹。该流程只读数据与评测输出，不加载或
-修改训练代码。
+修改训练代码，也不占用 4090 推理显存。白底图使用完整相机视野，不裁切目标；
+长答案、中英文和显式换行自动排版，图高随文字增加。Linux 中文字体可安装
+Noto CJK，Windows 优先使用微软雅黑；缺少中文字体时应先安装再导出。
+
+消融命令额外设置 `--layout ablation`、`--middle-label`、`--middle-answer`；
+三栏顺序是 baseline、middle、B4DL。通过 `--baseline-errors`、
+`--middle-errors`、`--b4dl-errors` 指定错误红字，`--front-instance` /
+`--rear-instance` 指定目标，`--conclusion` 添加人工观察结论。兼容旧
+`--baseline-highlights` / `--b4dl-highlights` 参数，分别作为所有答案共用的
+黄色 / 绿色短语；新命令推荐使用语义明确的参数名。上述示例文字只用于说明
+命令格式，不能当作实测结果。PDF 为高分辨率栅格图，文字不可编辑。
 
 论文案例图的 CPU 单元测试：
 
