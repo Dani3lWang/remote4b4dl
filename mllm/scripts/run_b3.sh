@@ -9,6 +9,13 @@ set -u
 START_STAGE=${1:-1}
 case "$START_STAGE" in 1|2) ;; *) echo "用法: bash $0 [1|2]"; exit 1 ;; esac
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/b3_runtime.sh"
+b3_configure_runtime || exit 1
+if [ "$START_STAGE" -le 1 ]; then
+    b3_check_gpu_capacity "$B3_MIN_FREE_MB" || exit 1
+else
+    b3_check_gpu_capacity 14336 || exit 1
+fi
 PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 WQLC_PREFIX="${B4DL_ENV_PREFIX:-$(dirname "$PROJECT_ROOT")/.conda-stuff/envs/wqlc}"
 
@@ -28,13 +35,13 @@ python scripts/preflight_b3.py --project-root "$PROJECT_ROOT" || exit 1
 
 if [ "$START_STAGE" -le 1 ]; then
 echo "===== 阶段1: mixed-b3 重训（整场景 + meta2）($(date '+%F %T')) ====="
-OUT=checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-b3
-# 等显存（28GB 门控，72h 上限：432 次 × 10 分钟）
+OUT=checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-b3$B3_OUTPUT_SUFFIX
+# 等选定 GPU 的空闲显存；不可能满足的门槛已在启动时拒绝。
 GATE_OK=0
 for i in $(seq 1 432); do
-    FREE_MB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)
-    if [ -n "$FREE_MB" ] && [ "$FREE_MB" -ge 28000 ]; then GATE_OK=1; break; fi
-    echo "[$(date '+%F %T')] 显存不足 (${FREE_MB}MB < 28GB)，10 分钟后重试... (第 ${i} 次)"
+    FREE_MB=$(b3_gpu_memory free) || exit 1
+    if [ "$FREE_MB" -ge "$B3_MIN_FREE_MB" ]; then GATE_OK=1; break; fi
+    echo "[$(date '+%F %T')] GPU $B3_GPU_ID 显存不足 (${FREE_MB}MB < ${B3_MIN_FREE_MB}MB)，10 分钟后重试... (第 ${i} 次)"
     sleep 600
 done
 [ $GATE_OK -ne 1 ] && { echo "阶段1 显存门控 72h 未放行，链停止"; exit 1; }
@@ -54,20 +61,20 @@ done
 fi
 
 echo "===== 阶段2: 同口径评测 b3 ($(date '+%F %T')) ====="
-EVAL_OUT=./eval_results/stage2_full_seqv3_mixed_b3
+EVAL_OUT=./eval_results/stage2_full_seqv3_mixed_b3$B3_OUTPUT_SUFFIX
 mkdir -p "$EVAL_OUT"
 EVAL_OK=0
 for attempt in 1 2 3 4 5; do
-    FREE_MB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)
-    if [ -n "$FREE_MB" ] && [ "$FREE_MB" -lt 14336 ]; then
+    FREE_MB=$(b3_gpu_memory free) || exit 1
+    if [ "$FREE_MB" -lt 14336 ]; then
         echo "[$(date '+%F %T')] 显存不足 (${FREE_MB}MB < 14GB)，10 分钟后重试..."
         sleep 600
         continue
     fi
-    timeout 18000 "$WQLC_PREFIX/bin/python" -u evaluation/test_b4dl.py \
+    CUDA_VISIBLE_DEVICES="$B3_GPU_ID" timeout 18000 "$WQLC_PREFIX/bin/python" -u evaluation/test_b4dl.py \
         --model_base ./base_model/vicuna-v1-5-7b \
         --pretrain_mm_mlp_adapter ./checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin \
-        --stage2 ./checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-b3 \
+        --stage2 "./checkpoints/vtimellm-vicuna-v1-5-7b-stage2-full-seqv3-mixed-b3$B3_OUTPUT_SUFFIX" \
         --feat_folder ../encoders/lidarclip/b4dl/stage2_features \
         --test_data ./b4dl_dataset/test_qa.json \
         --ego_meta ./b4dl_dataset/ego_metadata.json \

@@ -15,13 +15,45 @@ for root in (str(VTIMELLM_ROOT), str(MLLM_ROOT)):
 
 from lidar_visualizer import BoxRender, FrameData, SceneRef, TrackRender
 from paper_case_visualizer import (
+    AnswerPanel,
+    PAPER_GREEN,
+    PAPER_YELLOW,
+    _fit_cell,
+    _font,
+    _wrapped_lines,
     build_paper_case,
     compose_paper_case,
     parse_frame_indices,
     render_bev_image,
+    render_annotated_camera,
+    scene_target_choices,
     select_frame_indices,
     split_highlights,
 )
+from PIL import ImageDraw, ImageColor
+
+
+class _AnnotatedNuScenes:
+    def get(self, table, token):
+        if table == "sample":
+            index = token.rsplit("-", 1)[-1]
+            return {"data": {"CAM_FRONT": "camera"}, "anns": [f"ann-{index}"]}
+        if table == "sample_annotation":
+            return {"instance_token": "stable-front", "category_name": "vehicle.car"}
+        raise KeyError((table, token))
+
+    @staticmethod
+    def get_sample_data(token):
+        class CameraBox:
+            token = "ann-0"
+            name = "vehicle.car"
+
+            @staticmethod
+            def corners():
+                return np.array([[-1, 1, 1, -1, -1, 1, 1, -1],
+                                 [-1, -1, 1, 1, -1, -1, 1, 1],
+                                 [5, 5, 5, 5, 7, 7, 7, 7]], dtype=float)
+        return "unused", [CameraBox()], np.array([[200, 0, 320], [0, 200, 160], [0, 0, 1]])
 
 
 class _NoCameraNuScenes:
@@ -99,6 +131,70 @@ class FrameSelectionTests(unittest.TestCase):
 
 
 class PaperRenderingTests(unittest.TestCase):
+    def test_target_instances_are_stable_across_annotation_tokens(self):
+        repository = _PaperRepository()
+        repository.nusc = _AnnotatedNuScenes()
+        self.assertEqual(scene_target_choices(repository, "scene-token")[0][1], "stable-front")
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = build_paper_case(
+                repository, "scene-token", (0, 4, 8), "Question?", "Baseline", "Ours",
+                front_instance="stable-front", show_boxes=False, output_dir=directory,
+            )
+            self.assertEqual(artifact.frame_indices, (0, 4, 8))
+            with self.assertRaisesRegex(ValueError, "未出现"):
+                build_paper_case(repository, "scene-token", (0, 4), "Q", "B", "O",
+                                 rear_instance="missing", output_dir=directory)
+            with self.assertRaisesRegex(ValueError, "同一个"):
+                build_paper_case(repository, "scene-token", (0, 4), "Q", "B", "O",
+                                 front_instance="stable-front", rear_instance="stable-front")
+
+    def test_selected_boxes_keep_the_same_color_in_camera_and_bev(self):
+        repository = _PaperRepository()
+        repository.nusc = _AnnotatedNuScenes()
+        frame = repository.get_frame("scene-token", 0)
+        camera = render_annotated_camera(repository, frame, "CAM_FRONT", False,
+                                         {"ann-0": PAPER_YELLOW})
+        bev = render_bev_image(frame, show_boxes=False, target_colors={"box": PAPER_YELLOW})
+        yellow = ImageColor.getrgb(PAPER_YELLOW)
+        self.assertGreater(sum(n for n, c in camera.getcolors(100_000) if c == yellow), 100)
+        self.assertGreater(sum(n for n, c in bev.getcolors(100_000) if c == yellow), 20)
+
+    def test_full_field_of_view_is_preserved(self):
+        source = Image.new("RGB", (240, 80), "blue")
+        ImageDraw.Draw(source).rectangle((230, 0, 239, 79), fill="red")
+        cell = _fit_cell(source, (100, 100))
+        self.assertGreater(sum(n for n, c in cell.getcolors(100_000) if c == (255, 0, 0)), 0)
+
+    def test_semantic_colors_are_shared_by_both_models(self):
+        cell = Image.new("RGB", (640, 320), "white")
+        figure = compose_paper_case([cell] * 2, [cell] * 2, [cell] * 2, [0, 1],
+                                    "Question?", "front and rear", "front and rear",
+                                    yellow_phrases=("front",), green_phrases=("rear",))
+        # Above the legend, each model panel contains both evidence colors.
+        for x0, x1 in ((32, 995), (1005, 1968)):
+            colors = dict((color, count) for count, color in
+                          figure.crop((x0, 840, x1, figure.height - 64)).getcolors(100_000))
+            self.assertGreater(colors.get(ImageColor.getrgb(PAPER_YELLOW), 0), 100)
+            self.assertGreater(colors.get(ImageColor.getrgb(PAPER_GREEN), 0), 100)
+
+    def test_ablation_and_long_multilingual_answers_grow_without_truncation(self):
+        cell = Image.new("RGB", (640, 320), "white")
+        short = [AnswerPanel("No HA", "front"), AnswerPanel("No meta", "front"), AnswerPanel("Ours", "rear")]
+        kwargs = dict(front_images=[cell] * 2, back_images=[cell] * 2, bev_images=[cell] * 2,
+                      frame_indices=[0, 1], question="Q", baseline_answer="", b4dl_answer="",
+                      layout="ablation", ground_truth="Reference answer")
+        compact = compose_paper_case(**kwargs, answer_panels=short)
+        long_text = "中文观察与证据，" * 80 + "\n" + "x" * 200
+        expanded = compose_paper_case(**kwargs, answer_panels=[*short[:2], AnswerPanel("Ours", long_text)])
+        self.assertGreater(expanded.height, compact.height + 500)
+        spans = _wrapped_lines(ImageDraw.Draw(cell), long_text, _font(23), 400)
+        recovered = "".join(long_text[a:b] for a, b in spans)
+        self.assertEqual(recovered, long_text.replace("\n", ""))
+        with self.assertRaisesRegex(ValueError, "3 组"):
+            compose_paper_case(**kwargs, answer_panels=short[:2])
+        with self.assertRaisesRegex(ValueError, "实际答案"):
+            compose_paper_case(**kwargs, answer_panels=[*short[:2], AnswerPanel("Ours", "")])
+
     def test_bev_renderer_draws_points_boxes_and_tracks(self):
         repository = _PaperRepository()
         image = render_bev_image(repository.get_frame("scene-token", 0), size=(500, 260))

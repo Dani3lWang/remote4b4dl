@@ -244,19 +244,34 @@ def _legacy_metadata(
         gt = normalize_answer(conversations[1].get("value") if len(conversations) > 1 else "")
         lookup[(question, gt)].append((source_index, item))
 
+    # Repeated generic QAs are common across scenes. Ordering cannot establish
+    # identity: older evaluators may skip failed or missing-feature samples.
+    ambiguous_keys = set()
+    for key, candidates in lookup.items():
+        identities = {
+            json.dumps(
+                {name: value for name, value in _test_item_metadata(item, index).items()
+                 if name != "source_index"},
+                sort_keys=True,
+            )
+            for index, item in candidates
+        }
+        if len(identities) > 1:
+            ambiguous_keys.add(key)
+
     result: List[Optional[Dict[str, Any]]] = []
     unmatched = 0
     for question, ground_truth in zip(questions, ground_truths):
         key = (clean_question(question), normalize_answer(ground_truth))
         candidates = lookup.get(key)
-        if not candidates:
+        if not candidates or key in ambiguous_keys:
             result.append(None)
             unmatched += 1
             continue
         source_index, item = candidates.popleft()
         result.append(_test_item_metadata(item, source_index))
     if unmatched:
-        warnings.append(f"{TASK_LABELS[task]}有 {unmatched} 条旧结果无法可靠关联测试场景")
+        warnings.append(f"{TASK_LABELS[task]}有 {unmatched} 条旧结果无法唯一关联测试场景（无匹配或存在歧义）")
     return result, warnings
 
 
@@ -288,25 +303,42 @@ class EvaluationRepository:
         predictions = _read_json(predictions_path) if predictions_path else {}
         metrics = _read_json(metrics_path) if metrics_path else {}
         test_data = _read_json(test_data_path) if test_data_path else None
-        if predictions and not isinstance(predictions, Mapping):
+        if not isinstance(predictions, Mapping):
             raise ValueError("predictions.json 顶层必须是对象")
-        if metrics and not isinstance(metrics, Mapping):
+        if not isinstance(metrics, Mapping):
             raise ValueError("metrics.json 顶层必须是对象")
+        if test_data_path and not isinstance(test_data, list):
+            raise ValueError("test_data 顶层必须是数组")
 
         grouped_test = _group_test_items(test_data)
         samples: List[EvaluationSample] = []
         warnings: List[str] = []
         run_metadata = predictions.get("_run", {}) if predictions else {}
+        if not isinstance(run_metadata, Mapping):
+            raise ValueError("predictions._run 必须是对象")
+        if run_metadata.get("answer_frames"):
+            warnings.append("该评测使用 answer_frames：依据 GT 答案选择输入帧（oracle），比较结果时需声明")
+        backend = metrics.get("metric_backend", {}) if metrics else {}
+        meteor = backend.get("meteor", {}) if isinstance(backend, Mapping) else {}
+        reported = meteor.get("reported") if isinstance(meteor, Mapping) else None
+        if metrics:
+            warnings.append("论文数值仅作参考；请核对测试集、输入帧选择和指标后端是否一致")
+            if reported:
+                warnings.append(f"METEOR 后端：{reported}")
 
         for task in TASKS:
             task_data = predictions.get(task) if predictions else None
-            if not task_data:
+            if task_data is None:
                 continue
             if not isinstance(task_data, Mapping):
                 raise ValueError(f"{task} 结果必须是对象")
-            preds = list(task_data.get("predictions", []))
-            gts = list(task_data.get("ground_truths", []))
-            questions = list(task_data.get("questions", []))
+            for name in ("predictions", "ground_truths", "questions"):
+                value = task_data.get(name, [])
+                if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+                    raise ValueError(f"{task}.{name} 必须是字符串数组")
+            preds = task_data.get("predictions", [])
+            gts = task_data.get("ground_truths", [])
+            questions = task_data.get("questions", [])
             lengths = {len(preds), len(gts), len(questions)}
             if len(lengths) != 1:
                 raise ValueError(
@@ -314,6 +346,8 @@ class EvaluationRepository:
                 )
             metadata = task_data.get("samples")
             if metadata is not None:
+                if not isinstance(metadata, list) or any(not isinstance(item, Mapping) for item in metadata):
+                    raise ValueError(f"{task}.samples 必须是对象数组")
                 metadata = list(metadata)
                 if len(metadata) != len(preds):
                     raise ValueError(
@@ -427,6 +461,8 @@ class EvaluationRepository:
         page: int = 0,
         page_size: int = 50,
     ) -> Tuple[List[EvaluationSample], int, int]:
+        if page_size <= 0:
+            raise ValueError("page_size must be positive")
         values = self.filter(task, status, query, sort_order)
         total = len(values)
         pages = max(1, math.ceil(total / page_size))

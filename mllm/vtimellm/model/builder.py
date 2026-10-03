@@ -19,7 +19,12 @@ def load_lora(model, lora_path):
     return model
 
 def load_pretrained_model(args, stage2=None, stage3=None):
-    kwargs = {'torch_dtype': torch.float16}
+    # Existing evaluation callers keep float16 unless they request a dtype.
+    dtype_name = getattr(args, 'dtype', 'float16')
+    kwargs = {'torch_dtype': getattr(torch, dtype_name)}
+    attention = getattr(args, 'attn_implementation', None)
+    if attention:
+        kwargs['attn_implementation'] = attention
 
     # model_path = os.path.expanduser(args.model_path)
     model_base = args.model_base
@@ -76,6 +81,6 @@ def load_pretrained_model(args, stage2=None, stage3=None):
     if hasattr(model.config, "max_sequence_length"):
         context_len = model.config.max_sequence_length
     else:
-        context_len = 2048
+        context_len = getattr(model.config, 'max_position_embeddings', 2048)
 
     return tokenizer, model, context_len

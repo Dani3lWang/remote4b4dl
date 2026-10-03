@@ -50,13 +50,18 @@ from effect_visualizer import (  # noqa: E402
     sample_diagnosis_html,
     time_grounding_diagnostics_figure,
     timeline_figure,
+    training_history_figure,
 )
 from paper_case_visualizer import (  # noqa: E402
+    AnswerPanel,
     build_paper_case,
     parse_frame_indices,
     select_frame_indices,
+    scene_target_choices,
     split_highlights,
 )
+from demo_inference import prepare_chat_prompt  # noqa: E402
+from training_effects import TrainingHistory  # noqa: E402
 
 
 APP_CSS = """
@@ -70,11 +75,11 @@ APP_CSS = """
   --b4-amber: #ffb000;
 }
 body, .gradio-container {
-  background:
+  background-color: var(--b4-bg) !important;
+  background-image:
     linear-gradient(rgba(38,55,70,.11) 1px, transparent 1px),
     linear-gradient(90deg, rgba(38,55,70,.11) 1px, transparent 1px),
-    radial-gradient(circle at 18% 4%, rgba(0,212,199,.09), transparent 32%),
-    var(--b4-bg) !important;
+    radial-gradient(circle at 18% 4%, rgba(0,212,199,.09), transparent 32%) !important;
   background-size: 32px 32px, 32px 32px, auto, auto !important;
   color: var(--b4-text) !important;
   font-family: "Bahnschrift", "DIN Alternate", sans-serif !important;
@@ -91,7 +96,7 @@ body, .gradio-container {
   pointer-events: none;
 }
 .b4-kicker { color: var(--b4-cyan); letter-spacing: .22em; font-size: 11px; font-weight: 700; }
-.b4-title { margin: 5px 0 3px; font-size: clamp(25px, 3vw, 45px); line-height: 1; letter-spacing: -.035em; }
+.b4-title { color: var(--b4-text) !important; margin: 5px 0 3px; font-size: clamp(25px, 3vw, 45px); line-height: 1; letter-spacing: -.035em; }
 .b4-subtitle { color: var(--b4-muted); font-size: 13px; letter-spacing: .045em; }
 .b4-live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--b4-cyan); box-shadow: 0 0 15px var(--b4-cyan); margin-right: 8px; animation: b4pulse 2.4s ease-in-out infinite; }
 @keyframes b4pulse { 50% { opacity: .35; transform: scale(.72); } }
@@ -136,7 +141,10 @@ textarea, input { font-family: "Aptos", "Segoe UI", sans-serif !important; }
   padding: 14px !important;
 }
 #paper-case-preview {
-  border: 1px solid var(--b4-line); background: #f3f0e8; padding: 8px !important;
+  border: 1px solid var(--b4-line); background: #ffffff; padding: 8px !important;
+}
+@media (min-width: 1100px) {
+  #paper-case-preview { position: sticky; top: 12px; align-self: flex-start; }
 }
 @media (max-width: 1050px) { .metric-rail { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 620px) { .metric-rail { grid-template-columns: repeat(2, 1fr); } }
@@ -180,8 +188,11 @@ class OptionalInferenceEngine:
         self.tokenizer = None
         self.model = None
         self._lock = threading.Lock()
+        self._feature_lock = threading.RLock()
         self._feature_cache: "OrderedDict[str, object]" = OrderedDict()
         self._feature_cache_size = 6
+        self.max_new_tokens = getattr(args, "max_new_tokens", 512)
+        self.context_limit = getattr(args, "max_context_tokens", 4096)
         if not enabled:
             return
         if not self.feat_folder.is_dir():
@@ -194,9 +205,33 @@ class OptionalInferenceEngine:
         from vtimellm.utils import disable_torch_init
 
         self.device = f"cuda:{args.gpu_id}"
+        if args.gpu_id < 0 or args.gpu_id >= torch.cuda.device_count():
+            raise ValueError(f"gpu_id {args.gpu_id} 超出可用 GPU 范围")
+        torch.cuda.set_device(args.gpu_id)
+        dtype_name = getattr(args, "dtype", "auto")
+        if dtype_name == "auto":
+            dtype_name = "bfloat16" if torch.cuda.is_bf16_supported() else "float16"
+        if dtype_name == "bfloat16" and not torch.cuda.is_bf16_supported():
+            raise ValueError("所选 GPU 不支持 bfloat16，请使用 --dtype float16")
+        self.dtype = getattr(torch, dtype_name)
+        model_args = argparse.Namespace(**vars(args))
+        model_args.dtype = dtype_name
+        model_args.attn_implementation = getattr(args, "attn_implementation", "sdpa")
         disable_torch_init()
-        self.tokenizer, self.model, _ = load_pretrained_model(args, args.stage2, args.stage3)
-        self.model = self.model.to(torch.float16).to(self.device)
+        self.tokenizer, self.model, model_context = load_pretrained_model(
+            model_args, args.stage2, args.stage3
+        )
+        limits = [self.context_limit, model_context]
+        for value in (
+            getattr(self.model.config, "tokenizer_model_max_length", None),
+            getattr(self.tokenizer, "model_max_length", None),
+        ):
+            if value and 0 < value < 1_000_000:
+                limits.append(value)
+        self.context_limit = min(limits)
+        if self.max_new_tokens >= self.context_limit:
+            raise ValueError("max_new_tokens 必须小于模型上下文上限")
+        self.model = self.model.to(self.dtype).to(self.device)
         self.model.eval()
 
     def _feature_path(self, scene: SceneRef) -> Path:
@@ -205,6 +240,10 @@ class OptionalInferenceEngine:
         return self.feat_folder / f"{scene.scene_id}.npy"
 
     def _load_features(self, scene: SceneRef):
+        with self._feature_lock:
+            return self._load_features_locked(scene)
+
+    def _load_features_locked(self, scene: SceneRef):
         import torch
         key = scene.scene_token
         cached = self._feature_cache.get(key)
@@ -216,7 +255,11 @@ class OptionalInferenceEngine:
             raise FileNotFoundError(f"缺少场景特征：{path}")
         values = np.load(path, allow_pickle=False)
         validate_scene_features(values, len(scene.sample_tokens))
-        tensor = torch.from_numpy(values).to(torch.float16).to(self.device)
+        # Playback/readiness checks cache features on CPU. Only active inference
+        # moves a scene to CUDA, leaving VRAM available for model and KV cache.
+        tensor = torch.from_numpy(values).to(self.dtype)
+        if not torch.isfinite(tensor).all():
+            raise ValueError("特征转换至推理精度后溢出")
         self._feature_cache[key] = tensor
         self._feature_cache.move_to_end(key)
         while len(self._feature_cache) > self._feature_cache_size:
@@ -230,11 +273,13 @@ class OptionalInferenceEngine:
             self._load_features(scene)
         except Exception as exc:
             return False, f"问答不可用 · {exc}"
-        return True, "模型就绪 · 使用整场景 LiDAR 特征"
+        return True, f"模型就绪 · 整场景特征 · {str(self.dtype).split('.')[-1]}"
 
     def answer(self, scene: SceneRef, message: str, history, conversation):
         if not message or not message.strip():
             return history or [], conversation, "问题不能为空"
+        if "<video>" in message or "<4DLiDAR>" in message:
+            raise ValueError("问题中不能包含 LiDAR 控制 token")
         ready, status = self.scene_status(scene)
         history = list(history or [])
         history.append({"role": "user", "content": message.strip()})
@@ -248,22 +293,22 @@ class OptionalInferenceEngine:
         from vtimellm.mm_utils import KeywordsStoppingCriteria, tokenizer_image_token
 
         with self._lock, torch.inference_mode():
-            features = self._load_features(scene)
-            if conversation is None:
-                conversation = conv_templates["v1"].copy()
-                prompt_message = "<4DLiDAR>\n<video>\n" + message.strip()
-            else:
-                prompt_message = message.strip()
-            conversation.append_message(conversation.roles[0], prompt_message)
-            conversation.append_message(conversation.roles[1], None)
-            prompt = conversation.get_prompt()
-            input_ids = tokenizer_image_token(
-                prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
-            ).unsqueeze(0).to(self.device)
+            features = self._load_features(scene).to(self.device)
+            candidate = conversation.copy() if conversation is not None else conv_templates["v1"].copy()
+            candidate.append_message(candidate.roles[0], message.strip())
+            candidate.append_message(candidate.roles[1], None)
+            candidate, tokens, dropped = prepare_chat_prompt(
+                candidate,
+                lambda prompt: tokenizer_image_token(
+                    prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
+                ),
+                len(features), self.context_limit, self.max_new_tokens,
+            )
+            input_ids = tokens.unsqueeze(0).to(self.device)
             stop_string = (
-                conversation.sep
-                if conversation.sep_style != SeparatorStyle.TWO
-                else conversation.sep2
+                candidate.sep
+                if candidate.sep_style != SeparatorStyle.TWO
+                else candidate.sep2
             )
             stopping = []
             if stop_string:
@@ -273,7 +318,7 @@ class OptionalInferenceEngine:
                 images=features[None, ...],
                 do_sample=False,
                 num_beams=1,
-                max_new_tokens=512,
+                max_new_tokens=self.max_new_tokens,
                 use_cache=True,
                 stopping_criteria=stopping or None,
             )
@@ -282,9 +327,15 @@ class OptionalInferenceEngine:
             )[0].strip()
             if stop_string and output.endswith(stop_string):
                 output = output[:-len(stop_string)].strip()
-            conversation.messages[-1][-1] = output
+            # Do not let generated control tokens become additional features on
+            # a later turn. They are not part of the scene answer.
+            output = output.replace("<video>", "").replace("<4DLiDAR>", "").strip()
+            candidate.messages[-1][-1] = output
         history.append({"role": "assistant", "content": output})
-        return history, conversation, "推理完成 · 整场景特征"
+        status = "推理完成 · 整场景特征"
+        if dropped:
+            status += f" · 上下文已移除最早 {dropped} 轮问答"
+        return history, candidate, status
 
 
 class DemoController:
@@ -322,6 +373,7 @@ def create_demo(
     repository: NuScenesSceneRepository,
     inference: OptionalInferenceEngine,
     evaluation: Optional[EvaluationRepository] = None,
+    training_history: Optional[TrainingHistory] = None,
 ):
     try:
         import gradio as gr
@@ -342,7 +394,8 @@ def create_demo(
         conversation_state = gr.State(None)
         timer = gr.Timer(value=0.5, active=False)
 
-        if evaluation is not None and evaluation.enabled:
+        if (evaluation is not None and evaluation.enabled) or training_history is not None:
+            evaluation = evaluation or EvaluationRepository([])
             effect_page_state = gr.State(0)
             effect_samples, effect_total, effect_page = evaluation.page(page=0)
 
@@ -351,7 +404,7 @@ def create_demo(
                     [
                         sample.sample_id,
                         TASK_LABELS[sample.task],
-                        sample.scene_id or "未关联",
+                        sample.scene_id or sample.scene_token or "未关联",
                         sample.score_label,
                         sample.status,
                         sample.question[:120],
@@ -363,7 +416,7 @@ def create_demo(
                 return [
                     (
                         f"{sample.score_label:>6} · {TASK_LABELS[sample.task]} · "
-                        f"{sample.scene_id or '未关联'} · {sample.question[:72]}",
+                        f"{sample.scene_id or sample.scene_token or '未关联'} · {sample.question[:72]}",
                         sample.sample_id,
                     )
                     for sample in samples
@@ -378,7 +431,7 @@ def create_demo(
                         None,
                     )
                 sample = evaluation.get(sample_id)
-                if not sample.scene_id:
+                if not sample.scene_id and not sample.scene_token:
                     placeholder = empty_plotly_figure("该旧结果未关联 scene_id")
                     return (
                         1, 0,
@@ -386,7 +439,7 @@ def create_demo(
                         timeline_figure(sample, 1, 0), sample,
                     )
                 try:
-                    scene = repository.get_scene_by_id(sample.scene_id)
+                    scene = repository.resolve_scene(sample.scene_id, sample.scene_token)
                     frame_count = len(scene.sample_tokens)
                     frame_index = sample.default_frame if requested_frame is None else int(requested_frame)
                     frame_index = max(0, min(frame_count - 1, frame_index))
@@ -409,20 +462,32 @@ def create_demo(
             )
             effect_frame_count, effect_frame_index, effect_render, effect_timeline, effect_sample = initial_effect
             initial_paper_scene = initial_scene
-            if effect_sample and effect_sample.scene_id:
+            if effect_sample and (effect_sample.scene_id or effect_sample.scene_token):
                 try:
-                    initial_paper_scene = repository.get_scene_by_id(effect_sample.scene_id)
-                except KeyError:
-                    pass
+                    initial_paper_scene = repository.resolve_scene(
+                        effect_sample.scene_id, effect_sample.scene_token
+                    )
+                except (KeyError, ValueError):
+                    initial_paper_scene = None
+            elif effect_sample:
+                initial_paper_scene = None
             initial_paper_frames = ", ".join(
                 str(value)
                 for value in select_frame_indices(len(initial_paper_scene.sample_tokens))
-            )
+            ) if initial_paper_scene else ""
 
             with gr.Group(elem_classes=["effect-shell"]):
                 gr.HTML('<h2 class="effect-heading">MODEL EFFECTS / 模型效果</h2>')
                 gr.HTML(metric_cards_html(evaluation.final_scores, evaluation.warnings))
                 with gr.Tabs():
+                    if training_history is not None:
+                        with gr.Tab("训练曲线 / TRAINING"):
+                            gr.Plot(training_history_figure(training_history), show_label=False)
+                            gr.Markdown(
+                                "读取 trainer_state.json 中已记录的 loss、eval_loss 和学习率。"
+                                "横轴为优化器更新步数；缺少验证日志时只显示训练曲线。"
+                                "重新启动 Demo 可载入更新后的日志。"
+                            )
                     with gr.Tab("效果总览 / OVERVIEW"):
                         with gr.Row():
                             gr.Plot(
@@ -544,8 +609,10 @@ def create_demo(
 
                     with gr.Tab("论文案例图 / PAPER CASE"):
                         gr.Markdown(
-                            "将评测样本组织为 **5 帧 × 前视 / 后视 / LiDAR BEV** 的论文定性案例图。"
-                            "文本高亮项用逗号分隔；留空帧号时自动均匀采样。"
+                            "参考 [B4DL 原论文 Figure 5 / 8](https://arxiv.org/abs/2508.05269)："
+                            "同步场景帧、独立 Ground Truth、模型对比或三组消融。"
+                            "**黄色＝前方目标，绿色＝后方目标**，画面与所有答案共享颜色。"
+                            "评测载入只提供真值和当前预测；其他模型答案需填写实际输出。"
                         )
                         paper_sample_picker = gr.Dropdown(
                             choices=effect_choices(effect_samples),
@@ -557,7 +624,7 @@ def create_demo(
                             with gr.Column(scale=4, min_width=360, elem_id="paper-case-builder"):
                                 paper_scene = gr.Dropdown(
                                     choices=scene_choices,
-                                    value=initial_paper_scene.scene_token,
+                                    value=initial_paper_scene.scene_token if initial_paper_scene else None,
                                     label="nuScenes 场景",
                                     filterable=True,
                                 )
@@ -566,6 +633,11 @@ def create_demo(
                                     label="帧号（2–8 帧，推荐 5 帧）",
                                     placeholder="例如：0, 10, 20, 30, 39；留空自动选择",
                                 )
+                                paper_layout = gr.Dropdown(
+                                    choices=[("Figure 5 · 双模型对比 / 三视图", "comparison"),
+                                             ("Figure 8 · 三组消融 / 前视与 BEV", "ablation")],
+                                    value="comparison", label="论文版式",
+                                )
                                 paper_title = gr.Textbox(
                                     value="QUALITATIVE CASE STUDY", label="图标题",
                                 )
@@ -573,28 +645,55 @@ def create_demo(
                                     value=effect_sample.question if effect_sample else "",
                                     label="QUESTION", lines=3,
                                 )
+                                paper_ground_truth = gr.Textbox(
+                                    value=effect_sample.ground_truth if effect_sample else "",
+                                    label="独立真值 / GROUND TRUTH", lines=3,
+                                )
                                 with gr.Row():
                                     paper_baseline_label = gr.Textbox(
-                                        value="Ground truth", label="左侧模型名",
+                                        value="VTimeLLM", label="第一组模型名",
                                     )
                                     paper_b4dl_label = gr.Textbox(
-                                        value="B4DL model (Ours)", label="右侧模型名",
+                                        value="B4DL model (Ours)", label="完整模型名",
                                     )
                                 paper_baseline_answer = gr.Textbox(
-                                    value=effect_sample.ground_truth if effect_sample else "",
-                                    label="左侧答案 / BASELINE", lines=4,
+                                    label="第一组实际答案 / BASELINE", lines=4,
                                 )
-                                paper_baseline_highlights = gr.Textbox(
-                                    label="左侧黄色高亮短语",
-                                    placeholder="vehicles in front, turning left",
-                                )
+                                paper_baseline_errors = gr.Textbox(label="第一组错误短语（红字）")
+                                with gr.Group(visible=False) as paper_middle_group:
+                                    paper_middle_label = gr.Textbox(
+                                        value="B4DL without Metatoken", label="第二组消融模型名",
+                                    )
+                                    paper_middle_answer = gr.Textbox(label="第二组实际答案", lines=4)
+                                    paper_middle_errors = gr.Textbox(label="第二组错误短语（红字）")
                                 paper_b4dl_answer = gr.Textbox(
                                     value=effect_sample.prediction if effect_sample else "",
-                                    label="右侧答案 / B4DL", lines=4,
+                                    label="完整模型实际答案 / B4DL", lines=4,
                                 )
-                                paper_b4dl_highlights = gr.Textbox(
-                                    label="右侧绿色高亮短语",
-                                    placeholder="vehicles in the back view",
+                                paper_b4dl_errors = gr.Textbox(label="完整模型错误短语（红字）")
+                                with gr.Accordion("目标与证据高亮", open=False):
+                                    initial_targets = scene_target_choices(
+                                        repository, initial_paper_scene.scene_token
+                                    ) if initial_paper_scene else []
+                                    paper_front_target = gr.Dropdown(
+                                        choices=initial_targets, label="前方目标 instance（黄色，可选）",
+                                        filterable=True,
+                                    )
+                                    paper_rear_target = gr.Dropdown(
+                                        choices=initial_targets, label="后方目标 instance（绿色，可选）",
+                                        filterable=True,
+                                    )
+                                    paper_yellow_phrases = gr.Textbox(
+                                        label="前方证据短语（所有答案黄色高亮）",
+                                        placeholder="vehicles in front; the front vehicle",
+                                    )
+                                    paper_green_phrases = gr.Textbox(
+                                        label="后方证据短语（所有答案绿色高亮）",
+                                        placeholder="rear vehicles; vehicles in the back view",
+                                    )
+                                paper_conclusion = gr.Textbox(
+                                    label="观察结论 / 图注（人工填写，可选）", lines=3,
+                                    placeholder="说明哪些帧、哪个目标支持或反驳答案；留空不生成结论。",
                                 )
                                 with gr.Row():
                                     paper_boxes = gr.Checkbox(value=True, label="投影真值框")
@@ -606,7 +705,7 @@ def create_demo(
                                 )
                             with gr.Column(scale=8, min_width=640):
                                 paper_preview = gr.Image(
-                                    type="pil", interactive=False, label="PAPER FIGURE PREVIEW",
+                                    type="pil", interactive=False, height=620, label="PAPER FIGURE PREVIEW",
                                     elem_id="paper-case-preview",
                                 )
 
@@ -700,21 +799,31 @@ def create_demo(
                 )
 
             def load_paper_sample(sample_id):
+                # Clear other models and editorial marks when changing the evidence sample.
+                cleared = ("", "", "", "", "", "", "", "", None, None)
                 if not sample_id:
                     return (
-                        gr.update(), "", "", "", "",
+                        gr.update(value=None), "", "", "", "",
                         "未选择评测样本；可以手动填写场景与文案。",
+                        *cleared,
                     )
                 sample = evaluation.get(sample_id)
-                scene = initial_scene
+                scene = None
                 warning = ""
-                if sample.scene_id:
+                if sample.scene_id or sample.scene_token:
                     try:
-                        scene = repository.get_scene_by_id(sample.scene_id)
-                    except KeyError:
-                        warning = f"scene_id {sample.scene_id} 未映射，已保留默认场景。"
+                        scene = repository.resolve_scene(sample.scene_id, sample.scene_token)
+                    except (KeyError, ValueError) as exc:
+                        warning = f"场景关联失败：{exc}；请手动选择场景。"
                 else:
                     warning = "该旧版评测样本没有 scene_id；请手动选择场景。"
+
+                if scene is None:
+                    return (
+                        gr.update(value=None), "", sample.question,
+                        sample.ground_truth, sample.prediction, warning,
+                        *cleared,
+                    )
 
                 candidates = [
                     int(value) for value in (sample.feat_indices or ())
@@ -734,6 +843,7 @@ def create_demo(
                 return (
                     gr.update(value=scene.scene_token), frame_text, sample.question,
                     sample.ground_truth, sample.prediction, status,
+                    *cleared,
                 )
 
             paper_sample_picker.change(
@@ -741,17 +851,51 @@ def create_demo(
                 paper_sample_picker,
                 [
                     paper_scene, paper_frames, paper_question,
-                    paper_baseline_answer, paper_b4dl_answer, paper_status,
+                    paper_ground_truth, paper_b4dl_answer, paper_status,
+                    paper_baseline_answer, paper_middle_answer,
+                    paper_baseline_errors, paper_middle_errors, paper_b4dl_errors,
+                    paper_yellow_phrases, paper_green_phrases, paper_conclusion,
+                    paper_preview, paper_files,
                 ],
+            )
+
+            def change_paper_scene(scene_token):
+                choices = scene_target_choices(repository, scene_token)
+                return (gr.update(choices=choices, value=None), gr.update(choices=choices, value=None),
+                        None, None)
+
+            paper_scene.change(change_paper_scene, paper_scene,
+                               [paper_front_target, paper_rear_target, paper_preview, paper_files])
+
+            def change_paper_layout(layout):
+                # Preset labels denote different experiments; old answers cannot be relabeled.
+                return (gr.update(visible=layout == "ablation"),
+                        "B4DL without HA and Metatoken" if layout == "ablation" else "VTimeLLM",
+                        "", "", "", "", "", None, None)
+
+            paper_layout.change(
+                change_paper_layout, paper_layout,
+                [paper_middle_group, paper_baseline_label, paper_baseline_answer, paper_middle_answer,
+                 paper_baseline_errors, paper_middle_errors, paper_conclusion, paper_preview, paper_files],
             )
 
             def export_paper_case(
                 scene_token, frames, title, question,
-                baseline_label, baseline_answer, baseline_highlights,
-                b4dl_label, b4dl_answer, b4dl_highlights,
-                boxes, tracks,
+                baseline_label, baseline_answer, baseline_errors,
+                b4dl_label, b4dl_answer, b4dl_errors,
+                boxes, tracks, layout, ground_truth, middle_label, middle_answer, middle_errors,
+                yellow_phrases, green_phrases, front_target, rear_target, conclusion,
             ):
                 try:
+                    panels = [AnswerPanel(baseline_label or "Baseline", baseline_answer,
+                                          split_highlights(baseline_errors))]
+                    if layout == "ablation":
+                        panels.append(AnswerPanel(middle_label or "Ablation", middle_answer,
+                                                  split_highlights(middle_errors)))
+                    panels.append(AnswerPanel(b4dl_label or "B4DL model (Ours)", b4dl_answer,
+                                              split_highlights(b4dl_errors)))
+                    if not question.strip() or any(not p.answer.strip() for p in panels):
+                        raise ValueError("请填写问题与每组模型的实际答案；评测真值已放在独立栏中")
                     scene = repository.get_scene(scene_token)
                     selected = parse_frame_indices(
                         frames, len(scene.sample_tokens), count=5
@@ -765,11 +909,14 @@ def create_demo(
                         b4dl_answer=b4dl_answer,
                         baseline_label=baseline_label or "Baseline",
                         b4dl_label=b4dl_label or "B4DL model (Ours)",
-                        baseline_highlights=split_highlights(baseline_highlights),
-                        b4dl_highlights=split_highlights(b4dl_highlights),
                         title=title or "QUALITATIVE CASE STUDY",
                         show_boxes=bool(boxes),
                         show_tracks=bool(tracks),
+                        layout=layout, ground_truth=ground_truth, answer_panels=panels,
+                        yellow_phrases=split_highlights(yellow_phrases),
+                        green_phrases=split_highlights(green_phrases),
+                        front_instance=front_target, rear_instance=rear_target,
+                        conclusion=conclusion,
                     )
                     selected_text = ", ".join(str(value) for value in artifact.frame_indices)
                     return (
@@ -785,9 +932,12 @@ def create_demo(
                 [
                     paper_scene, paper_frames, paper_title, paper_question,
                     paper_baseline_label, paper_baseline_answer,
-                    paper_baseline_highlights, paper_b4dl_label,
-                    paper_b4dl_answer, paper_b4dl_highlights,
-                    paper_boxes, paper_tracks,
+                    paper_baseline_errors, paper_b4dl_label,
+                    paper_b4dl_answer, paper_b4dl_errors,
+                    paper_boxes, paper_tracks, paper_layout, paper_ground_truth,
+                    paper_middle_label, paper_middle_answer, paper_middle_errors,
+                    paper_yellow_phrases, paper_green_phrases,
+                    paper_front_target, paper_rear_target, paper_conclusion,
                 ],
                 [paper_preview, paper_files, paper_status],
             )
@@ -947,11 +1097,13 @@ def create_demo(
             submit_question,
             [chat_input, chatbot, conversation_state, scene_select],
             [chat_input, chatbot, conversation_state, system_status],
+            concurrency_id="scene_inference", concurrency_limit=1,
         )
         chat_input.submit(
             submit_question,
             [chat_input, chatbot, conversation_state, scene_select],
             [chat_input, chatbot, conversation_state, system_status],
+            concurrency_id="scene_inference", concurrency_limit=1,
         )
         clear_chat.click(lambda: ([], None), None, [chatbot, conversation_state])
 
@@ -968,6 +1120,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--scene_metadata", "--scene-metadata", default=None)
     parser.add_argument("--max_points", "--max-points", type=int, default=30_000)
     parser.add_argument("--gpu_id", "--gpu-id", type=int, default=0)
+    parser.add_argument("--dtype", choices=["auto", "float16", "bfloat16"], default="auto")
+    parser.add_argument("--attn_implementation", "--attn-implementation", choices=["sdpa", "eager"], default="sdpa")
+    parser.add_argument("--max_new_tokens", "--max-new-tokens", type=int, default=512)
+    parser.add_argument("--max_context_tokens", "--max-context-tokens", type=int, default=4096)
     parser.add_argument("--model_base", "--model-base", default=None)
     parser.add_argument(
         "--pretrain_mm_mlp_adapter", "--pretrain-mm-mlp-adapter", default=None
@@ -975,6 +1131,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--stage2", default=None)
     parser.add_argument("--stage3", default=None)
     parser.add_argument("--feat_folder", "--feat-folder", default=None)
+    parser.add_argument("--trainer_state", "--trainer-state", default=None,
+                        help="checkpoint 中的 trainer_state.json；只读训练曲线")
     parser.add_argument(
         "--predictions", default=None,
         help="test_b4dl.py 输出的 predictions.json；启用模型效果看板",
@@ -991,6 +1149,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--server_name", "--server-name", default="127.0.0.1")
     parser.add_argument("--server_port", "--server-port", type=int, default=7860)
     args = parser.parse_args(argv)
+    if args.gpu_id < 0 or args.max_points <= 0 or args.max_new_tokens <= 0:
+        parser.error("gpu_id 必须非负，max_points / max_new_tokens 必须为正数")
+    if args.max_context_tokens <= args.max_new_tokens:
+        parser.error("max_context_tokens 必须大于 max_new_tokens")
     if not args.nuscenes_root:
         parser.error("必须提供 --nuscenes_root 或设置 B4DL_NUSCENES_ROOT")
     _, missing = _model_option_state(args)
@@ -1015,7 +1177,8 @@ def main(argv: Optional[List[str]] = None) -> None:
             test_data_path=args.test_data,
         )
     inference = OptionalInferenceEngine(args)
-    demo = create_demo(repository, inference, evaluation)
+    training_history = TrainingHistory.from_file(args.trainer_state) if args.trainer_state else None
+    demo = create_demo(repository, inference, evaluation, training_history)
     demo.queue(default_concurrency_limit=4).launch(
         share=args.share,
         server_name=args.server_name,

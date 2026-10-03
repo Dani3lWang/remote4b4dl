@@ -14,6 +14,7 @@ from model_effects import (
     EvaluationSample,
     normalize_answer,
 )
+from training_effects import finite_number
 
 
 COLORS = {
@@ -77,7 +78,7 @@ def metric_cards_html(scores: Mapping[str, object], warnings: Sequence[str] = ()
     )
     cards = []
     for key, label in metrics:
-        value = scores.get(key)
+        value = finite_number(scores.get(key))
         if value is None:
             formatted = "N/A"
             state = "is-na"
@@ -100,7 +101,7 @@ def overview_metrics_figure(scores: Mapping[str, object]):
     go = _go()
     keys = ("accuracy", "miou", "bleu4", "meteor", "rouge_l", "bertscore")
     labels = ("Accuracy", "mIoU", "BLEU-4", "METEOR", "ROUGE-L", "BERTScore")
-    current = [scores.get(key) for key in keys]
+    current = [finite_number(scores.get(key)) for key in keys]
     if not any(value is not None for value in current):
         return empty_effect_figure("metrics.json 中没有 final_scores", "MODEL / PAPER")
     figure = go.Figure()
@@ -111,6 +112,28 @@ def overview_metrics_figure(scores: Mapping[str, object]):
     )
     figure.update_layout(barmode="group", yaxis=dict(range=[0, 1]))
     return _base_layout(figure, "当前模型 / 论文参考", 390)
+
+
+def training_history_figure(history):
+    from plotly.subplots import make_subplots
+    go = _go()
+    figure = make_subplots(rows=1, cols=2, subplot_titles=("训练 / 验证 Loss", "学习率"))
+    for metric, name, color, column in (
+        ("loss", "Training loss", COLORS["cyan"], 1),
+        ("eval_loss", "Validation loss", COLORS["amber"], 1),
+        ("learning_rate", "Learning rate", COLORS["lime"], 2),
+    ):
+        series = history.series(metric)
+        if series:
+            steps, values = zip(*series)
+            figure.add_trace(go.Scatter(
+                x=list(steps), y=list(values), name=name, mode="lines+markers",
+                line=dict(color=color), marker=dict(size=4),
+            ), row=1, col=column)
+    for column in (1, 2):
+        figure.update_xaxes(title_text="Optimizer step", row=1, col=column)
+    epoch = f"{history.epoch:.2f}" if history.epoch is not None else "N/A"
+    return _base_layout(figure, f"训练进度 · step {history.global_step} · epoch {epoch}", 390)
 
 
 def per_task_metrics_figure(per_task_metrics: Mapping[str, object]):
@@ -129,9 +152,10 @@ def per_task_metrics_figure(per_task_metrics: Mapping[str, object]):
         xs, ys = [], []
         for task in TASKS:
             values = per_task_metrics.get(task, {})
-            if isinstance(values, Mapping) and values.get(metric) is not None:
+            value = finite_number(values.get(metric)) if isinstance(values, Mapping) else None
+            if value is not None:
                 xs.append(TASK_LABELS[task])
-                ys.append(values[metric])
+                ys.append(value)
         if xs:
             figure.add_bar(name=metric, x=xs, y=ys, marker_color=color)
             added = True

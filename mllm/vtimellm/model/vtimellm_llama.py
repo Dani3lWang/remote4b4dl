@@ -63,6 +63,21 @@ class VTimeLLMLlamaForCausalLM(LlamaForCausalLM, VTimeLLMMetaForCausalLM):
                 images
             )
 
+        if images is not None and cache_position is not None:
+            # HF generation counts the text <video> placeholder as one token.
+            # The KV cache instead stores all projected LiDAR embeddings, so
+            # both prefill and subsequent decode positions must use its length.
+            current = inputs_embeds if inputs_embeds is not None else input_ids
+            if hasattr(past_key_values, "get_seq_length"):
+                past_length = past_key_values.get_seq_length()
+            elif past_key_values:
+                past_length = past_key_values[-1][-1].shape[-2]
+            else:
+                past_length = 0
+            cache_position = torch.arange(
+                past_length, past_length + current.shape[1], device=current.device
+            )
+
         return super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,

@@ -1,0 +1,11 @@
+# Optional scene chat; use in a separate wqlc demo environment.
+# Matches the model stack documented in CLAUDE.md, using native SDPA.
+-r requirements-demo.txt
+torch==2.8.0
+torchvision==0.23.0
+transformers==4.47.0
+peft==0.13.2
+accelerate==1.3.0
+sentencepiece==0.2.0
+easydict==1.13
+einops==0.8.1

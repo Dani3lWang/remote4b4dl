@@ -172,6 +172,20 @@ class GeometryTests(unittest.TestCase):
 
 
 class RepositoryTests(unittest.TestCase):
+    def test_scene_token_works_without_metadata_and_conflicting_keys_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            nusc = FakeNuScenes()
+            nusc.scene.append({"token": "other-scene", "name": "other",
+                               "first_sample_token": "sample-0"})
+            repository = SyntheticRepository(dataroot=directory, nusc=nusc)
+            self.assertEqual(repository.resolve_scene("b4dl-id", "scene-token").scene_token,
+                             "scene-token")
+            metadata = Path(directory) / "metadata.json"
+            metadata.write_text(json.dumps([{"scene_token": "scene-token", "scene_id": "b4dl-id"}]))
+            repository = SyntheticRepository(dataroot=directory, nusc=nusc, scene_metadata=str(metadata))
+            with self.assertRaisesRegex(ValueError, "不同场景"):
+                repository.resolve_scene("b4dl-id", "other-scene")
+
     def test_scene_metadata_mapping_and_lazy_frame(self):
         with tempfile.TemporaryDirectory() as directory:
             metadata = Path(directory) / "scene_metadata.json"
@@ -225,6 +239,12 @@ class RepositoryTests(unittest.TestCase):
 
 
 class FeatureAndModeTests(unittest.TestCase):
+    def test_nonfinite_and_integer_features_are_rejected(self):
+        for values in (np.full((2, 768), np.nan), np.full((2, 768), np.inf),
+                       np.ones((2, 768), dtype=np.int32)):
+            with self.assertRaisesRegex(ValueError, "有限浮点数"):
+                validate_scene_features(values, 2)
+
     def test_feature_shape_and_frame_alignment_are_strict(self):
         validate_scene_features(np.zeros((40, 768), dtype=np.float16), 40)
         with self.assertRaisesRegex(ValueError, "特征帧数"):
