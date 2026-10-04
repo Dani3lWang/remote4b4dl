@@ -82,6 +82,7 @@ textarea, input { font-family: Arial, "Noto Sans CJK SC", sans-serif !important;
 .evidence-key i { display: inline-block; width: 14px; height: 10px; border: 1px solid #777; margin-right: 6px; }
 .evidence-key .front { background: #ffe84a; }
 .evidence-key .rear { background: #70f08b; }
+.evidence-key .target { background: #b770df; }
 .evidence-key .error { color: #c51e28; }
 #b4-controls, #b4-viewer, #b4-chat { border: 1px solid var(--b4-line) !important; background: #ffffff !important; padding: 14px !important; }
 #b4-frame-summary, #b4-status { color: var(--b4-muted); font-size: 13px; line-height: 1.7; }

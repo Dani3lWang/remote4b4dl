@@ -54,7 +54,10 @@ from effect_visualizer import (  # noqa: E402
 )
 from paper_case_visualizer import (  # noqa: E402
     AnswerPanel,
+    ReasoningCase,
+    TemporalCase,
     build_paper_case,
+    build_reasoning_board,
     parse_frame_indices,
     select_frame_indices,
     scene_target_choices,
@@ -387,7 +390,7 @@ def create_demo(
             with gr.Column(elem_classes=["effect-shell"]):
                 gr.HTML('<h2 class="effect-heading">实验结果 / Results</h2>')
                 gr.HTML(metric_cards_html(evaluation.final_scores, evaluation.warnings))
-                with gr.Tabs(selected="quantitative" if evaluation.enabled else "training"):
+                with gr.Tabs(selected="qualitative" if evaluation.enabled else "training"):
                     with gr.Tab("定量结果 / Quantitative", id="quantitative"):
                         gr.HTML('<p class="results-note">读取已有评测结果。论文 Table 3 为参考；'
                                 '比较前需核对测试集、输入帧选择及指标计算口径。</p>')
@@ -409,10 +412,13 @@ def create_demo(
                                 '汇总图和样本诊断均来自导入文件；训练损失曲线不能替代最终评测。</p>')
 
                     with gr.Tab("定性案例 / Qualitative", id="qualitative"):
-                        gr.HTML('<p class="results-note">按 Figure 5 / 8 展示同步场景帧、真值与模型答案。'
-                                '从评测文件载入一个样本，再填写同一场景的基线或消融输出。</p>'
-                                '<div class="evidence-key"><span><i class="front"></i>前方目标</span>'
-                                '<span><i class="rear"></i>后方目标</span>'
+                        gr.HTML('<p class="results-note">选择时序对比或三维问答图版：'
+                                '用实际场景、问题和模型答案组成论文图。可逐条载入案例后加入同一图版。'
+                                '三维问答结构参考 <a href="https://reason3d.github.io/" target="_blank" '
+                                'rel="noopener noreferrer">Reason3D</a>。</p>'
+                                '<div class="evidence-key"><span><i class="front"></i>时序图：前方目标</span>'
+                                '<span><i class="rear"></i>时序图：后方目标</span>'
+                                '<span><i class="target"></i>三维问答：所选目标</span>'
                                 '<span class="error">红字：人工标记的错误短语</span></div>')
                         paper_sample_picker = gr.Dropdown(
                             choices=effect_choices(effect_samples),
@@ -420,11 +426,13 @@ def create_demo(
                             label="从当前评测页载入样本",
                             filterable=True,
                         )
+                        paper_collection_state = gr.State([])
                         with gr.Row(equal_height=False):
                             with gr.Column(scale=3, min_width=320, elem_id="paper-case-builder"):
                                 paper_layout = gr.Dropdown(
-                                    choices=[("Figure 5 · 双模型对比 / 三视图", "comparison"),
-                                             ("Figure 8 · 三组消融 / 前视与 BEV", "ablation")],
+                                    choices=[("时序对比 · 前后视图 + LiDAR 3D", "comparison"),
+                                             ("三维问答 · 问答 + 原始场景 + 高亮", "reasoning"),
+                                             ("Figure 8 · 三组消融", "ablation")],
                                     value="comparison", label="论文版式",
                                 )
                                 with gr.Accordion("场景与帧号", open=False):
@@ -442,6 +450,12 @@ def create_demo(
                                     paper_title = gr.Textbox(
                                         value="QUALITATIVE CASE STUDY", label="图标题",
                                     )
+                                with gr.Accordion("三维问答设置", open=False) as paper_reasoning_controls:
+                                    paper_task_label = gr.Textbox(value="3D QA", label="案例任务标题")
+                                    paper_reasoning_frame = gr.Number(
+                                        value=effect_frame_index, minimum=0, precision=0,
+                                        label="三维案例帧号",
+                                    )
                                 with gr.Accordion("问题与真值", open=False):
                                     paper_question = gr.Textbox(
                                         value=effect_sample.question if effect_sample else "",
@@ -452,18 +466,18 @@ def create_demo(
                                         label="独立真值 / GROUND TRUTH", lines=3,
                                     )
                                 with gr.Accordion("模型答案与消融", open=True):
-                                    with gr.Row():
+                                    with gr.Column() as paper_baseline_group:
                                         paper_baseline_label = gr.Textbox(
                                             value="VTimeLLM", label="第一组模型名",
                                         )
-                                        paper_b4dl_label = gr.Textbox(
-                                            value="B4DL model (Ours)", label="完整模型名",
+                                        paper_baseline_answer = gr.Textbox(
+                                            label="第一组实际答案 / BASELINE", lines=4,
                                         )
-                                    paper_baseline_answer = gr.Textbox(
-                                        label="第一组实际答案 / BASELINE", lines=4,
+                                        paper_baseline_errors = gr.Textbox(label="第一组错误短语（红字）")
+                                    paper_b4dl_label = gr.Textbox(
+                                        value="B4DL model (Ours)", label="完整模型名",
                                     )
-                                    paper_baseline_errors = gr.Textbox(label="第一组错误短语（红字）")
-                                    with gr.Group(visible=False) as paper_middle_group:
+                                    with gr.Accordion("第二组消融答案（仅 Figure 8）", open=False) as paper_middle_group:
                                         paper_middle_label = gr.Textbox(
                                             value="B4DL without Metatoken", label="第二组消融模型名",
                                         )
@@ -480,11 +494,11 @@ def create_demo(
                                     ) if initial_paper_scene else []
                                     paper_front_target = gr.Dropdown(
                                         choices=initial_targets, label="前方目标 instance（黄色，可选）",
-                                        filterable=True,
+                                        filterable=True, value=None,
                                     )
                                     paper_rear_target = gr.Dropdown(
                                         choices=initial_targets, label="后方目标 instance（绿色，可选）",
-                                        filterable=True,
+                                        filterable=True, value=None,
                                     )
                                     paper_yellow_phrases = gr.Textbox(
                                         label="前方证据短语（所有答案黄色高亮）",
@@ -494,22 +508,45 @@ def create_demo(
                                         label="后方证据短语（所有答案绿色高亮）",
                                         placeholder="rear vehicles; vehicles in the back view",
                                     )
+                                    gr.Markdown("三维问答图中，所选目标统一用紫色表示标注框内点；至少选择一个目标。")
                                 with gr.Accordion("图注与渲染选项", open=False):
                                     paper_conclusion = gr.Textbox(
                                         label="观察结论 / 图注（人工填写，可选）", lines=3,
                                         placeholder="说明哪些帧、哪个目标支持或反驳答案；留空不生成结论。",
                                     )
+                                    with gr.Column() as paper_temporal_render_controls:
+                                        with gr.Row():
+                                            paper_boxes = gr.Checkbox(value=True, label="投影真值框")
+                                            paper_tracks = gr.Checkbox(value=True, label="LiDAR 历史轨迹")
+                                        paper_lidar_view = gr.Dropdown(
+                                            choices=[("斜视三维点云", "3d"), ("俯视 BEV", "bev")],
+                                            value="3d", label="时序图 LiDAR 视图",
+                                        )
+                                    paper_azimuth = gr.Slider(-180, 180, value=-55, step=1, label="三维方位角 / °")
+                                    paper_elevation = gr.Slider(5, 80, value=28, step=1, label="三维俯仰角 / °")
+                                    paper_range = gr.Slider(20, 100, value=45, step=5, label="三维显示范围 / m")
+                                with gr.Column() as paper_collection_controls:
                                     with gr.Row():
-                                        paper_boxes = gr.Checkbox(value=True, label="投影真值框")
-                                        paper_tracks = gr.Checkbox(value=True, label="LiDAR 历史轨迹")
+                                        paper_add_case = gr.Button("加入图版", variant="secondary")
+                                        paper_remove_case = gr.Button("撤回最后一条", variant="secondary")
+                                    paper_clear_cases = gr.Button("清空图版", variant="secondary")
+                                    paper_collection_status = gr.Markdown(
+                                        "未加入案例时导出当前编辑内容。时序图最多 4 组，三维图最多 6 行。"
+                                    )
                             with gr.Column(scale=9, min_width=620, elem_id="paper-preview-column"):
+                                with gr.Accordion("已加入的案例 · 导出时以此列表为准", open=False):
+                                    paper_collection_table = gr.Dataframe(
+                                        headers=["序号", "场景", "帧", "问题", "模型"],
+                                        datatype=["str"] * 5, value=[], interactive=False,
+                                        show_label=False,
+                                    )
                                 paper_preview = gr.Image(
                                     type="pil", interactive=False, height=640, label="定性结果图 / Qualitative figure",
                                     elem_id="paper-case-preview",
                                 )
                                 gr.HTML('<p class="figure-caption"><strong>图版阅读顺序。</strong>'
-                                        '时间从左向右；目标框与答案共享颜色。真值单独呈现，'
-                                        '观察结论应说明具体帧与目标如何支持或反驳答案。</p>')
+                                        '时序图从左向右读时间，图下比较实际模型答案；三维问答图逐行读问题、'
+                                        '原始场景与目标高亮。紫色依据标注框选点，不表示模型分割输出。</p>')
                                 paper_build = gr.Button("生成论文案例图 / EXPORT", variant="primary")
                                 paper_status = gr.Markdown("等待生成 · 输出 PNG + PDF")
                                 paper_files = gr.File(
@@ -779,15 +816,122 @@ def create_demo(
 
             def change_paper_layout(layout):
                 # Preset labels denote different experiments; old answers cannot be relabeled.
-                return (gr.update(visible=layout == "ablation"),
+                return (gr.update(open=layout == "ablation"),
                         "B4DL without HA and Metatoken" if layout == "ablation" else "VTimeLLM",
                         "", "", "", "", "", None, None)
 
-            paper_layout.change(
+            layout_change = paper_layout.change(
                 change_paper_layout, paper_layout,
                 [paper_middle_group, paper_baseline_label, paper_baseline_answer, paper_middle_answer,
                  paper_baseline_errors, paper_middle_errors, paper_conclusion, paper_preview, paper_files],
             )
+
+            def update_figure_mode(layout):
+                reasoning = layout == "reasoning"
+                # Toggle leaf controls. Gradio 6 can rebuild a hidden layout with
+                # stale child visibility when parent/child updates arrive together.
+                return (gr.skip(), gr.skip(), gr.skip(), gr.update(visible=not reasoning),
+                        gr.update(value=None, label="目标 instance（紫色，必选其一）" if reasoning else "前方目标 instance（黄色，可选）"),
+                        gr.update(value=None, label="第二个目标 instance（紫色，可选）" if reasoning else "后方目标 instance（绿色，可选）"),
+                        [], [], gr.update(value="图版已清空；可加入当前案例，或直接导出当前编辑内容。",
+                                          visible=layout != "ablation"), None, None,
+                        gr.update(visible=not reasoning), gr.update(visible=not reasoning),
+                        gr.update(visible=not reasoning), gr.skip(),
+                        *[gr.update(visible=not reasoning) for _ in range(3)],
+                        gr.skip(), gr.skip(),
+                        *[gr.skip() for _ in range(3)],
+                        *[gr.update(visible=layout != "ablation") for _ in range(3)],
+                        *[gr.update(visible=not reasoning) for _ in range(3)])
+
+            layout_change.then(
+                update_figure_mode, paper_layout,
+                [paper_baseline_group, paper_reasoning_controls, paper_collection_controls, paper_frames,
+                 paper_front_target, paper_rear_target, paper_collection_state, paper_collection_table,
+                 paper_collection_status, paper_preview, paper_files, paper_b4dl_errors,
+                 paper_yellow_phrases, paper_green_phrases, paper_temporal_render_controls,
+                 paper_baseline_label, paper_baseline_answer, paper_baseline_errors,
+                 paper_task_label, paper_reasoning_frame, paper_middle_label, paper_middle_answer,
+                 paper_middle_errors, paper_add_case, paper_remove_case, paper_clear_cases,
+                 paper_boxes, paper_tracks, paper_lidar_view],
+            )
+
+            def update_case_metadata(sample_id):
+                sample = evaluation.get(sample_id) if sample_id else None
+                return (TASK_LABELS[sample.task] if sample else "3D QA",
+                        sample.default_frame if sample else 0,
+                        gr.update(value=None), gr.update(value=None))
+
+            paper_sample_picker.change(update_case_metadata, paper_sample_picker,
+                                       [paper_task_label, paper_reasoning_frame, paper_front_target, paper_rear_target])
+
+            def collection_rows(collection):
+                rows = []
+                for index, entry in enumerate(collection):
+                    case = entry["case"]
+                    scene = repository.get_scene(entry["scene_token"])
+                    models = case.answer_label if entry["layout"] == "reasoning" else " / ".join(a.label for a in case.answers)
+                    rows.append([str(index + 1), scene.scene_id or scene.name,
+                                 entry["frames"], case.question, models])
+                return rows
+
+            def add_paper_case(collection, layout, sample_id, scene_token, frames, question, ground_truth,
+                               baseline_label, baseline_answer, baseline_errors, b4dl_label, b4dl_answer,
+                               b4dl_errors, task_label, reasoning_frame, front_target, rear_target,
+                               yellow_phrases, green_phrases):
+                collection = list(collection or [])
+                try:
+                    if layout == "ablation":
+                        raise ValueError("消融版式直接导出当前三组答案")
+                    if collection and collection[0]["layout"] != layout:
+                        raise ValueError("图版包含另一种版式，请先清空")
+                    if len(collection) >= (6 if layout == "reasoning" else 4):
+                        raise ValueError("图版案例数量已达上限")
+                    scene = repository.get_scene(scene_token)
+                    if not question.strip() or not b4dl_answer.strip():
+                        raise ValueError("请填写问题与实际模型答案")
+                    entry = {"layout": layout, "scene_token": scene_token}
+                    if layout == "reasoning":
+                        index = int(reasoning_frame)
+                        targets = tuple(dict.fromkeys(t for t in (front_target, rear_target) if t))
+                        if not targets or not 0 <= index < len(scene.sample_tokens):
+                            raise ValueError("请选择目标 instance 并填写有效的三维帧号")
+                        entry.update(frames=str(index), case=ReasoningCase(
+                            task_label, scene_token, index, question, b4dl_answer, targets,
+                            b4dl_label, ground_truth, sample_id or ""))
+                    else:
+                        if not baseline_answer.strip():
+                            raise ValueError("时序对比需填写基线模型的实际答案")
+                        selected = parse_frame_indices(frames, len(scene.sample_tokens))
+                        evidence = (scene_token, selected, front_target, rear_target,
+                                    split_highlights(yellow_phrases), split_highlights(green_phrases))
+                        if collection and collection[0]["evidence"] != evidence:
+                            raise ValueError("同一时序图的各组问答需使用相同场景、帧与高亮目标；请恢复设置或清空图版")
+                        entry.update(frames=", ".join(map(str, selected)), evidence=evidence,
+                                     case=TemporalCase(question, (
+                                         AnswerPanel(baseline_label, baseline_answer, split_highlights(baseline_errors)),
+                                         AnswerPanel(b4dl_label, b4dl_answer, split_highlights(b4dl_errors))), ground_truth))
+                    collection.append(entry)
+                    return collection, collection_rows(collection), f"已加入 {len(collection)} 个案例；导出将使用已保存的场景、帧与答案。", None, None
+                except Exception as exc:
+                    return collection, collection_rows(collection), f"**加入失败** · {exc}", None, None
+
+            collection_outputs = [paper_collection_state, paper_collection_table, paper_collection_status,
+                                  paper_preview, paper_files]
+            paper_add_case.click(
+                add_paper_case,
+                [paper_collection_state, paper_layout, paper_sample_picker, paper_scene, paper_frames,
+                 paper_question, paper_ground_truth, paper_baseline_label, paper_baseline_answer,
+                 paper_baseline_errors, paper_b4dl_label, paper_b4dl_answer, paper_b4dl_errors,
+                 paper_task_label, paper_reasoning_frame, paper_front_target, paper_rear_target,
+                 paper_yellow_phrases, paper_green_phrases], collection_outputs,
+            )
+
+            def remove_paper_case(collection):
+                remaining = list(collection or [])[:-1]
+                return remaining, collection_rows(remaining), f"图版剩余 {len(remaining)} 个案例。", None, None
+
+            paper_remove_case.click(remove_paper_case, paper_collection_state, collection_outputs)
+            paper_clear_cases.click(lambda: ([], [], "图版已清空。", None, None), None, collection_outputs)
 
             def export_paper_case(
                 scene_token, frames, title, question,
@@ -795,8 +939,31 @@ def create_demo(
                 b4dl_label, b4dl_answer, b4dl_errors,
                 boxes, tracks, layout, ground_truth, middle_label, middle_answer, middle_errors,
                 yellow_phrases, green_phrases, front_target, rear_target, conclusion,
+                collection=None, task_label="3D QA", reasoning_frame=0, lidar_view="3d",
+                azimuth=-55, elevation=28, range_m=45, sample_id=None,
             ):
                 try:
+                    if collection and any(entry["layout"] != layout for entry in collection):
+                        raise ValueError("图版中存在其他版式的案例，请清空后重新加入")
+                    if layout == "reasoning":
+                        cases = [entry["case"] for entry in collection] if collection else [ReasoningCase(
+                            task_label, scene_token, int(reasoning_frame), question, b4dl_answer,
+                            tuple(dict.fromkeys(t for t in (front_target, rear_target) if t)),
+                            b4dl_label, ground_truth, sample_id or "")]
+                        artifact = build_reasoning_board(repository, cases, title=title or "3D QUESTION ANSWERING",
+                                                         azimuth=azimuth, elevation=elevation, range_m=range_m)
+                        return artifact.image, [artifact.png_path, artifact.pdf_path], (
+                            f"**导出完成** · {len(cases)} 行三维问答 · PNG / PDF 均已生成；紫色依据标注框选点")
+                    comparison_cases = None
+                    if collection:
+                        first = collection[0]
+                        scene_token, selected, front_target, rear_target, yellow, green = first["evidence"]
+                        frames = ", ".join(map(str, selected))
+                        yellow_phrases, green_phrases = ";".join(yellow), ";".join(green)
+                        comparison_cases = [entry["case"] for entry in collection]
+                        question, ground_truth = first["case"].question, first["case"].ground_truth
+                        baseline_label, baseline_answer = first["case"].answers[0].label, first["case"].answers[0].answer
+                        b4dl_label, b4dl_answer = first["case"].answers[1].label, first["case"].answers[1].answer
                     panels = [AnswerPanel(baseline_label or "Baseline", baseline_answer,
                                           split_highlights(baseline_errors))]
                     if layout == "ablation":
@@ -827,6 +994,8 @@ def create_demo(
                         green_phrases=split_highlights(green_phrases),
                         front_instance=front_target, rear_instance=rear_target,
                         conclusion=conclusion,
+                        lidar_view=lidar_view, comparison_cases=comparison_cases,
+                        azimuth=azimuth, elevation=elevation, range_m=range_m,
                     )
                     selected_text = ", ".join(str(value) for value in artifact.frame_indices)
                     return (
@@ -848,9 +1017,20 @@ def create_demo(
                     paper_middle_label, paper_middle_answer, paper_middle_errors,
                     paper_yellow_phrases, paper_green_phrases,
                     paper_front_target, paper_rear_target, paper_conclusion,
+                    paper_collection_state, paper_task_label, paper_reasoning_frame, paper_lidar_view,
+                    paper_azimuth, paper_elevation, paper_range, paper_sample_picker,
                 ],
                 [paper_preview, paper_files, paper_status],
             )
+            # Editing a figure invalidates its previous export until explicitly rebuilt.
+            for component in (paper_title, paper_question, paper_ground_truth, paper_baseline_label,
+                              paper_baseline_answer, paper_baseline_errors, paper_middle_label,
+                              paper_middle_answer, paper_middle_errors, paper_b4dl_label,
+                              paper_b4dl_answer, paper_b4dl_errors, paper_frames, paper_reasoning_frame,
+                              paper_task_label, paper_front_target, paper_rear_target, paper_yellow_phrases,
+                              paper_green_phrases, paper_conclusion, paper_lidar_view, paper_azimuth,
+                              paper_elevation, paper_range, paper_boxes, paper_tracks):
+                component.input(lambda: (None, None), None, [paper_preview, paper_files], queue=False)
 
         with gr.Accordion("场景浏览与在线问答 / Scene exploration",
                           open=not ((evaluation is not None and evaluation.enabled) or training_history is not None)):
