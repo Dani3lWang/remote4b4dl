@@ -36,12 +36,12 @@ BOX_EDGES: Tuple[Tuple[int, int], ...] = (
 )
 
 CATEGORY_COLORS: Mapping[str, str] = {
-    "vehicle": "#ffb000",
-    "pedestrian": "#ff4d6d",
-    "cycle": "#00e5ff",
-    "movable": "#b7ff4a",
-    "static": "#b4a7d6",
-    "other": "#e4e8ef",
+    "vehicle": "#416a91",
+    "pedestrian": "#a95555",
+    "cycle": "#3e807b",
+    "movable": "#8a7848",
+    "static": "#87739b",
+    "other": "#666d77",
 }
 
 
@@ -461,11 +461,11 @@ class NuScenesSceneRepository:
         if path:
             with Image.open(path) as image:
                 return image.convert("RGB").copy()
-        image = Image.new("RGB", (960, 540), "#101720")
+        image = Image.new("RGB", (960, 540), "#fafaf8")
         draw = ImageDraw.Draw(image)
-        draw.rectangle((22, 22, 938, 518), outline="#293848", width=2)
-        draw.text((48, 46), f"{camera} / IMAGE UNAVAILABLE", fill="#ffb000")
-        draw.text((48, 84), frame.sample_token, fill="#8393a7")
+        draw.rectangle((22, 22, 938, 518), outline="#d9d9d4", width=2)
+        draw.text((48, 46), f"{camera} / IMAGE UNAVAILABLE", fill="#454545")
+        draw.text((48, 84), frame.sample_token, fill="#646464")
         return image
 
 
@@ -537,7 +537,7 @@ def make_plotly_figures(
 
     points = frame.points
     color = points[:, 2]
-    colorscale = [[0.0, "#123247"], [0.45, "#00d4c7"], [1.0, "#ffe66d"]]
+    colorscale = [[0.0, "#a9c1ce"], [0.45, "#507b96"], [1.0, "#253a50"]]
     fig3d = go.Figure(
         go.Scatter3d(
             x=points[:, 0], y=points[:, 1], z=points[:, 2],
@@ -566,18 +566,19 @@ def make_plotly_figures(
 
     axis = dict(
         showbackground=True,
-        backgroundcolor="#0c1219",
-        gridcolor="#263646",
-        zerolinecolor="#547086",
-        color="#9fb0c2",
+        backgroundcolor="#fafaf8",
+        gridcolor="#e1e1dc",
+        zerolinecolor="#8a8a86",
+        color="#454545",
         showspikes=False,
     )
     fig3d.update_layout(
-        paper_bgcolor="#081018",
-        plot_bgcolor="#081018",
-        font=dict(color="#dce7f2", family="Bahnschrift, sans-serif"),
+        template="plotly_white",
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        font=dict(color="#242424", family="Times New Roman, Noto Serif CJK SC, serif"),
         margin=dict(l=0, r=0, t=12, b=0),
-        legend=dict(bgcolor="rgba(8,16,24,.72)", orientation="h", y=0.98),
+        legend=dict(bgcolor="rgba(255,255,255,.85)", orientation="h", y=0.98),
         scene=dict(
             xaxis={**axis, "title": "前向 X / m"},
             yaxis={**axis, "title": "左向 Y / m"},
@@ -588,16 +589,17 @@ def make_plotly_figures(
         uirevision=f"scene-{frame.scene.scene_token}",
     )
     bev.update_layout(
-        paper_bgcolor="#081018",
-        plot_bgcolor="#0c1219",
-        font=dict(color="#dce7f2", family="Bahnschrift, sans-serif"),
+        template="plotly_white",
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#fafaf8",
+        font=dict(color="#242424", family="Times New Roman, Noto Serif CJK SC, serif"),
         margin=dict(l=56, r=16, t=12, b=48),
-        legend=dict(bgcolor="rgba(8,16,24,.72)", orientation="h", y=0.98),
-        xaxis=dict(title="前向 X / m", gridcolor="#263646", zerolinecolor="#547086"),
+        legend=dict(bgcolor="rgba(255,255,255,.85)", orientation="h", y=0.98),
+        xaxis=dict(title="前向 X / m", gridcolor="#e1e1dc", zerolinecolor="#8a8a86"),
         yaxis=dict(
             title="左向 Y / m",
-            gridcolor="#263646",
-            zerolinecolor="#547086",
+            gridcolor="#e1e1dc",
+            zerolinecolor="#8a8a86",
             scaleanchor="x",
             scaleratio=1,
         ),
@@ -618,11 +620,12 @@ def empty_plotly_figure(message: str):
         xref="paper",
         yref="paper",
         showarrow=False,
-        font=dict(color="#ffb000", size=15, family="Bahnschrift, sans-serif"),
+        font=dict(color="#646464", size=15, family="Times New Roman, Noto Serif CJK SC, serif"),
     )
     figure.update_layout(
-        paper_bgcolor="#081018",
-        plot_bgcolor="#0c1219",
+        template="plotly_white",
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#fafaf8",
         xaxis=dict(visible=False),
         yaxis=dict(visible=False),
         margin=dict(l=0, r=0, t=0, b=0),

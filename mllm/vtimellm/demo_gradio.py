@@ -64,99 +64,7 @@ from demo_inference import prepare_chat_prompt  # noqa: E402
 from training_effects import TrainingHistory  # noqa: E402
 
 
-APP_CSS = """
-:root {
-  --b4-bg: #060b10;
-  --b4-panel: #0b131c;
-  --b4-line: #263746;
-  --b4-text: #dce7f2;
-  --b4-muted: #8093a7;
-  --b4-cyan: #00d4c7;
-  --b4-amber: #ffb000;
-}
-body, .gradio-container {
-  background-color: var(--b4-bg) !important;
-  background-image:
-    linear-gradient(rgba(38,55,70,.11) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(38,55,70,.11) 1px, transparent 1px),
-    radial-gradient(circle at 18% 4%, rgba(0,212,199,.09), transparent 32%) !important;
-  background-size: 32px 32px, 32px 32px, auto, auto !important;
-  color: var(--b4-text) !important;
-  font-family: "Bahnschrift", "DIN Alternate", sans-serif !important;
-}
-.gradio-container { max-width: 1920px !important; padding: 18px 22px 28px !important; }
-#b4-hero {
-  position: relative; overflow: hidden; border: 1px solid var(--b4-line);
-  background: linear-gradient(115deg, rgba(16,27,38,.98), rgba(7,14,21,.96));
-  padding: 20px 24px; margin-bottom: 14px; box-shadow: 0 18px 70px rgba(0,0,0,.28);
-}
-#b4-hero::after {
-  content: ""; position: absolute; inset: 0 0 0 auto; width: 32%;
-  background: repeating-linear-gradient(125deg, transparent 0 18px, rgba(0,212,199,.10) 19px 20px);
-  pointer-events: none;
-}
-.b4-kicker { color: var(--b4-cyan); letter-spacing: .22em; font-size: 11px; font-weight: 700; }
-.b4-title { color: var(--b4-text) !important; margin: 5px 0 3px; font-size: clamp(25px, 3vw, 45px); line-height: 1; letter-spacing: -.035em; }
-.b4-subtitle { color: var(--b4-muted); font-size: 13px; letter-spacing: .045em; }
-.b4-live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--b4-cyan); box-shadow: 0 0 15px var(--b4-cyan); margin-right: 8px; animation: b4pulse 2.4s ease-in-out infinite; }
-@keyframes b4pulse { 50% { opacity: .35; transform: scale(.72); } }
-#b4-controls, #b4-viewer, #b4-chat {
-  border: 1px solid var(--b4-line) !important; background: rgba(11,19,28,.93) !important;
-  box-shadow: 0 14px 44px rgba(0,0,0,.20); padding: 12px !important;
-}
-#b4-controls { border-top: 3px solid var(--b4-amber) !important; }
-#b4-viewer { border-top: 3px solid var(--b4-cyan) !important; }
-#b4-chat { border-top: 3px solid #ff4d6d !important; }
-#b4-frame-summary { border-left: 2px solid var(--b4-cyan); padding-left: 11px; color: var(--b4-muted); }
-#b4-status { min-height: 52px; color: var(--b4-muted); }
-button.primary { background: var(--b4-cyan) !important; color: #031014 !important; border: none !important; font-weight: 800 !important; }
-button.secondary { border-color: var(--b4-line) !important; }
-.tabs > .tab-nav { border-bottom: 1px solid var(--b4-line) !important; }
-.tabs > .tab-nav button.selected { color: var(--b4-cyan) !important; border-bottom-color: var(--b4-cyan) !important; }
-textarea, input { font-family: "Aptos", "Segoe UI", sans-serif !important; }
-.effect-shell {
-  border: 1px solid var(--b4-line); border-top: 3px solid var(--b4-cyan);
-  background: rgba(8,16,24,.94); padding: 14px; margin-bottom: 16px;
-  box-shadow: 0 18px 58px rgba(0,0,0,.28);
-}
-.effect-heading { margin: 0 0 11px; color: var(--b4-text); font-size: 18px; letter-spacing: .08em; }
-.metric-rail { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 8px; margin: 4px 0 14px; }
-.metric-card {
-  min-height: 78px; border: 1px solid var(--b4-line); padding: 11px 12px;
-  background: linear-gradient(145deg, rgba(0,212,199,.09), rgba(11,19,28,.95));
-  position: relative; overflow: hidden;
-}
-.metric-card::after { content: ""; position: absolute; left: 0; bottom: 0; width: 100%; height: 2px; background: var(--b4-cyan); }
-.metric-card span { display: block; color: var(--b4-muted); font-size: 10px; letter-spacing: .15em; }
-.metric-card strong { display: block; margin-top: 8px; color: var(--b4-text); font-size: 24px; font-weight: 600; }
-.metric-card.is-na strong { color: var(--b4-muted); }
-.effect-warning { border-left: 2px solid var(--b4-amber); padding: 8px 12px; margin: 4px 0 12px; color: var(--b4-amber); background: rgba(255,176,0,.06); }
-.diagnosis-strip { display: flex; flex-wrap: wrap; gap: 7px; margin: 6px 0 10px; }
-.diagnosis-strip span { border: 1px solid var(--b4-line); padding: 7px 10px; background: #08111a; color: var(--b4-muted); }
-.diagnosis-strip span:first-child { color: var(--b4-cyan); border-color: rgba(0,212,199,.45); }
-#effect-sample-panel { border-left: 3px solid var(--b4-amber); padding-left: 14px; }
-#paper-case-builder {
-  border: 1px solid var(--b4-line); border-left: 3px solid var(--b4-amber);
-  background: linear-gradient(145deg, rgba(255,176,0,.055), rgba(8,16,24,.96));
-  padding: 14px !important;
-}
-#paper-case-preview {
-  border: 1px solid var(--b4-line); background: #ffffff; padding: 8px !important;
-}
-@media (min-width: 1100px) {
-  #paper-case-preview { position: sticky; top: 12px; align-self: flex-start; }
-}
-@media (max-width: 1050px) { .metric-rail { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 620px) { .metric-rail { grid-template-columns: repeat(2, 1fr); } }
-"""
-
-HERO_HTML = """
-<section id="b4-hero">
-  <div class="b4-kicker"><span class="b4-live"></span>B4DL / SENSOR OPERATIONS</div>
-  <h1 class="b4-title">4D LiDAR 模型诊断台</h1>
-  <div class="b4-subtitle">MODEL EFFECTS · TEMPORAL ERROR · 3D / BEV · SCENE CHAT</div>
-</section>
-"""
+from paper_ui import APP_CSS, HERO_HTML, PLOT_RESIZE_JS, create_paper_theme  # noqa: E402
 
 
 def _model_option_state(args: argparse.Namespace) -> Tuple[bool, List[str]]:
@@ -387,7 +295,7 @@ def create_demo(
     initial_chat_ready, initial_chat_status = inference.scene_status(initial_scene)
     scene_choices = [(scene.label, scene.scene_token) for scene in repository.scenes]
 
-    with gr.Blocks(title="B4DL · 4D LiDAR Explorer") as demo:
+    with gr.Blocks(title="B4DL · Experimental Results") as demo:
         gr.HTML(HERO_HTML)
         playing_state = gr.State(False)
         frame_count_state = gr.State(len(initial_scene.sample_tokens))
@@ -476,43 +384,147 @@ def create_demo(
                 for value in select_frame_indices(len(initial_paper_scene.sample_tokens))
             ) if initial_paper_scene else ""
 
-            with gr.Group(elem_classes=["effect-shell"]):
-                gr.HTML('<h2 class="effect-heading">MODEL EFFECTS / 模型效果</h2>')
+            with gr.Column(elem_classes=["effect-shell"]):
+                gr.HTML('<h2 class="effect-heading">实验结果 / Results</h2>')
                 gr.HTML(metric_cards_html(evaluation.final_scores, evaluation.warnings))
-                with gr.Tabs():
+                with gr.Tabs(selected="quantitative" if evaluation.enabled else "training"):
+                    with gr.Tab("定量结果 / Quantitative", id="quantitative"):
+                        gr.HTML('<p class="results-note">读取已有评测结果。论文 Table 3 为参考；'
+                                '比较前需核对测试集、输入帧选择及指标计算口径。</p>')
+                        with gr.Row(equal_height=True):
+                            with gr.Column(min_width=480):
+                                gr.Plot(overview_metrics_figure(evaluation.final_scores), show_label=False)
+                                gr.HTML('<p class="figure-caption"><strong>(a) 汇总指标对比。</strong>'
+                                        '蓝色为当前评测，灰色为论文参考；缺失指标不绘制当前柱。</p>')
+                            with gr.Column(min_width=480):
+                                gr.Plot(per_task_metrics_figure(evaluation.per_task_metrics), show_label=False)
+                                gr.HTML('<p class="figure-caption"><strong>(b) 分任务结果。</strong>'
+                                        '按任务展示已有指标，各指标保持原始定义。</p>')
+                        with gr.Accordion("补充分析 · 分类混淆与时间定位误差", open=False):
+                            with gr.Row():
+                                gr.Plot(confusion_matrix_figure(evaluation.samples, "existence"), show_label=False)
+                                gr.Plot(confusion_matrix_figure(evaluation.samples, "binary_qa"), show_label=False)
+                            gr.Plot(time_grounding_diagnostics_figure(evaluation.samples), show_label=False)
+                        gr.HTML('<p class="figure-caption"><strong>评测说明。</strong>'
+                                '汇总图和样本诊断均来自导入文件；训练损失曲线不能替代最终评测。</p>')
+
+                    with gr.Tab("定性案例 / Qualitative", id="qualitative"):
+                        gr.HTML('<p class="results-note">按 Figure 5 / 8 展示同步场景帧、真值与模型答案。'
+                                '从评测文件载入一个样本，再填写同一场景的基线或消融输出。</p>'
+                                '<div class="evidence-key"><span><i class="front"></i>前方目标</span>'
+                                '<span><i class="rear"></i>后方目标</span>'
+                                '<span class="error">红字：人工标记的错误短语</span></div>')
+                        paper_sample_picker = gr.Dropdown(
+                            choices=effect_choices(effect_samples),
+                            value=initial_effect_id,
+                            label="从当前评测页载入样本",
+                            filterable=True,
+                        )
+                        with gr.Row(equal_height=False):
+                            with gr.Column(scale=3, min_width=320, elem_id="paper-case-builder"):
+                                paper_layout = gr.Dropdown(
+                                    choices=[("Figure 5 · 双模型对比 / 三视图", "comparison"),
+                                             ("Figure 8 · 三组消融 / 前视与 BEV", "ablation")],
+                                    value="comparison", label="论文版式",
+                                )
+                                with gr.Accordion("场景与帧号", open=False):
+                                    paper_scene = gr.Dropdown(
+                                        choices=scene_choices,
+                                        value=initial_paper_scene.scene_token if initial_paper_scene else None,
+                                        label="nuScenes 场景",
+                                        filterable=True,
+                                    )
+                                    paper_frames = gr.Textbox(
+                                        value=initial_paper_frames,
+                                        label="帧号（2–8 帧，推荐 5 帧）",
+                                        placeholder="例如：0, 10, 20, 30, 39；留空自动选择",
+                                    )
+                                    paper_title = gr.Textbox(
+                                        value="QUALITATIVE CASE STUDY", label="图标题",
+                                    )
+                                with gr.Accordion("问题与真值", open=False):
+                                    paper_question = gr.Textbox(
+                                        value=effect_sample.question if effect_sample else "",
+                                        label="QUESTION", lines=3,
+                                    )
+                                    paper_ground_truth = gr.Textbox(
+                                        value=effect_sample.ground_truth if effect_sample else "",
+                                        label="独立真值 / GROUND TRUTH", lines=3,
+                                    )
+                                with gr.Accordion("模型答案与消融", open=True):
+                                    with gr.Row():
+                                        paper_baseline_label = gr.Textbox(
+                                            value="VTimeLLM", label="第一组模型名",
+                                        )
+                                        paper_b4dl_label = gr.Textbox(
+                                            value="B4DL model (Ours)", label="完整模型名",
+                                        )
+                                    paper_baseline_answer = gr.Textbox(
+                                        label="第一组实际答案 / BASELINE", lines=4,
+                                    )
+                                    paper_baseline_errors = gr.Textbox(label="第一组错误短语（红字）")
+                                    with gr.Group(visible=False) as paper_middle_group:
+                                        paper_middle_label = gr.Textbox(
+                                            value="B4DL without Metatoken", label="第二组消融模型名",
+                                        )
+                                        paper_middle_answer = gr.Textbox(label="第二组实际答案", lines=4)
+                                        paper_middle_errors = gr.Textbox(label="第二组错误短语（红字）")
+                                    paper_b4dl_answer = gr.Textbox(
+                                        value=effect_sample.prediction if effect_sample else "",
+                                        label="完整模型实际答案 / B4DL", lines=4,
+                                    )
+                                    paper_b4dl_errors = gr.Textbox(label="完整模型错误短语（红字）")
+                                with gr.Accordion("目标与证据高亮", open=False):
+                                    initial_targets = scene_target_choices(
+                                        repository, initial_paper_scene.scene_token
+                                    ) if initial_paper_scene else []
+                                    paper_front_target = gr.Dropdown(
+                                        choices=initial_targets, label="前方目标 instance（黄色，可选）",
+                                        filterable=True,
+                                    )
+                                    paper_rear_target = gr.Dropdown(
+                                        choices=initial_targets, label="后方目标 instance（绿色，可选）",
+                                        filterable=True,
+                                    )
+                                    paper_yellow_phrases = gr.Textbox(
+                                        label="前方证据短语（所有答案黄色高亮）",
+                                        placeholder="vehicles in front; the front vehicle",
+                                    )
+                                    paper_green_phrases = gr.Textbox(
+                                        label="后方证据短语（所有答案绿色高亮）",
+                                        placeholder="rear vehicles; vehicles in the back view",
+                                    )
+                                with gr.Accordion("图注与渲染选项", open=False):
+                                    paper_conclusion = gr.Textbox(
+                                        label="观察结论 / 图注（人工填写，可选）", lines=3,
+                                        placeholder="说明哪些帧、哪个目标支持或反驳答案；留空不生成结论。",
+                                    )
+                                    with gr.Row():
+                                        paper_boxes = gr.Checkbox(value=True, label="投影真值框")
+                                        paper_tracks = gr.Checkbox(value=True, label="LiDAR 历史轨迹")
+                            with gr.Column(scale=9, min_width=620, elem_id="paper-preview-column"):
+                                paper_preview = gr.Image(
+                                    type="pil", interactive=False, height=640, label="定性结果图 / Qualitative figure",
+                                    elem_id="paper-case-preview",
+                                )
+                                gr.HTML('<p class="figure-caption"><strong>图版阅读顺序。</strong>'
+                                        '时间从左向右；目标框与答案共享颜色。真值单独呈现，'
+                                        '观察结论应说明具体帧与目标如何支持或反驳答案。</p>')
+                                paper_build = gr.Button("生成论文案例图 / EXPORT", variant="primary")
+                                paper_status = gr.Markdown("等待生成 · 输出 PNG + PDF")
+                                paper_files = gr.File(
+                                    label="下载论文图", file_count="multiple", interactive=False,
+                                )
+
                     if training_history is not None:
-                        with gr.Tab("训练曲线 / TRAINING"):
+                        with gr.Tab("训练过程 / Training", id="training"):
                             gr.Plot(training_history_figure(training_history), show_label=False)
                             gr.Markdown(
                                 "读取 trainer_state.json 中已记录的 loss、eval_loss 和学习率。"
                                 "横轴为优化器更新步数；缺少验证日志时只显示训练曲线。"
                                 "重新启动 Demo 可载入更新后的日志。"
                             )
-                    with gr.Tab("效果总览 / OVERVIEW"):
-                        with gr.Row():
-                            gr.Plot(
-                                overview_metrics_figure(evaluation.final_scores),
-                                show_label=False,
-                            )
-                            gr.Plot(
-                                per_task_metrics_figure(evaluation.per_task_metrics),
-                                show_label=False,
-                            )
-                        with gr.Row():
-                            gr.Plot(
-                                confusion_matrix_figure(evaluation.samples, "existence"),
-                                show_label=False,
-                            )
-                            gr.Plot(
-                                confusion_matrix_figure(evaluation.samples, "binary_qa"),
-                                show_label=False,
-                            )
-                        gr.Plot(
-                            time_grounding_diagnostics_figure(evaluation.samples),
-                            show_label=False,
-                        )
-
-                    with gr.Tab("样本诊断 / SAMPLE LAB"):
+                    with gr.Tab("样本分析 / Diagnostics", id="diagnostics"):
                         with gr.Row():
                             effect_task = gr.Dropdown(
                                 choices=[("全部任务", "all")] + [
@@ -606,108 +618,6 @@ def create_demo(
                                 with gr.Row():
                                     effect_boxes = gr.Checkbox(value=True, label="真值 3D 框")
                                     effect_tracks = gr.Checkbox(value=True, label="历史轨迹")
-
-                    with gr.Tab("论文案例图 / PAPER CASE"):
-                        gr.Markdown(
-                            "参考 [B4DL 原论文 Figure 5 / 8](https://arxiv.org/abs/2508.05269)："
-                            "同步场景帧、独立 Ground Truth、模型对比或三组消融。"
-                            "**黄色＝前方目标，绿色＝后方目标**，画面与所有答案共享颜色。"
-                            "评测载入只提供真值和当前预测；其他模型答案需填写实际输出。"
-                        )
-                        paper_sample_picker = gr.Dropdown(
-                            choices=effect_choices(effect_samples),
-                            value=initial_effect_id,
-                            label="从当前评测页载入样本",
-                            filterable=True,
-                        )
-                        with gr.Row(equal_height=False):
-                            with gr.Column(scale=4, min_width=360, elem_id="paper-case-builder"):
-                                paper_scene = gr.Dropdown(
-                                    choices=scene_choices,
-                                    value=initial_paper_scene.scene_token if initial_paper_scene else None,
-                                    label="nuScenes 场景",
-                                    filterable=True,
-                                )
-                                paper_frames = gr.Textbox(
-                                    value=initial_paper_frames,
-                                    label="帧号（2–8 帧，推荐 5 帧）",
-                                    placeholder="例如：0, 10, 20, 30, 39；留空自动选择",
-                                )
-                                paper_layout = gr.Dropdown(
-                                    choices=[("Figure 5 · 双模型对比 / 三视图", "comparison"),
-                                             ("Figure 8 · 三组消融 / 前视与 BEV", "ablation")],
-                                    value="comparison", label="论文版式",
-                                )
-                                paper_title = gr.Textbox(
-                                    value="QUALITATIVE CASE STUDY", label="图标题",
-                                )
-                                paper_question = gr.Textbox(
-                                    value=effect_sample.question if effect_sample else "",
-                                    label="QUESTION", lines=3,
-                                )
-                                paper_ground_truth = gr.Textbox(
-                                    value=effect_sample.ground_truth if effect_sample else "",
-                                    label="独立真值 / GROUND TRUTH", lines=3,
-                                )
-                                with gr.Row():
-                                    paper_baseline_label = gr.Textbox(
-                                        value="VTimeLLM", label="第一组模型名",
-                                    )
-                                    paper_b4dl_label = gr.Textbox(
-                                        value="B4DL model (Ours)", label="完整模型名",
-                                    )
-                                paper_baseline_answer = gr.Textbox(
-                                    label="第一组实际答案 / BASELINE", lines=4,
-                                )
-                                paper_baseline_errors = gr.Textbox(label="第一组错误短语（红字）")
-                                with gr.Group(visible=False) as paper_middle_group:
-                                    paper_middle_label = gr.Textbox(
-                                        value="B4DL without Metatoken", label="第二组消融模型名",
-                                    )
-                                    paper_middle_answer = gr.Textbox(label="第二组实际答案", lines=4)
-                                    paper_middle_errors = gr.Textbox(label="第二组错误短语（红字）")
-                                paper_b4dl_answer = gr.Textbox(
-                                    value=effect_sample.prediction if effect_sample else "",
-                                    label="完整模型实际答案 / B4DL", lines=4,
-                                )
-                                paper_b4dl_errors = gr.Textbox(label="完整模型错误短语（红字）")
-                                with gr.Accordion("目标与证据高亮", open=False):
-                                    initial_targets = scene_target_choices(
-                                        repository, initial_paper_scene.scene_token
-                                    ) if initial_paper_scene else []
-                                    paper_front_target = gr.Dropdown(
-                                        choices=initial_targets, label="前方目标 instance（黄色，可选）",
-                                        filterable=True,
-                                    )
-                                    paper_rear_target = gr.Dropdown(
-                                        choices=initial_targets, label="后方目标 instance（绿色，可选）",
-                                        filterable=True,
-                                    )
-                                    paper_yellow_phrases = gr.Textbox(
-                                        label="前方证据短语（所有答案黄色高亮）",
-                                        placeholder="vehicles in front; the front vehicle",
-                                    )
-                                    paper_green_phrases = gr.Textbox(
-                                        label="后方证据短语（所有答案绿色高亮）",
-                                        placeholder="rear vehicles; vehicles in the back view",
-                                    )
-                                paper_conclusion = gr.Textbox(
-                                    label="观察结论 / 图注（人工填写，可选）", lines=3,
-                                    placeholder="说明哪些帧、哪个目标支持或反驳答案；留空不生成结论。",
-                                )
-                                with gr.Row():
-                                    paper_boxes = gr.Checkbox(value=True, label="投影真值框")
-                                    paper_tracks = gr.Checkbox(value=True, label="LiDAR 历史轨迹")
-                                paper_build = gr.Button("生成论文案例图 / EXPORT", variant="primary")
-                                paper_status = gr.Markdown("等待生成 · 输出 PNG + PDF")
-                                paper_files = gr.File(
-                                    label="下载论文图", file_count="multiple", interactive=False,
-                                )
-                            with gr.Column(scale=8, min_width=640):
-                                paper_preview = gr.Image(
-                                    type="pil", interactive=False, height=620, label="PAPER FIGURE PREVIEW",
-                                    elem_id="paper-case-preview",
-                                )
 
             def update_effect_page(task, status, query, sort_order, requested_page):
                 page_samples, total, actual_page = evaluation.page(
@@ -942,57 +852,59 @@ def create_demo(
                 [paper_preview, paper_files, paper_status],
             )
 
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=3, min_width=260, elem_id="b4-controls"):
-                gr.Markdown("### 场景控制 / CONTROL")
-                scene_select = gr.Dropdown(
-                    choices=scene_choices, value=initial_scene.scene_token,
-                    label="nuScenes 场景", filterable=True,
-                )
-                camera_select = gr.Dropdown(
-                    choices=list(CAMERA_VIEWS), value=initial_camera, label="相机视角",
-                )
-                frame_slider = gr.Slider(
-                    minimum=0, maximum=max(0, len(initial_scene.sample_tokens) - 1),
-                    value=0, step=1, label="时间轴 / FRAME INDEX",
-                )
-                with gr.Row():
-                    previous_button = gr.Button("◀", variant="secondary")
-                    play_button = gr.Button("▶ 播放", variant="primary")
-                    next_button = gr.Button("▶", variant="secondary")
-                playback_speed = gr.Slider(
-                    minimum=0.1, maximum=2.0, value=0.5, step=0.1, label="帧间隔 / 秒",
-                )
-                show_boxes = gr.Checkbox(value=True, label="显示真值 3D 框")
-                show_tracks = gr.Checkbox(value=True, label="显示历史轨迹")
-                frame_summary = gr.Markdown(initial_render[3], elem_id="b4-frame-summary")
-                system_status = gr.Markdown(initial_render[4], elem_id="b4-status")
-
-            with gr.Column(scale=8, min_width=620, elem_id="b4-viewer"):
-                with gr.Tabs():
-                    with gr.Tab("3D POINT CLOUD"):
-                        plot_3d = gr.Plot(initial_render[0], show_label=False)
-                    with gr.Tab("BEV / 俯视"):
-                        plot_bev = gr.Plot(initial_render[1], show_label=False)
-                    with gr.Tab("CAMERA / 相机"):
-                        camera_image = gr.Image(
-                            initial_render[2], label=initial_camera, type="pil", interactive=False,
-                        )
-
-            with gr.Column(scale=4, min_width=340, elem_id="b4-chat"):
-                gr.Markdown("### B4DL 问答 / SCENE CHAT")
-                chatbot = gr.Chatbot(value=[], height=540, label="整场景推理")
-                chat_input = gr.Textbox(
-                    label="问题",
-                    placeholder=("询问这个 LiDAR 场景……" if initial_chat_ready else initial_chat_status),
-                    interactive=initial_chat_ready,
-                    lines=3,
-                )
-                with gr.Row():
-                    send_button = gr.Button(
-                        "发送 / RUN", variant="primary", interactive=initial_chat_ready
+        with gr.Accordion("场景浏览与在线问答 / Scene exploration",
+                          open=not ((evaluation is not None and evaluation.enabled) or training_history is not None)):
+            with gr.Row(equal_height=False):
+                with gr.Column(scale=3, min_width=260, elem_id="b4-controls"):
+                    gr.Markdown("### 场景控制 / CONTROL")
+                    scene_select = gr.Dropdown(
+                        choices=scene_choices, value=initial_scene.scene_token,
+                        label="nuScenes 场景", filterable=True,
                     )
-                    clear_chat = gr.Button("清空", variant="secondary")
+                    camera_select = gr.Dropdown(
+                        choices=list(CAMERA_VIEWS), value=initial_camera, label="相机视角",
+                    )
+                    frame_slider = gr.Slider(
+                        minimum=0, maximum=max(0, len(initial_scene.sample_tokens) - 1),
+                        value=0, step=1, label="时间轴 / FRAME INDEX",
+                    )
+                    with gr.Row():
+                        previous_button = gr.Button("◀", variant="secondary")
+                        play_button = gr.Button("▶ 播放", variant="primary")
+                        next_button = gr.Button("▶", variant="secondary")
+                    playback_speed = gr.Slider(
+                        minimum=0.1, maximum=2.0, value=0.5, step=0.1, label="帧间隔 / 秒",
+                    )
+                    show_boxes = gr.Checkbox(value=True, label="显示真值 3D 框")
+                    show_tracks = gr.Checkbox(value=True, label="显示历史轨迹")
+                    frame_summary = gr.Markdown(initial_render[3], elem_id="b4-frame-summary")
+                    system_status = gr.Markdown(initial_render[4], elem_id="b4-status")
+
+                with gr.Column(scale=8, min_width=620, elem_id="b4-viewer"):
+                    with gr.Tabs():
+                        with gr.Tab("3D POINT CLOUD"):
+                            plot_3d = gr.Plot(initial_render[0], show_label=False)
+                        with gr.Tab("BEV / 俯视"):
+                            plot_bev = gr.Plot(initial_render[1], show_label=False)
+                        with gr.Tab("CAMERA / 相机"):
+                            camera_image = gr.Image(
+                                initial_render[2], label=initial_camera, type="pil", interactive=False,
+                            )
+
+                with gr.Column(scale=4, min_width=340, elem_id="b4-chat"):
+                    gr.Markdown("### B4DL 问答 / SCENE CHAT")
+                    chatbot = gr.Chatbot(value=[], height=540, label="整场景推理")
+                    chat_input = gr.Textbox(
+                        label="问题",
+                        placeholder=("询问这个 LiDAR 场景……" if initial_chat_ready else initial_chat_status),
+                        interactive=initial_chat_ready,
+                        lines=3,
+                    )
+                    with gr.Row():
+                        send_button = gr.Button(
+                            "发送 / RUN", variant="primary", interactive=initial_chat_ready
+                        )
+                        clear_chat = gr.Button("清空", variant="secondary")
 
         render_outputs = [plot_3d, plot_bev, camera_image, frame_summary, system_status]
         render_inputs = [scene_select, frame_slider, camera_select, show_boxes, show_tracks]
@@ -1107,6 +1019,7 @@ def create_demo(
         )
         clear_chat.click(lambda: ([], None), None, [chatbot, conversation_state])
 
+        demo.load(lambda: None, js=PLOT_RESIZE_JS)
     return demo
 
 
@@ -1184,6 +1097,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         server_name=args.server_name,
         server_port=args.server_port,
         css=APP_CSS,
+        theme=create_paper_theme(),
     )
 
 

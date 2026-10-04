@@ -297,7 +297,8 @@ class UIConstructionTests(unittest.TestCase):
             repository = SyntheticRepository(dataroot=directory, nusc=FakeNuScenes())
             sample = EvaluationSample("unlinked", "existence", 0, "Car?", "Yes", "No")
             demo = create_demo(repository, OptionalInferenceEngine(args), EvaluationRepository([sample]))
-            callback = next(fn.fn for fn in demo.fns.values() if fn.fn.__name__ == "load_paper_sample")
+            callback = next(fn.fn for fn in demo.fns.values()
+                            if fn.fn is not None and fn.fn.__name__ == "load_paper_sample")
             loaded = callback("unlinked")
         self.assertIsNone(loaded[0]["value"])
         self.assertEqual(loaded[1], "")
@@ -317,7 +318,7 @@ class UIConstructionTests(unittest.TestCase):
             sample = EvaluationSample("linked", "existence", 0, "Car?", "Yes", "No",
                                       scene_token="scene-token")
             demo = create_demo(repository, OptionalInferenceEngine(args), EvaluationRepository([sample]))
-            callbacks = {fn.fn.__name__: fn.fn for fn in demo.fns.values()}
+            callbacks = {fn.fn.__name__: fn.fn for fn in demo.fns.values() if fn.fn is not None}
             loaded = callbacks["load_paper_sample"]("linked")
             self.assertEqual(loaded[3:5], ("Yes", "No"))
             self.assertEqual(loaded[6], "")  # Ground Truth must not impersonate a baseline.
