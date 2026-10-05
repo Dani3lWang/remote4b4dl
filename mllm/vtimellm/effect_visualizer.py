@@ -18,15 +18,15 @@ from training_effects import finite_number
 
 
 COLORS = {
-    "bg": "#060b10",
-    "panel": "#0b131c",
-    "grid": "#263746",
-    "text": "#dce7f2",
-    "muted": "#8093a7",
-    "cyan": "#00d4c7",
-    "amber": "#ffb000",
-    "red": "#ff4d6d",
-    "lime": "#b7ff4a",
+    "bg": "#ffffff",
+    "panel": "#ffffff",
+    "grid": "#e7e7e4",
+    "text": "#242424",
+    "muted": "#646464",
+    "cyan": "#385a7c",
+    "amber": "#92979d",
+    "red": "#b54444",
+    "lime": "#4f7b62",
 }
 
 
@@ -40,17 +40,21 @@ def _go():
 
 def _base_layout(figure, title: str, height: int = 360):
     figure.update_layout(
-        title={"text": title, "x": 0.02, "xanchor": "left"},
+        template="plotly_white",
+        autosize=True,
+        title={"text": title, "x": 0.02, "xanchor": "left", "font": dict(size=17)},
         height=height,
-        margin=dict(l=48, r=24, t=58, b=44),
+        margin=dict(l=52, r=24, t=66, b=90),
         paper_bgcolor=COLORS["panel"],
         plot_bgcolor=COLORS["panel"],
-        font=dict(color=COLORS["text"], family="Bahnschrift, sans-serif"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hoverlabel=dict(bgcolor="#111c27", font_color=COLORS["text"]),
+        font=dict(color=COLORS["text"], family="Times New Roman, Noto Serif CJK SC, serif", size=13),
+        legend=dict(orientation="h", yanchor="top", y=-0.23, xanchor="left", x=0, font=dict(size=11)),
+        hoverlabel=dict(bgcolor="#ffffff", font_color=COLORS["text"]),
     )
-    figure.update_xaxes(gridcolor=COLORS["grid"], zerolinecolor=COLORS["grid"])
-    figure.update_yaxes(gridcolor=COLORS["grid"], zerolinecolor=COLORS["grid"])
+    figure.update_xaxes(gridcolor=COLORS["grid"], zerolinecolor=COLORS["grid"],
+                        showline=True, linecolor="#777777", ticks="outside")
+    figure.update_yaxes(gridcolor=COLORS["grid"], zerolinecolor=COLORS["grid"],
+                        showline=True, linecolor="#777777", ticks="outside")
     return figure
 
 
@@ -68,33 +72,39 @@ def empty_effect_figure(message: str, title: str = "NO DATA"):
 
 def metric_cards_html(scores: Mapping[str, object], warnings: Sequence[str] = ()) -> str:
     metrics = (
-        ("accuracy", "ACCURACY"),
+        ("accuracy", "Accuracy"),
         ("miou", "mIoU"),
         ("bleu4", "BLEU-4"),
         ("meteor", "METEOR"),
         ("rouge_l", "ROUGE-L"),
         ("bertscore", "BERTScore"),
-        ("gpt_score", "GPT SCORE"),
+        ("gpt_score", "GPT score"),
     )
-    cards = []
+    cells = []
     for key, label in metrics:
         value = finite_number(scores.get(key))
         if value is None:
-            formatted = "N/A"
+            formatted = "—"
             state = "is-na"
         else:
             formatted = f"{float(value):.3f}"
             state = ""
-        cards.append(
-            f'<div class="metric-card {state}"><span>{html.escape(label)}</span>'
-            f'<strong>{formatted}</strong></div>'
-        )
+        cells.append(f'<td class="{state}">{formatted}</td>')
     warning_html = ""
     if warnings:
         warning_html = '<div class="effect-warning">' + " · ".join(
             html.escape(item) for item in warnings
         ) + "</div>"
-    return '<div class="metric-rail">' + "".join(cards) + "</div>" + warning_html
+    headers = "".join(f'<th scope="col">{html.escape(label)}</th>' for _, label in metrics)
+    reference = "".join(f'<td>{PAPER_REFERENCE[key]:.3f}</td>' for key, _ in metrics)
+    return (
+        '<div class="metric-rail"><table class="results-table">'
+        '<caption>汇总指标 · — 表示当前结果未提供该指标；论文数值为参考。</caption>'
+        '<thead><tr><th scope="col">Experiment</th>' + headers + '</tr></thead>'
+        '<tbody><tr class="current-run"><th scope="row">当前评测 / Current run</th>'
+        + "".join(cells) + '</tr><tr class="paper-reference"><th scope="row">论文 Table 3 / Reference</th>'
+        + reference + '</tr></tbody></table></div>' + warning_html
+    )
 
 
 def overview_metrics_figure(scores: Mapping[str, object]):
@@ -111,7 +121,7 @@ def overview_metrics_figure(scores: Mapping[str, object]):
         y=[PAPER_REFERENCE[key] for key in keys], marker_color=COLORS["amber"], opacity=0.72,
     )
     figure.update_layout(barmode="group", yaxis=dict(range=[0, 1]))
-    return _base_layout(figure, "当前模型 / 论文参考", 390)
+    return _base_layout(figure, "(a) 汇总指标", 390)
 
 
 def training_history_figure(history):
@@ -143,9 +153,9 @@ def per_task_metrics_figure(per_task_metrics: Mapping[str, object]):
     metric_colors = {
         "accuracy": COLORS["cyan"],
         "miou": COLORS["amber"],
-        "bleu4": "#9d8cff",
+        "bleu4": "#8a6b91",
         "meteor": COLORS["lime"],
-        "rouge_l": "#55a7ff",
+        "rouge_l": "#b58b49",
         "bertscore": COLORS["red"],
     }
     for metric, color in metric_colors.items():
@@ -162,7 +172,7 @@ def per_task_metrics_figure(per_task_metrics: Mapping[str, object]):
     if not added:
         return empty_effect_figure("没有 per-task 指标", "TASK METRICS")
     figure.update_layout(barmode="group", yaxis=dict(range=[0, 1]))
-    return _base_layout(figure, "六任务指标", 420)
+    return _base_layout(figure, "(b) 各任务指标", 390)
 
 
 def confusion_matrix_figure(samples: Iterable[EvaluationSample], task: str):

@@ -2,6 +2,31 @@
 
 该 Demo 直接读取本地 nuScenes 场景，提供当前帧点云的 3D/BEV 视图、六路相机切换、真值框和截至当前帧的历史轨迹。它不读取或修改训练数据。
 
+## 论文结果页界面
+
+页面采用白底、黑色衬线标题、三线指标表和低饱和图表配色，与论文结果展示
+保持一致。评测值和论文 Table 3 参考值分行显示；缺失评测值使用“—”，不
+用论文数值补齐。图表提供图下说明，黄/绿只用于定性案例中的前/后目标证据。
+
+导入评测结果后，默认打开 **定性案例**，并提供 **定量结果**、**训练过程**
+（提供训练日志时）与 **样本分析**。只提供训练日志时默认打开训练过程。
+混淆矩阵和时间定位误差收在“补充分析”中；交互式点云浏览与在线问答可按需
+展开。纯查看模式仍默认展开场景浏览。
+
+定性案例以大幅图版预览为主，左侧将场景、问题与真值、模型答案、目标高亮、
+图注分组。导出按钮和 PNG/PDF 下载位于图版下方。训练曲线、BEV、3D 和空
+数据提示也采用浅色背景。系统深色模式下仍使用同一套可读的论文配色；小屏
+改为单列，指标表在自身区域水平滚动。
+
+命令行入口会自动应用主题。若在其他脚本中调用 `create_demo()`，使用：
+
+```python
+from vtimellm.demo_gradio import APP_CSS, create_demo, create_paper_theme
+
+demo = create_demo(repository, inference, evaluation, training_history)
+demo.queue().launch(css=APP_CSS, theme=create_paper_theme())
+```
+
 ## 安装
 
 推荐新建 Python 3.10 环境（例如 `wqlc`），安装独立 Demo 依赖：
@@ -140,13 +165,13 @@ python -m vtimellm.demo_gradio \
   --test_data ./b4dl_dataset/test_qa.json
 ```
 
-页面增加三个区域：
+结果页包含以下区域，提供训练日志时还会显示训练过程：
 
-- **效果总览**：最终指标与论文 Table 3 对比、per-task 指标、分类混淆矩阵、
+- **定量结果**：最终指标与论文 Table 3 对比、per-task 指标、分类混淆矩阵、
   TG IoU 分布和开始帧散点图。
-- **样本诊断**：按任务、状态、关键词和得分分页筛选；选择样本后显示点云、
+- **样本分析**：按任务、状态、关键词和得分分页筛选；选择样本后显示点云、
   BEV、相机、问题、Ground Truth、预测和任务对应的单样本得分。
-- **论文案例图**：从当前评测页载入一个样本，选择 2–8 个场景帧（默认均匀
+- **定性案例**：从当前评测页载入一个样本，选择 2–8 个场景帧（默认均匀
   选择 5 帧），使用原论文 Figure 5 双模型对比或 Figure 8 三组消融版式。
   独立展示 Ground Truth，黄色/绿色分别对应前方/后方目标，在所有答案中
   保持同一语义；可添加错误红字及人工观察结论，下载 180 DPI PNG 和 PDF。
@@ -182,8 +207,32 @@ POSITION 7/40` 表示数据集帧号为 6，同时它是场景中的第 7 帧。
 
 | 版式 | 场景证据 | 答案区域 |
 |---|---|---|
-| Figure 5 / `comparison` | 前视、后视、LiDAR BEV，共用时间轴 | 可选独立真值 + 两组模型输出 |
-| Figure 8 / `ablation` | 前视、LiDAR BEV，共用时间轴 | 独立真值 + 三组消融输出 |
+| 时序对比 / `comparison` | 前视、后视、斜视 LiDAR 3D，共用时间轴 | 最多 4 组独立问题，每组两模型对比；真值分开 |
+| 三维问答 / `reasoning` | 每行原始三维场景 + 同视角紫色目标高亮 | 左侧问题/模型答案卡片，最多 6 行，可跨场景 |
+| Figure 8 / `ablation` | 前视、LiDAR 3D，共用时间轴 | 独立真值 + 三组消融输出 |
+
+三维问答图版采用 [Reason3D](https://reason3d.github.io/) 中左侧问答、右侧原始/
+高亮场景的结构，场景内容仍是实际 nuScenes 点云。不会将室内 RGB 重建图当作
+LiDAR 结果，也不自动生成纹理网格或模型分割掩码。
+
+### 两种图版的操作
+
+时序对比：选择场景与 2–8 个同步帧，填写同一问题的实际基线和完整模型答案，
+选择前方/后方目标，点击“加入图版”。可在同一段证据下编辑另一问题及对应的
+模型答案，再次加入，生成类似论文 Figure 5 中 (a)/(b) 的多问题对照。每组
+问答必须共用场景、帧、目标及文字高亮；改变证据时需先清空图版。
+
+三维问答：切换版式后填写任务标题和单帧号，载入问题及实际模型答案，选择
+至少一个目标 instance，点击“加入图版”。载入另一评测样本后可继续加入；
+每行保存独立的场景、帧、目标和模型答案，适合组成四行任务展示图。已加入
+案例位于预览上方列表，导出以此列表为准，后续编辑不会覆盖旧案例。可撤回
+最后一条或清空；切换版式会清空图版。未加入案例时导出当前编辑内容。
+
+三维图用 XYZ 点云生成斜视正交投影，原始/高亮两列使用同一视角和范围。紫色
+选取来自所选旋转三维标注框内的点，并显示框边；它是标注依据的证据高亮，
+不是模型输出的密集分割。目标在该帧缺失或超出显示范围时会报错，不能静默
+生成空高亮。可调整方位角、俯仰角和显示范围。时序图中前/后目标仍分别使用
+黄色/绿色。默认 LiDAR 视图为三维，选择 BEV 或 `--lidar-view bev` 可恢复俯视图。
 
 载入评测样本时，GT 放入真值栏，prediction 放入完整模型栏，其他模型答案
 和旧高亮/结论清空。应填写同一问题、场景和输入设置下的实际基线或消融
@@ -194,7 +243,7 @@ POSITION 7/40` 表示数据集帧号为 6，同时它是场景中的第 7 帧。
 同时保留失败案例；单个案例不能证明总体分数或训练效果提高。
 
 “目标与证据高亮”中选择 nuScenes `instance_token`，导出时自动映射至各帧
-的 `sample_annotation`，为相机和 BEV 加上同色目标框。目标必须至少在所选
+的 `sample_annotation`，为相机与 LiDAR 加上同色目标框。目标必须至少在所选
 帧的标注中出现；框在该相机视野外时不会强行投影。关闭普通真值框不会关闭
 明确选择的目标标记。框来自数据集真值，不是模型预测的检测框。未选目标时
 只显示普通类别框；文本高亮仍可独立设置。短语匹配不区分大小写，在真值及
@@ -217,8 +266,8 @@ python vtimellm/paper_case_visualizer.py \
   --output-dir ./paper_cases
 ```
 
-相机行使用 nuScenes 标定将真值 3D 框投影到画面；LiDAR 行是适合打印的
-静态 BEV，并可叠加真值框和历史轨迹。该流程只读数据与评测输出，不加载或
+相机行使用 nuScenes 标定将真值 3D 框投影到画面；LiDAR 行默认使用斜视
+三维点云，并可叠加真值框和历史轨迹。该流程只读数据与评测输出，不加载或
 修改训练代码，也不占用 4090 推理显存。白底图使用完整相机视野，不裁切目标；
 长答案、中英文和显式换行自动排版，图高随文字增加。Linux 中文字体可安装
 Noto CJK，Windows 优先使用微软雅黑；缺少中文字体时应先安装再导出。
@@ -230,6 +279,38 @@ Noto CJK，Windows 优先使用微软雅黑；缺少中文字体时应先安装�
 `--baseline-highlights` / `--b4dl-highlights` 参数，分别作为所有答案共用的
 黄色 / 绿色短语；新命令推荐使用语义明确的参数名。上述示例文字只用于说明
 命令格式，不能当作实测结果。PDF 为高分辨率栅格图，文字不可编辑。
+
+### 多案例命令行导出
+
+三维问答的 `cases.json` 格式（问题和答案示例仅说明格式）：
+
+```json
+[
+  {
+    "task_label": "3D QA",
+    "scene_token": "<nuscenes-scene-token>",
+    "frame_index": 0,
+    "question": "Where is the selected vehicle?",
+    "answer": "In front of the ego vehicle.",
+    "answer_label": "B4DL checkpoint name",
+    "target_instances": ["<instance-token>"],
+    "ground_truth": "In front.",
+    "sample_id": "<evaluation-sample-id>"
+  }
+]
+```
+
+```bash
+python vtimellm/paper_case_visualizer.py \
+  --nuscenes-root /path/to/nuScenes \
+  --layout reasoning --cases-json cases.json \
+  --title "3D QUESTION ANSWERING" --output-dir ./paper_cases
+```
+
+时序多问题的 JSON 数组每条使用 `question`、可选 `ground_truth` 和包含两项的
+`answers`；每项答案包含 `label`、`answer` 和可选 `error_phrases` 字符串列表。
+使用 `--layout comparison --cases-json temporal_cases.json`，同时提供
+`--scene-token` 和 `--frames` 指定共用证据；无需再提供单组问答参数。
 
 论文案例图的 CPU 单元测试：
 

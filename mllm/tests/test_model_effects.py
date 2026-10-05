@@ -297,7 +297,8 @@ class UIConstructionTests(unittest.TestCase):
             repository = SyntheticRepository(dataroot=directory, nusc=FakeNuScenes())
             sample = EvaluationSample("unlinked", "existence", 0, "Car?", "Yes", "No")
             demo = create_demo(repository, OptionalInferenceEngine(args), EvaluationRepository([sample]))
-            callback = next(fn.fn for fn in demo.fns.values() if fn.fn.__name__ == "load_paper_sample")
+            callback = next(fn.fn for fn in demo.fns.values()
+                            if fn.fn is not None and fn.fn.__name__ == "load_paper_sample")
             loaded = callback("unlinked")
         self.assertIsNone(loaded[0]["value"])
         self.assertEqual(loaded[1], "")
@@ -317,7 +318,7 @@ class UIConstructionTests(unittest.TestCase):
             sample = EvaluationSample("linked", "existence", 0, "Car?", "Yes", "No",
                                       scene_token="scene-token")
             demo = create_demo(repository, OptionalInferenceEngine(args), EvaluationRepository([sample]))
-            callbacks = {fn.fn.__name__: fn.fn for fn in demo.fns.values()}
+            callbacks = {fn.fn.__name__: fn.fn for fn in demo.fns.values() if fn.fn is not None}
             loaded = callbacks["load_paper_sample"]("linked")
             self.assertEqual(loaded[3:5], ("Yes", "No"))
             self.assertEqual(loaded[6], "")  # Ground Truth must not impersonate a baseline.
@@ -335,6 +336,43 @@ class UIConstructionTests(unittest.TestCase):
             changed = callbacks["change_paper_layout"]("ablation")
             self.assertEqual(changed[1], "B4DL without HA and Metatoken")
             self.assertEqual(changed[2:], ("",) * 5 + (None, None))
+
+    def test_collected_temporal_cases_keep_answers_and_reject_mixed_evidence(self):
+        from demo_gradio import OptionalInferenceEngine, create_demo
+        from model_effects import EvaluationSample
+        from tests.test_lidar_visualizer import FakeNuScenes, SyntheticRepository
+
+        args = argparse.Namespace(model_base=None, pretrain_mm_mlp_adapter=None,
+                                  stage2=None, stage3=None, feat_folder=None)
+        with tempfile.TemporaryDirectory() as directory:
+            repository = SyntheticRepository(dataroot=directory, nusc=FakeNuScenes())
+            sample = EvaluationSample("linked", "existence", 0, "Car?", "Yes", "No",
+                                      scene_token="scene-token")
+            demo = create_demo(repository, OptionalInferenceEngine(args), EvaluationRepository([sample]))
+            callbacks = {fn.fn.__name__: fn.fn for fn in demo.fns.values() if fn.fn is not None}
+            inputs = [[], "comparison", "linked", "scene-token", "0,1", "Car?", "Yes",
+                      "Baseline", "Yes", "", "Ours", "No", "", "QA", 0, None, None, "", ""]
+            first = callbacks["add_paper_case"](*inputs)
+            self.assertEqual(len(first[0]), 1)
+            inputs[0] = first[0]
+            inputs[5] = "Where is the car?"
+            inputs[8] = "At the back."
+            inputs[11] = "In front."
+            second = callbacks["add_paper_case"](*inputs)
+            self.assertEqual(len(second[0]), 2)
+            self.assertEqual(second[0][0]["case"].answers[1].answer, "No")
+            self.assertEqual(second[0][1]["case"].question, inputs[5])
+            inputs[0] = second[0]
+            inputs[15] = "different-target"
+            rejected = callbacks["add_paper_case"](*inputs)
+            self.assertEqual(len(rejected[0]), 2)
+            self.assertIn("相同场景", rejected[2])
+            removed = callbacks["remove_paper_case"](second[0])
+            self.assertEqual(len(removed[0]), 1)
+            mode = callbacks["update_figure_mode"]("reasoning")
+            self.assertFalse(mode[15]["visible"])
+            self.assertFalse(mode[12]["visible"])
+            self.assertEqual(mode[6:8], ([], []))
 
 
 if __name__ == "__main__":
