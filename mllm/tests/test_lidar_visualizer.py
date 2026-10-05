@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 
 MLLM_ROOT = Path(__file__).resolve().parents[1]
@@ -172,6 +173,63 @@ class GeometryTests(unittest.TestCase):
 
 
 class RepositoryTests(unittest.TestCase):
+    @staticmethod
+    def _repository_with_camera(directory):
+        nusc = FakeNuScenes()
+        nusc.records[("sample", "sample-0")]["data"]["CAM_FRONT"] = "camera-0"
+        nusc.records[("sample_data", "camera-0")] = {
+            "filename": "samples/CAM_FRONT/frame.jpg",
+        }
+        path = Path(directory) / "samples/CAM_FRONT/frame.jpg"
+        path.parent.mkdir(parents=True)
+        Image.new("RGB", (320, 180), (210, 90, 40)).save(path, "JPEG")
+        return SyntheticRepository(dataroot=directory, nusc=nusc), path
+
+    def test_camera_loads_real_jpg_and_returns_independent_pixels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository, path = self._repository_with_camera(directory)
+            frame = repository.get_frame("scene-token", 0)
+            self.assertEqual(frame.camera_paths["CAM_FRONT"], str(path))
+            image = repository.camera_image(frame, "CAM_FRONT")
+            self.assertEqual(image.mode, "RGB")
+            self.assertEqual(image.size, (320, 180))
+            with Image.open(path) as source:
+                expected = np.asarray(source.convert("RGB")).copy()
+            np.testing.assert_array_equal(np.asarray(image), expected)
+            image.putpixel((0, 0), (0, 0, 0))
+            np.testing.assert_array_equal(
+                np.asarray(repository.camera_image(frame, "CAM_FRONT")), expected
+            )
+
+    def test_corrupt_camera_jpg_degrades_to_reasoned_placeholder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository, path = self._repository_with_camera(directory)
+            path.write_bytes(b"not a jpeg")
+            frame = repository.get_frame("scene-token", 0)
+            image = repository.camera_image(frame, "CAM_FRONT")
+            self.assertEqual(image.size, (960, 540))
+            # The error reason produces visible text below the sample identifier.
+            self.assertGreater(np.any(np.asarray(image)[122:145, 48:700] != (250, 250, 248), axis=2).sum(), 20)
+
+    def test_camera_deleted_after_frame_cached_degrades_to_placeholder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository, path = self._repository_with_camera(directory)
+            frame = repository.get_frame("scene-token", 0)
+            path.unlink()
+            self.assertIs(repository.get_frame("scene-token", 0), frame)
+            image = repository.camera_image(frame, "CAM_FRONT")
+            self.assertEqual(image.size, (960, 540))
+            self.assertGreater(np.any(np.asarray(image)[122:145, 48:700] != (250, 250, 248), axis=2).sum(), 20)
+
+    def test_truncated_camera_jpg_degrades_during_pixel_decode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository, path = self._repository_with_camera(directory)
+            path.write_bytes(path.read_bytes()[:-30])
+            frame = repository.get_frame("scene-token", 0)
+            image = repository.camera_image(frame, "CAM_FRONT")
+            self.assertEqual(image.size, (960, 540))
+            self.assertGreater(np.any(np.asarray(image)[122:145, 48:700] != (250, 250, 248), axis=2).sum(), 20)
+
     def test_scene_token_works_without_metadata_and_conflicting_keys_fail(self):
         with tempfile.TemporaryDirectory() as directory:
             nusc = FakeNuScenes()

@@ -458,14 +458,24 @@ class NuScenesSceneRepository:
     @staticmethod
     def camera_image(frame: FrameData, camera: str) -> Image.Image:
         path = frame.camera_paths.get(camera)
+        read_failure = None
         if path:
-            with Image.open(path) as image:
-                return image.convert("RGB").copy()
+            try:
+                with Image.open(path) as image:
+                    return image.convert("RGB").copy()
+            except FileNotFoundError:
+                # Cached frame paths can disappear while files are moved/replaced.
+                read_failure = "IMAGE FILE MISSING"
+            except OSError as exc:
+                # PIL also reports corrupt/truncated image data as OSError.
+                read_failure = f"IMAGE READ FAILED ({type(exc).__name__})"
         image = Image.new("RGB", (960, 540), "#fafaf8")
         draw = ImageDraw.Draw(image)
         draw.rectangle((22, 22, 938, 518), outline="#d9d9d4", width=2)
         draw.text((48, 46), f"{camera} / IMAGE UNAVAILABLE", fill="#454545")
         draw.text((48, 84), frame.sample_token, fill="#646464")
+        if read_failure:
+            draw.text((48, 122), read_failure, fill="#646464")
         return image
 
 
