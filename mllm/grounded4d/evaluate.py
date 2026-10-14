@@ -76,8 +76,11 @@ def run(args):
     training_scenes, dev_scenes = load_scene_tokens(args.train_scene_tokens), load_scene_tokens(args.dev_scene_tokens)
     if training_scenes & dev_scenes:
         raise ValueError("training/development scene overlap")
+    train_probe = args.split == "train_probe"
+    split = "train" if train_probe else "internal_dev"
     dataset = Grounded4DDataset(args.manifest, args.nuscenes_root, args.label_root, config,
-                               dev_scenes, "internal_dev", "panoptic", args.panoptic_root, args.min_target_points)
+                               training_scenes if train_probe else dev_scenes, split,
+                               "panoptic", args.panoptic_root, args.min_target_points)
     validate_stage(dataset, "spatial")
     preflight = dataset.preflight()
     if preflight["dataset_version"] != metadata["data"]["train"]["dataset_version"]:
@@ -90,6 +93,8 @@ def run(args):
                     checkpoint_completed_epoch=checkpoint["completed_epoch"], checkpoint_global_step=checkpoint["global_step"],
                     checkpoint_initialization=metadata.get("initialization"), training_data=metadata["data"],
                     evaluation_data=preflight, class_names=list(config.class_names),
+                    evaluation_role="training_seen_diagnostic" if train_probe else "internal_development",
+                    evaluated_training_manifest=dataset.manifest_sha256 == metadata["data"]["train"]["manifest_sha256"],
                     protocol="single_frame_predicted_instance_sets_class_aware_iou_matching",
                     model_inputs=["points", "timestamp_us"], gt_used_only_for_scoring=True,
                     prediction=dict(score_threshold=args.score_threshold, mask_threshold=args.mask_threshold,
@@ -100,7 +105,8 @@ def run(args):
                                             precision_iou50="hits_over_all_predictions_with_evaluable_points",
                                             geometry_only="diagnostic_matching_without_category_requirement",
                                             ignored_points="ROI_and_official_ignore_classes_excluded_from_scoring"),
-                    scope="official_mini_val_internal_development_not_full_nuscenes_or_answer_grounding_acceptance",
+                    scope=("training_seen_diagnostic_not_generalization_or_final_acceptance" if train_probe else
+                           "official_mini_val_internal_development_not_full_nuscenes_or_answer_grounding_acceptance"),
                     evaluation_source_sha256={path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                                               for path in Path(__file__).parent.glob("*.py")})
     atomic_json(output / "evaluation_config.json", identity)
@@ -176,6 +182,8 @@ def run(args):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, type=Path)
+    parser.add_argument("--split", choices=["internal_dev", "train_probe"], default="internal_dev",
+                        help="Explicit training-set diagnosis; train labels are never relabeled as development data")
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--nuscenes-root", required=True, type=Path)
     parser.add_argument("--label-root", required=True, type=Path)

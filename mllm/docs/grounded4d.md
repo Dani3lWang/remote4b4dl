@@ -296,4 +296,8 @@ conda run -n wqlc python mllm/scripts/evaluate_grounded4d.py \
 
 mini 的 2 个官方 mini_val 场景是内部开发范围。本入口检验空间预测掩码，不证明跨帧跟踪、回答绑定或完整 nuScenes 的最终性能。
 
+下一步空间训练诊断先使用同一个 checkpoint、阈值和全部原始点，对完整 mini_train manifest 执行 `evaluate_grounded4d.py --split train_probe`。该模式读取 `split=train`，使用训练场景白名单，不把训练记录改名为 internal_dev；报告明确标记 `training_seen_diagnostic`，不能作为泛化成绩。
+
+若训练集预测也很差，再从 8 个 mini_train 场景各取一个固定时间位置的合格帧，建立 8 帧过拟合诊断。保留每帧全部实例、原始标签与 ignore 点规则，用新输出目录、兼容权重 `--init-from`、梯度累积 1 进行有界训练，并以 `train_probe` 对同一组帧评测训练前后效果。这项训练检查可学习性，不使用开发集挑选样本，不修改掩码/类别损失或预测阈值，不作为开发集提升结论。
+
 尚待后续实现并在云端验证：语言指代人工审核接口、多帧 manifest 生成、B3 短语隐状态缓存提取、在线 `<ref>/<SEG>` 生成、纯预测轨迹初始化/重识别、自由生成的端到端评测和 STRIDE 风格未来几何监督。
