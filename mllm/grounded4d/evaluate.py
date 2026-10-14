@@ -10,6 +10,7 @@ import torch
 
 from .config import Grounded4DConfig
 from .data import Grounded4DDataset, load_scene_tokens
+from .diagnostics import QueryDiagnosticTotals, query_diagnostics
 from .metrics import MetricTotals, frame_counts
 from .model import Grounded4DModel
 from .train import CHECKPOINT_SCHEMA, atomic_json, validate_stage
@@ -94,6 +95,8 @@ def run(args):
                     checkpoint_initialization=metadata.get("initialization"), training_data=metadata["data"],
                     evaluation_data=preflight, class_names=list(config.class_names),
                     evaluation_role="training_seen_diagnostic" if train_probe else "internal_development",
+                    checkpoint_training_config=metadata["training_config"],
+                    query_diagnostics_enabled=args.query_diagnostics,
                     evaluated_training_manifest=dataset.manifest_sha256 == metadata["data"]["train"]["manifest_sha256"],
                     protocol="single_frame_predicted_instance_sets_class_aware_iou_matching",
                     model_inputs=["points", "timestamp_us"], gt_used_only_for_scoring=True,
@@ -117,6 +120,7 @@ def run(args):
         grouped.setdefault(row["scene_token"], []).append(index)
     visual_indices = {indices[index] for indices in grouped.values() for index in (0, len(indices) // 2)}
     total, scenes = MetricTotals(config.class_names), {}
+    diagnostics = QueryDiagnosticTotals() if args.query_diagnostics else None
     discarded_no_evaluable_points = 0
     with (output / "predictions.jsonl").open("x", encoding="utf-8") as records:
         for index, row in enumerate(dataset.records):
@@ -162,6 +166,30 @@ def run(args):
                           predicted_point_counts=masks[:, evaluable].sum(1).tolist(),
                           evaluable_point_count=int(evaluable.sum()),
                           mask_artifact_sha256=hashlib.sha256(artifact.read_bytes()).hexdigest())
+            if diagnostics is not None:
+                all_masks = (model_output["mask_logits"].sigmoid() >= args.mask_threshold).cpu().numpy() & roi[None]
+                all_classes = probability.argmax(-1).cpu().numpy()
+                all_scores = probability.max(-1).values.cpu().numpy()
+                retained = np.zeros(len(all_classes), dtype=bool)
+                retained[query_indices] = True
+                memory_indices = model_output["valid_points"].nonzero(as_tuple=True)[0]
+                if len(memory_indices) > config.memory_points:
+                    memory_indices = memory_indices[torch.linspace(0, len(memory_indices) - 1, config.memory_points,
+                                                                   device=memory_indices.device).long()]
+                diagnostic = query_diagnostics(gt_masks, gt_classes, all_masks, all_classes, all_scores, retained,
+                                               len(config.class_names), frame["points"].numpy(), roi, evaluable,
+                                               config.memory_points, args.iou_threshold, memory_indices.cpu().numpy())
+                if diagnostic["stage_distinct_hits"]["retained_class_aware"] != counts["tp"]:
+                    raise AssertionError("query diagnostics changed standard hit accounting")
+                diagnostics.add(diagnostic)
+                query_artifact = output / "frames" / (key + ".queries.npz")
+                with query_artifact.open("xb") as handle:
+                    np.savez_compressed(handle, all_query_mask_bits=np.packbits(all_masks, axis=1),
+                                        point_count=len(evaluable), class_probabilities=probability.cpu().numpy(),
+                                        all_query_classes=all_classes, all_query_scores=all_scores, retained=retained)
+                record["query_diagnostic"] = diagnostic
+                record["query_artifact"] = str(query_artifact.relative_to(output))
+                record["query_artifact_sha256"] = hashlib.sha256(query_artifact.read_bytes()).hexdigest()
             records.write(json.dumps(record, allow_nan=False) + "\n")
             records.flush()
             if index in visual_indices:
@@ -175,6 +203,8 @@ def run(args):
                   expected_frames=len(dataset), evaluated_frames=total.frames,
                   evaluation_complete=total.frames == len(dataset), model_performance_accepted=False)
     atomic_json(output / "metrics.json", result)
+    if diagnostics is not None:
+        atomic_json(output / "query_diagnostics.json", dict(identity=identity, **diagnostics.result()))
     print(json.dumps(dict(event="evaluation_complete", output=str(output), metrics=result["metrics"])), flush=True)
     return result
 
@@ -195,6 +225,8 @@ def parse_args():
     parser.add_argument("--mask-threshold", type=float, default=0.5)
     parser.add_argument("--iou-threshold", type=float, default=0.5)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--query-diagnostics", action="store_true",
+                        help="Save all-query masks and disjoint missed-GT diagnostics; does not change predictions")
     return parser.parse_args()
 
 

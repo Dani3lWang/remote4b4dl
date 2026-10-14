@@ -50,20 +50,41 @@ def hungarian(cost):
     return result.tolist()
 
 
-def mask_losses(logits, labels, valid):
+LOSS_COMPONENTS = ("mask_class", "identity", "reference", "mask_bce", "mask_dice",
+                   "classification", "foreground_bce", "background_bce")
+
+
+def mask_losses(logits, labels, valid, bce_mode="mean", return_details=False):
+    if bce_mode not in ("mean", "foreground_balanced"):
+        raise ValueError("unknown mask BCE mode: " + bce_mode)
     usable = valid & (labels >= 0)
     if not usable.any():
         raise ValueError("mask has no supervised in-range points")
     prediction, target = logits[usable], labels[usable]
-    bce = F.binary_cross_entropy_with_logits(prediction, target)
+    terms = F.binary_cross_entropy_with_logits(prediction, target, reduction="none")
+    foreground, background = target == 1, target == 0
+    zero = prediction.sum() * 0
+    foreground_bce = terms[foreground].mean() if foreground.any() else zero
+    background_bce = terms[background].mean() if background.any() else zero
+    if bce_mode == "mean":
+        # Preserve the original reduction for the control recipe.
+        bce = F.binary_cross_entropy_with_logits(prediction, target)
+    else:
+        present = int(foreground.any()) + int(background.any())
+        bce = (foreground_bce + background_bce) / present
     probability = prediction.sigmoid()
     dice = 1 - (2 * (probability * target).sum() + 1) / (probability.sum() + target.sum() + 1)
+    if return_details:
+        return bce, dice, dict(foreground_bce=foreground_bce, background_bce=background_bce)
     return bce, dice
 
 
 class Grounded4DCriterion:
-    def __init__(self, config):
+    def __init__(self, config, bce_mode="mean"):
         self.config = config
+        if bce_mode not in ("mean", "foreground_balanced"):
+            raise ValueError("unknown mask BCE mode: " + bce_mode)
+        self.bce_mode = bce_mode
 
     @torch.no_grad()
     def assignment(self, output, frame):
@@ -101,24 +122,35 @@ class Grounded4DCriterion:
                                    dtype=torch.long, device=output["mask_logits"].device)
         zero = output["mask_logits"].sum() * 0
         bce, dice = zero, zero
+        details = dict(foreground_bce=zero, background_bce=zero)
         for target_index, query_index in assignment.items():
             class_targets[query_index] = frame["class_ids"][target_index]
-            item_bce, item_dice = mask_losses(output["mask_logits"][query_index],
-                                            frame["labels"][target_index], output["valid_points"])
+            item_bce, item_dice, item_details = mask_losses(output["mask_logits"][query_index],
+                                            frame["labels"][target_index], output["valid_points"],
+                                            self.bce_mode, return_details=True)
             bce, dice = bce + item_bce, dice + item_dice
+            for key in details:
+                details[key] = details[key] + item_details[key]
         weights = output["class_logits"].new_ones(len(self.config.class_names) + 1)
         weights[-1] = self.config.no_object_weight
         classification = F.cross_entropy(output["class_logits"], class_targets, weight=weights)
         denominator = max(1, len(assignment))
-        return classification + self.config.mask_bce_weight * bce / denominator + self.config.mask_dice_weight * dice / denominator
+        value = classification + self.config.mask_bce_weight * bce / denominator + self.config.mask_dice_weight * dice / denominator
+        components = dict(classification=classification, mask_bce=bce / denominator, mask_dice=dice / denominator,
+                          **{key: value / denominator for key, value in details.items()})
+        return value, components
 
     def __call__(self, output, frame):
         assignment = self.assignment(output, frame)
-        detection = self._mask_class_loss(output, frame, assignment)
+        detection, components = self._mask_class_loss(output, frame, assignment)
         for auxiliary in output["auxiliary"]:
-            detection = detection + self._mask_class_loss(
+            value, current = self._mask_class_loss(
                 dict(**auxiliary, valid_points=output["valid_points"]), frame, assignment)
+            detection = detection + value
+            for key in components:
+                components[key] = components[key] + current[key]
         detection /= len(output["auxiliary"]) + 1
+        components = {key: value / (len(output["auxiliary"]) + 1) for key, value in components.items()}
         identity = output["mask_logits"].sum() * 0
         for target_index, query_index in assignment.items():
             other = torch.zeros_like(output["valid_points"])
@@ -136,4 +168,4 @@ class Grounded4DCriterion:
                        for token in frame["reference_tokens"]]
             reference = F.cross_entropy(output["reference_logits"], torch.tensor(targets, device=reference.device))
         total = detection + self.config.identity_weight * identity + self.config.reference_weight * reference
-        return total, dict(mask_class=detection, identity=identity, reference=reference), assignment
+        return total, dict(mask_class=detection, identity=identity, reference=reference, **components), assignment

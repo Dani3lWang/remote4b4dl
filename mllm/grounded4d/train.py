@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from .config import Grounded4DConfig
-from .criterion import Grounded4DCriterion
+from .criterion import Grounded4DCriterion, LOSS_COMPONENTS
 from .data import Grounded4DDataset, load_scene_tokens
 from .model import Grounded4DModel
 
@@ -50,7 +50,7 @@ def to_device(frame, device):
 def clip_loss(model, criterion, clip, device, stage="joint"):
     """One differentiable ordered clip, with memory reset at every clip boundary."""
     tracks, totals = [], []
-    parts = {key: 0.0 for key in ("mask_class", "identity", "reference")}
+    parts = {key: 0.0 for key in LOSS_COMPONENTS}
     for source_frame in clip["frames"]:
         frame = to_device(source_frame, device)
         if stage in ("spatial", "temporal"):
@@ -95,6 +95,9 @@ def parse_args(argv=None):
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--resume", type=Path, help="An existing checkpoint produced by this trainer")
     parser.add_argument("--init-from", type=Path, help="Compatible model weights for a NEW stage/data run")
+    parser.add_argument("--mask-bce-mode", choices=["mean", "foreground_balanced"], default="mean")
+    parser.add_argument("--allow-memory-points-change", action="store_true",
+                        help="Explicitly permit this weight-compatible config change during init-from only")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--epochs", type=int, default=20)
@@ -126,6 +129,8 @@ def run(args):
     config.validate()
     if args.resume and args.init_from:
         raise ValueError("resume and init-from have different contracts and cannot be combined")
+    if args.allow_memory_points_change and not args.init_from:
+        raise ValueError("allow-memory-points-change requires init-from, never resume")
     whitelist = load_scene_tokens(args.train_scene_tokens)
     train = Grounded4DDataset(args.train_manifest, args.nuscenes_root, args.label_root, config,
                              whitelist, supervision=args.supervision, panoptic_root=args.panoptic_root,
@@ -165,16 +170,23 @@ def run(args):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
     model = Grounded4DModel(config).to(device)
-    criterion = Grounded4DCriterion(config)
+    criterion = Grounded4DCriterion(config, args.mask_bce_mode)
     initialization = None
     if args.init_from:
         checkpoint = torch.load(args.init_from, map_location="cpu", weights_only=True)
+        previous_config = Grounded4DConfig.from_dict(checkpoint["metadata"]["config"]).to_dict()
+        permitted_changes = {}
+        if args.allow_memory_points_change:
+            permitted_changes["memory_points"] = dict(before=previous_config["memory_points"], after=config.memory_points)
+            previous_config["memory_points"] = config.memory_points
         if (checkpoint["metadata"].get("schema_version") != CHECKPOINT_SCHEMA
-                or checkpoint["metadata"]["config"] != config.to_dict()):
+                or previous_config != config.to_dict()):
             raise ValueError("initialization checkpoint architecture/class mapping mismatch")
         model.load_state_dict(checkpoint["model"], strict=True)
         initialization = dict(sha256=hashlib.sha256(args.init_from.read_bytes()).hexdigest(),
                               completed_epoch=checkpoint["completed_epoch"])
+        if permitted_changes:
+            initialization["explicit_config_changes"] = permitted_changes
     if args.stage == "grounding":
         for parameter in model.parameters():
             parameter.requires_grad_(False)
@@ -186,7 +198,8 @@ def run(args):
                                  lr=args.learning_rate)
     training_config = dict(learning_rate=args.learning_rate, gradient_accumulation=args.gradient_accumulation,
                            gradient_clip=args.gradient_clip, seed=args.seed, supervision=args.supervision,
-                           stage=args.stage, freeze_encoder=args.freeze_encoder, min_target_points=args.min_target_points)
+                           stage=args.stage, freeze_encoder=args.freeze_encoder, min_target_points=args.min_target_points,
+                           mask_bce_mode=args.mask_bce_mode)
     metadata = dict(schema_version=CHECKPOINT_SCHEMA, config=config.to_dict(),
                     training_config=training_config, data=preflight,
                     debug_encoder=config.encoder == "point_mlp_debug",
@@ -198,9 +211,11 @@ def run(args):
     if args.resume:
         checkpoint = torch.load(args.resume, map_location="cpu", weights_only=True)
         previous = checkpoint["metadata"]
+        previous_training = dict(previous["training_config"])
+        previous_training.setdefault("mask_bce_mode", "mean")
         if (previous.get("schema_version") != CHECKPOINT_SCHEMA
                 or previous["config"] != metadata["config"]
-                or previous["training_config"] != training_config
+                or previous_training != training_config
                 or previous["data"] != preflight):
             raise ValueError("resume checkpoint architecture, supervision or data identity mismatch")
         model.load_state_dict(checkpoint["model"], strict=True)
@@ -235,7 +250,7 @@ def run(args):
         for start in range(0, len(order), args.gradient_accumulation):
             window = order[start:start + args.gradient_accumulation]
             optimizer.zero_grad(set_to_none=True)
-            accumulated = {key: 0.0 for key in ("mask_class", "identity", "reference")}
+            accumulated = {key: 0.0 for key in LOSS_COMPONENTS}
             for index in window:
                 loss, parts = clip_loss(model, criterion, train[index], device, args.stage)
                 (loss / len(window)).backward()

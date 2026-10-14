@@ -180,7 +180,8 @@ def prepare_frame(sample, lidar, annotations, instances, categories, calibration
                  point_file=dict(path=str(source_point.relative_to(point_root)), sha256=point_hash),
                  mask_file=dict(path=relative_mask, sha256=file_info(mask_path)["sha256"]),
                  lidar_to_anchor=np.eye(4).tolist(),
-                 source_panoptic_file=dict(path=str(source_mask), sha256=hashlib.sha256(mask_raw).hexdigest()),
+                 source_panoptic_file=dict(path=str(source_mask.relative_to(args.panoptic_root.resolve())),
+                                          sha256=hashlib.sha256(mask_raw).hexdigest()),
                  original_sample_data_filename=lidar["filename"],
                  instance_mapping_evidence=evidence)
     return frame
