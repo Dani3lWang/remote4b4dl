@@ -141,6 +141,10 @@ def run(args):
         if preflight["train"]["reference_encoder_ids"] and preflight["internal_dev"]["reference_encoder_ids"]:
             if preflight["train"]["reference_encoder_ids"] != preflight["internal_dev"]["reference_encoder_ids"]:
                 raise ValueError("train/dev reference encoder identity differs")
+    required_queries = max(report["max_detection_targets"] for report in preflight.values())
+    if required_queries > config.num_queries:
+        raise ValueError(f"num_queries={config.num_queries} cannot cover {required_queries} simultaneous detection targets; "
+                         "increase query capacity instead of discarding ground-truth instances")
     print(json.dumps(dict(event="data_preflight", **preflight), ensure_ascii=False), flush=True)
     if args.preflight_only:
         return preflight

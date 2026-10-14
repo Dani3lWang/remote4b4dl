@@ -186,15 +186,23 @@ class Grounded4DDataset(Dataset):
     def preflight(self):
         frame_count, instance_count, reference_count = 0, 0, 0
         encoder_ids = set()
+        max_instances, max_detection_targets = 0, 0
         versions = {row.get("dataset_version", "unspecified") for row in self.records}
         if len(versions) != 1:
             raise ValueError("dataset versions cannot be mixed in one manifest")
         for index, row in enumerate(self.records):
             clip = self[index]
             class_per_token = {}
+            last_seen = {}
             for frame, source in zip(clip["frames"], row["frames"]):
                 frame_count += 1
                 instance_count += len(frame["instance_tokens"])
+                max_instances = max(max_instances, len(frame["instance_tokens"]))
+                new_targets = sum(token not in last_seen or
+                                  (frame["timestamp_us"] - last_seen[token]) / 1e6 > self.config.track_lifetime_seconds
+                                  for token in frame["instance_tokens"])
+                max_detection_targets = max(max_detection_targets, new_targets)
+                last_seen.update({token: frame["timestamp_us"] for token in frame["instance_tokens"]})
                 reference_count += len(frame["reference_tokens"])
                 if source.get("references"):
                     encoder_ids.add(source["references"]["encoder_checkpoint_id"])
@@ -206,6 +214,7 @@ class Grounded4DDataset(Dataset):
             raise ValueError("reference embeddings from different encoder checkpoints cannot be mixed")
         return dict(clips=len(self), scenes=len(self.scenes), frames=frame_count,
                     dataset_version=next(iter(versions)),
+                    max_instances_per_frame=max_instances, max_detection_targets=max_detection_targets,
                     instances=instance_count, references=reference_count,
                     reference_encoder_ids=sorted(encoder_ids), manifest_sha256=self.manifest_sha256,
                     label_kind=LABEL_KINDS[self.supervision])

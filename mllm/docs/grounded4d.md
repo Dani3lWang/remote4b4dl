@@ -155,6 +155,8 @@ NPY 为 `(短语数量,reference_dim)` 的有限浮点嵌入，顺序与 targets
 
 `mllm/scripts/prepare_grounded4d.py` 默认 `--version v1.0-mini`，依据已安装 nuScenes SDK 的固定列表划分 8 个 mini_train 场景和 2 个 mini_val 场景，默认选取全部 mini LiDAR 关键帧。不会把两份场景随机混合，也不会自动启动全量数据训练。
 
+mini 使用独立配置 `grounded4d_mini_config.json` 的 128 个检测查询。当前真实 mini 训练帧最多有 109 个实例；预检报告会记录 `max_instances_per_frame` 和 `max_detection_targets`，在加载 CUDA 模型前拒绝查询容量不足的配置。增加容量保留全部 GT 实例，不截断稠密帧的监督。数据准备阶段的掩码与查询数量无关，已完成的相同 ROI/类别掩码可直接复用。
+
 ```bash
 conda run -n wqlc python mllm/scripts/prepare_grounded4d.py \
   --version v1.0-mini \
@@ -162,7 +164,7 @@ conda run -n wqlc python mllm/scripts/prepare_grounded4d.py \
   --panoptic-root /path/to/nuScenes-panoptic-v1.0-all \
   --point-root /path/to/common-point-root \
   --point-source-roots /path/to/original-nuScenes \
-  --config mllm/scripts/grounded4d_config.json \
+  --config mllm/scripts/grounded4d_mini_config.json \
   --output-dir datageneration/data/grounded4d-mini/run-001
 
 conda run -n wqlc python mllm/scripts/train_grounded4d.py \
@@ -173,7 +175,7 @@ conda run -n wqlc python mllm/scripts/train_grounded4d.py \
   --dev-scene-tokens datageneration/data/grounded4d-mini/run-001/dev_scene_tokens.json \
   --nuscenes-root /path/to/common-point-root \
   --label-root datageneration/data/grounded4d-mini/run-001 \
-  --config mllm/scripts/grounded4d_config.json \
+  --config mllm/scripts/grounded4d_mini_config.json \
   --output-dir mllm/checkpoints/grounded4d-mini-spatial
 ```
 
