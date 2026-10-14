@@ -85,6 +85,7 @@ def parse_args(argv=None):
     parser.add_argument("--nuscenes-root", required=True, type=Path)
     parser.add_argument("--label-root", required=True, type=Path)
     parser.add_argument("--train-scene-tokens", type=Path, default=OFFICIAL_TRAIN_WHITELIST)
+    parser.add_argument("--dev-scene-tokens", type=Path, help="Explicit disjoint whitelist, e.g. official mini_val")
     parser.add_argument("--supervision", choices=["panoptic", "box-pseudo"], default="panoptic")
     parser.add_argument("--stage", choices=["spatial", "temporal", "grounding", "joint"], default="spatial")
     parser.add_argument("--freeze-encoder", action="store_true")
@@ -130,8 +131,9 @@ def run(args):
     preflight = dict(train=train.preflight())
     development = None
     if args.validation_manifest:
+        dev_whitelist = load_scene_tokens(args.dev_scene_tokens) if args.dev_scene_tokens else whitelist
         development = Grounded4DDataset(args.validation_manifest, args.nuscenes_root, args.label_root,
-                                       config, whitelist, "internal_dev", args.supervision)
+                                       config, dev_whitelist, "internal_dev", args.supervision)
         validate_stage(development, args.stage)
         if train.scenes & development.scenes:
             raise ValueError("training and internal-dev scenes overlap")

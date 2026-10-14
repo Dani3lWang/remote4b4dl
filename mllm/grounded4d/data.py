@@ -186,6 +186,9 @@ class Grounded4DDataset(Dataset):
     def preflight(self):
         frame_count, instance_count, reference_count = 0, 0, 0
         encoder_ids = set()
+        versions = {row.get("dataset_version", "unspecified") for row in self.records}
+        if len(versions) != 1:
+            raise ValueError("dataset versions cannot be mixed in one manifest")
         for index, row in enumerate(self.records):
             clip = self[index]
             class_per_token = {}
@@ -202,6 +205,7 @@ class Grounded4DDataset(Dataset):
         if len(encoder_ids) > 1:
             raise ValueError("reference embeddings from different encoder checkpoints cannot be mixed")
         return dict(clips=len(self), scenes=len(self.scenes), frames=frame_count,
+                    dataset_version=next(iter(versions)),
                     instances=instance_count, references=reference_count,
                     reference_encoder_ids=sorted(encoder_ids), manifest_sha256=self.manifest_sha256,
                     label_kind=LABEL_KINDS[self.supervision])

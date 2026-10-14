@@ -1,8 +1,8 @@
 # 回答绑定的 4D 实例分割：独立训练路径
 
-本轮依据用户提供的 `E:/Download/seg-deepsearch.md` 实现训练代码。引用的 Codex 对话没有可用的 `read_thread` 工具，未将其正文当作已核实的设计约定。
+该训练路径依据九篇论文研究报告的机制，迁移到 B4DL/nuScenes。原始报告为 `E:/Download/seg-deepsearch.md`。
 
-**当前交付是可供云端验证的训练原型。按用户要求，本轮未执行测试、数据预检、模型前向、训练或 GPU 验证。** 新入口不导入 B3/Vicuna，不修改 B3 的数据、投影器、LoRA 和训练入口。
+这是独立训练原型，具体云端运行记录保存在 `training_logs/`。新入口不导入 B3/Vicuna，不修改 B3 的数据、投影器、LoRA 和训练入口。mini 训练用于先验证空间掩码路径，不能作为完整 nuScenes 的独立性能验收。
 
 ## 九篇论文分别对应什么
 
@@ -111,11 +111,11 @@ flowchart LR
 
 `class_ids` 顺序必须与 NPZ 的 `instance_tokens`/mask 行顺序一致。默认类别依次为 barrier、bicycle、bus、car、construction_vehicle、motorcycle、pedestrian、traffic_cone、trailer、truck。panoptic 原始语义编号须在数据准备时转换到该映射，不把 32 类原始编号当成 10 类训练下标。轮椅、婴儿车等候选扩展类不自动进入默认训练类别。
 
-`annotation_scope=all_configured_instances` 表示整帧全部配置类别实例都已包含。QA 构建器只列出回答类别候选，可能缺少其他对象；直接把这些候选用于集合预测会把未标注对象错误地监督为“无对象”，因此本入口明确拒绝这种输入。需要在数据准备阶段收集整帧实例，并去重、核对掩码和身份。**本轮未新增自动将候选审核结果升级为真实监督的数据生成器。**
+`annotation_scope=all_configured_instances` 表示模型 ROI 内全部配置类别实例都已包含。QA 构建器只列出回答类别候选，可能缺少其他对象；直接把这些候选用于集合预测会把未标注对象错误地监督为“无对象”，因此本入口明确拒绝这种输入。`prepare_grounded4d.py` 直接读取真实 panoptic 标签准备完整空间监督，不升级 QA 候选的语言验证状态。
 
 哈希和点索引验证文件一致性，不能独立证明来源官方、语言指代正确或 panoptic 与 annotation 身份对应正确；这些仍须由原始数据导入和监督审计建立。对 panoptic 使用真实实例标签，对框标签保留其几何近似身份。
 
-训练和 internal-dev 都只能来自 `--train-scene-tokens` 白名单，默认是仓库的 699 个官方训练场景。internal-dev manifest 使用 `split=internal_dev`，且场景必须与训练集无交集。官方 val 对应 B4DL test，不能因为命名为 val 而进入训练。
+默认训练和 internal-dev 都来自仓库的 699 个官方训练场景白名单。`--dev-scene-tokens` 可显式指定独立开发场景白名单，mini 模式用于官方 `mini_val`。internal-dev manifest 使用 `split=internal_dev`，且场景必须与训练集无交集。完整数据协议中官方 val 对应 B4DL test；mini 的开发损失属于小样本诊断，不是完整数据的最终 test 指标。
 
 ## 可选的短语监督
 
@@ -149,7 +149,39 @@ NPY 为 `(短语数量,reference_dim)` 的有限浮点嵌入，顺序与 targets
 
 ## 云端运行方式
 
-以下命令供服务器开放并准备好数据之后使用，本轮没有执行。先在服务器的 `wqlc` 中确认 PyTorch/NumPy 和与 CUDA 匹配的 spconv。当前仓库依赖表中的 NumPy 2.3.5 要求 Python ≥3.11，与 `CLAUDE.md` 的 Python 3.10 存在冲突；不要直接据此全量重装已有云端环境，先核对实际环境版本与可兼容依赖。
+先在服务器的 `wqlc` 中确认 PyTorch/NumPy 和与 CUDA 匹配的 spconv。当前仓库依赖表中的 NumPy 2.3.5 要求 Python ≥3.11，与 `CLAUDE.md` 的 Python 3.10 存在冲突；不要直接据此全量重装已有云端环境，先核对实际环境版本与可兼容依赖。
+
+### 先使用官方 mini
+
+`mllm/scripts/prepare_grounded4d.py` 默认 `--version v1.0-mini`，依据已安装 nuScenes SDK 的固定列表划分 8 个 mini_train 场景和 2 个 mini_val 场景，默认选取全部 mini LiDAR 关键帧。不会把两份场景随机混合，也不会自动启动全量数据训练。
+
+```bash
+conda run -n wqlc python mllm/scripts/prepare_grounded4d.py \
+  --version v1.0-mini \
+  --metadata-root /path/to/v1.0-mini \
+  --panoptic-root /path/to/nuScenes-panoptic-v1.0-all \
+  --point-root /path/to/common-point-root \
+  --point-source-roots /path/to/original-nuScenes \
+  --config mllm/scripts/grounded4d_config.json \
+  --output-dir datageneration/data/grounded4d-mini/run-001
+
+conda run -n wqlc python mllm/scripts/train_grounded4d.py \
+  --stage spatial --supervision panoptic --epochs 20 \
+  --train-manifest datageneration/data/grounded4d-mini/run-001/train.jsonl \
+  --validation-manifest datageneration/data/grounded4d-mini/run-001/internal_dev.jsonl \
+  --train-scene-tokens datageneration/data/grounded4d-mini/run-001/train_scene_tokens.json \
+  --dev-scene-tokens datageneration/data/grounded4d-mini/run-001/dev_scene_tokens.json \
+  --nuscenes-root /path/to/common-point-root \
+  --label-root datageneration/data/grounded4d-mini/run-001 \
+  --config mllm/scripts/grounded4d_config.json \
+  --output-dir mllm/checkpoints/grounded4d-mini-spatial
+```
+
+准备器保留原始点序，验证 panoptic 点数、32 类语义映射、传感器/自车标定和模型 ROI。每个 panoptic 实例在原始全局 3D 框中进行保守对应，默认至少 80% 掩码点落入最佳框，且最佳与次佳比例差至少 0.15。任何一个实例不能唯一对应时，整帧拒绝，不留下部分标签伪装为完整监督。阈值属于工程筛选条件，并非人工指代审核或论文性能结论。
+
+生成的 `preparation_summary.json` 保存源表哈希、类别数量、拒绝原因、场景划分与数据版本；`rejected.jsonl` 保留拒绝帧。这里只准备真实点掩码，`grounding_verified/track_verified` 仍为 false。mini 所有 404 个关键帧是输入审计范围，实际进入训练/开发集的帧数必须以准备结果为准。
+
+完整数据仍使用 `--version v1.0-trainval`，默认仅在官方 train 内选择 64 个训练、8 个内部开发场景，每场景 12 帧；需要用户明确扩大实验范围后再执行。
 
 从仓库根目录执行，并将路径替换成实际数据位置：
 
@@ -192,4 +224,4 @@ conda run -n wqlc python mllm/scripts/train_grounded4d.py \
 
 语言绑定评测不能仅按掩码 IoU 重新匹配对象；那会把“短语指错了对象”隐藏为正确分割。应先固定已审核的短语—实例/轨迹身份，再计算掩码和时序成功率。
 
-尚待后续实现并在云端验证：完整训练 manifest 生成与人工审核接口、B3 短语隐状态缓存提取、在线 `<ref>/<SEG>` 生成、纯预测轨迹初始化/重识别、自由生成的端到端评测和 STRIDE 风格未来几何监督。本轮未声称这些接口已完成。
+尚待后续实现并在云端验证：语言指代人工审核接口、多帧 manifest 生成、B3 短语隐状态缓存提取、在线 `<ref>/<SEG>` 生成、纯预测轨迹初始化/重识别、自由生成的端到端评测和 STRIDE 风格未来几何监督。
