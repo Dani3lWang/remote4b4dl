@@ -56,3 +56,13 @@ conda run -n wqlc python mllm/scripts/run_grounded4d_spatial_study.py \
 若所有 pilot 均未通过，依据全 query 的分层结果选择下一项单变量实验：掩码几何始终低时检查早期 masked attention 与 backbone；有高 IoU 掩码却被过滤时检查类别/无对象头；归一化问题另做固定条件对照。每次只有一个因素改变，不把 BatchNorm 只读 probe 当作训练成绩。
 
 空间阶段通过后才生成 mini 多帧 manifest，使用 sample_annotation.instance_token 审核跨帧身份、坐标、遮挡与不可见状态，再训练/评测纯预测关联；语言绑定需独立的回答—唯一实例审核。当前实现不承诺这些阶段已完成。
+
+## 第一层注意力对照（独立后续运行）
+
+三组已完成 pilot 中，mean 命中 4/255、平衡 BCE 命中 4/255、平衡 BCE + 8192 memory 命中 3/255；候选均未通过原扩展门槛。下一项仅改变第一层的硬注意力排除规则，继续使用 mean BCE、4096 memory、同一初始权重、8 帧、50 轮 / 400 步与固定阈值。
+
+`train_grounded4d.py --first-layer-attention full` 通过第一层的 forward pre-hook 将 attention bias 中的 -inf 改为 0，保留有限的位置 bias；后续层不变。默认 masked 不安装 hook，不修改原模型源码、参数名、权重形状或初始化。该 full 选项仅用于 spatial 阶段。checkpoint 记录 training_config.first_layer_attention、attention_behavior 及实现哈希；评测按该记录恢复模式并核对实现身份。旧 checkpoint 只有默认 masked 兼容路径，原 model/backbone 源码哈希检查继续保留。
+
+`run_grounded4d_attention_study.py` 先复评上轮 mean checkpoint，要求完整标准 metrics 与原报告完全一致，再从原初始权重训练 full 第一层。复用的 mean 对照不算本轮重新训练。门槛仍是 Recall 增加至少 5 个百分点、全部 GT 平均 mask IoU 增加至少 0.01、F1 不下降，即相对本轮基线至少命中 17/255、IoU≥0.02717166。通过后才从相同初始权重进行完整 mini 的 masked/full 配对训练，各 5 轮 / 405 步，并分别评测 323 帧 train 和 81 帧 internal_dev。未通过时不扩大训练，进一步只读检查编码器空间特征。
+
+注意力实现和边界检查分别位于 `attention.py` 与 `tests/test_attention.py`。检查默认行为、仅第一层变化、state_dict 兼容、重复配置及恢复、旧 checkpoint 和缺失/错误行为哈希。所有检查在云端执行。

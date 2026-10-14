@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from .config import Grounded4DConfig
+from .attention import checkpoint_attention_behavior, configure_first_attention
 from .data import Grounded4DDataset, load_scene_tokens
 from .diagnostics import QueryDiagnosticTotals, query_diagnostics
 from .metrics import MetricTotals, frame_counts
@@ -68,6 +69,7 @@ def run(args):
     if metadata.get("schema_version") != CHECKPOINT_SCHEMA or metadata["training_config"]["stage"] != "spatial":
         raise ValueError("this evaluator accepts spatial checkpoints only; it is not free tracking or QA evaluation")
     config = Grounded4DConfig.from_dict(metadata["config"])
+    behavior = checkpoint_attention_behavior(metadata)
     if config.encoder != "spconv":
         raise ValueError("debug encoders cannot be evaluated as production spatial models")
     for name in ("model.py", "backbone.py"):
@@ -96,6 +98,7 @@ def run(args):
                     evaluation_data=preflight, class_names=list(config.class_names),
                     evaluation_role="training_seen_diagnostic" if train_probe else "internal_development",
                     checkpoint_training_config=metadata["training_config"],
+                    attention_behavior=behavior,
                     query_diagnostics_enabled=args.query_diagnostics,
                     evaluated_training_manifest=dataset.manifest_sha256 == metadata["data"]["train"]["manifest_sha256"],
                     protocol="single_frame_predicted_instance_sets_class_aware_iou_matching",
@@ -113,7 +116,7 @@ def run(args):
                     evaluation_source_sha256={path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                                               for path in Path(__file__).parent.glob("*.py")})
     atomic_json(output / "evaluation_config.json", identity)
-    model = Grounded4DModel(config).cuda().eval()
+    model = configure_first_attention(Grounded4DModel(config).cuda(), behavior["first_layer_attention"]).eval()
     model.load_state_dict(checkpoint["model"], strict=True)
     grouped = {}
     for index, row in enumerate(dataset.records):

@@ -88,7 +88,7 @@ class SpatialStudy:
         return dict(metrics=result["metrics"], identity=result["identity"], evaluation_dir=str(output),
                     query_diagnostics=read(output / "query_diagnostics.json"))
 
-    def train(self, name, bce_mode, memory_points, subset):
+    def train(self, name, bce_mode, memory_points, subset, first_layer_attention="masked"):
         a = self.args
         source = a.subset_root if subset else a.label_root
         config = dict(self.base_config, memory_points=memory_points)
@@ -101,7 +101,7 @@ class SpatialStudy:
                    "--config", config_path, "--output-dir", output, "--init-from", a.init_from,
                    "--epochs", str(epochs), "--gradient-accumulation", str(accumulation),
                    "--learning-rate", "0.0001", "--seed", "2026", "--log-every", "8",
-                   "--mask-bce-mode", bce_mode]
+                   "--mask-bce-mode", bce_mode, "--first-layer-attention", first_layer_attention]
         if memory_points != self.base_config["memory_points"]:
             command.append("--allow-memory-points-change")
         self.command(name + "-preflight", [*command, "--preflight-only"])

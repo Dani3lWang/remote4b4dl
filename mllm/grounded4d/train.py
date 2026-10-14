@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from .config import Grounded4DConfig
+from .attention import attention_behavior, checkpoint_attention_behavior, configure_first_attention
 from .criterion import Grounded4DCriterion, LOSS_COMPONENTS
 from .data import Grounded4DDataset, load_scene_tokens
 from .model import Grounded4DModel
@@ -96,6 +97,8 @@ def parse_args(argv=None):
     parser.add_argument("--resume", type=Path, help="An existing checkpoint produced by this trainer")
     parser.add_argument("--init-from", type=Path, help="Compatible model weights for a NEW stage/data run")
     parser.add_argument("--mask-bce-mode", choices=["mean", "foreground_balanced"], default="mean")
+    parser.add_argument("--first-layer-attention", choices=["masked", "full"], default="masked",
+                        help="Spatial-only control: remove hard attention exclusions in the first decoder layer")
     parser.add_argument("--allow-memory-points-change", action="store_true",
                         help="Explicitly permit this weight-compatible config change during init-from only")
     parser.add_argument("--preflight-only", action="store_true")
@@ -131,6 +134,8 @@ def run(args):
         raise ValueError("resume and init-from have different contracts and cannot be combined")
     if args.allow_memory_points_change and not args.init_from:
         raise ValueError("allow-memory-points-change requires init-from, never resume")
+    if args.first_layer_attention != "masked" and args.stage != "spatial":
+        raise ValueError("full first-layer attention is validated for spatial single-frame studies only")
     whitelist = load_scene_tokens(args.train_scene_tokens)
     train = Grounded4DDataset(args.train_manifest, args.nuscenes_root, args.label_root, config,
                              whitelist, supervision=args.supervision, panoptic_root=args.panoptic_root,
@@ -169,7 +174,7 @@ def run(args):
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
-    model = Grounded4DModel(config).to(device)
+    model = configure_first_attention(Grounded4DModel(config).to(device), args.first_layer_attention)
     criterion = Grounded4DCriterion(config, args.mask_bce_mode)
     initialization = None
     if args.init_from:
@@ -199,11 +204,11 @@ def run(args):
     training_config = dict(learning_rate=args.learning_rate, gradient_accumulation=args.gradient_accumulation,
                            gradient_clip=args.gradient_clip, seed=args.seed, supervision=args.supervision,
                            stage=args.stage, freeze_encoder=args.freeze_encoder, min_target_points=args.min_target_points,
-                           mask_bce_mode=args.mask_bce_mode)
+                           mask_bce_mode=args.mask_bce_mode, first_layer_attention=args.first_layer_attention)
     metadata = dict(schema_version=CHECKPOINT_SCHEMA, config=config.to_dict(),
                     training_config=training_config, data=preflight,
                     debug_encoder=config.encoder == "point_mlp_debug",
-                    initialization=initialization,
+                    initialization=initialization, attention_behavior=attention_behavior(args.first_layer_attention),
                     protocol="supervised_masks_gt_track_assignment_optional_cached_phrase_alignment",
                     source_sha256={path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                                    for path in Path(__file__).parent.glob("*.py")})
@@ -213,6 +218,8 @@ def run(args):
         previous = checkpoint["metadata"]
         previous_training = dict(previous["training_config"])
         previous_training.setdefault("mask_bce_mode", "mean")
+        previous_training.setdefault("first_layer_attention", "masked")
+        checkpoint_attention_behavior(previous)
         if (previous.get("schema_version") != CHECKPOINT_SCHEMA
                 or previous["config"] != metadata["config"]
                 or previous_training != training_config
