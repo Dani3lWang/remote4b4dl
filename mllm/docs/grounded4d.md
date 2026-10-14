@@ -271,4 +271,29 @@ conda run -n wqlc python mllm/scripts/train_grounded4d.py \
 
 语言绑定评测不能仅按掩码 IoU 重新匹配对象；那会把“短语指错了对象”隐藏为正确分割。应先固定已审核的短语—实例/轨迹身份，再计算掩码和时序成功率。
 
+### mini 空间实例效果评测
+
+`mllm/scripts/evaluate_grounded4d.py` 对完整单帧 internal_dev manifest 运行预测。模型前向只接收原始点云与时间戳，查询记忆为空，不输入 GT 类别、掩码、instance_token 或回答特征。GT 只用于之后的评分及官方 ignore 点排除。
+
+```bash
+conda run -n wqlc python mllm/scripts/evaluate_grounded4d.py \
+  --checkpoint /path/to/spatial/last.pt \
+  --manifest /path/to/admitted-labels/internal_dev.jsonl \
+  --train-scene-tokens /path/to/admitted-labels/train_scene_tokens.json \
+  --dev-scene-tokens /path/to/admitted-labels/dev_scene_tokens.json \
+  --nuscenes-root /path/to/common-point-root \
+  --panoptic-root /path/to/nuScenes-panoptic-v1.0-all \
+  --label-root /path/to/admitted-labels \
+  --score-threshold 0.25 --mask-threshold 0.5 --iou-threshold 0.5 \
+  --output-dir mllm/eval_results/grounded4d-mini-spatial-run-001
+```
+
+类别 argmax 包含无对象类，预测类别概率至少 0.25、mask 概率至少 0.5；这些阈值在训练前后对比时固定，不依据开发集结果重新挑选。保留原始预测掩码集合，未使用 NMS 或 GT 匹配改变预测。预测掩码可重叠，因此这里报告实例集合指标，不称为官方 nuScenes panoptic PQ 或 AP。
+
+`mean_gt_mask_iou` 为类别一致、最大总 IoU 一对一匹配后的全部 GT 平均值，未匹配 GT 记 0。Recall/Precision/F1@0.5 使用类别一致且 IoU ≥0.5 的最大数量一对一匹配；未命中的 GT 和额外预测分别计入 FN/FP。另列忽略类别要求的 geometry-only 诊断，不混入主要指标。不存在 GT 的类别其 Recall 和 mask IoU 为 null，不把缺少类别当作零分性能；该类的多余预测仍计入 FP。
+
+输出 `metrics.json`、`evaluation_config.json`、完整逐帧 `predictions.jsonl`、打包二值掩码 NPZ 和每场景两张 BEV/3D GT/Prediction 图。图仅用于查看，可采样至约 16,000 点；所有指标仍使用全部原始 ROI 内非 ignore 点。图中同类实例颜色相同，实例级结果由独立 mask 和 TP/FP/FN 计数保留，不能只看类别颜色判断实例分割成功。
+
+mini 的 2 个官方 mini_val 场景是内部开发范围。本入口检验空间预测掩码，不证明跨帧跟踪、回答绑定或完整 nuScenes 的最终性能。
+
 尚待后续实现并在云端验证：语言指代人工审核接口、多帧 manifest 生成、B3 短语隐状态缓存提取、在线 `<ref>/<SEG>` 生成、纯预测轨迹初始化/重识别、自由生成的端到端评测和 STRIDE 风格未来几何监督。
