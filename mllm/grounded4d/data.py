@@ -4,10 +4,13 @@ import io
 import json
 from pathlib import Path
 import re
+from collections import Counter
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+
+from .taxonomy import audit_frame, decode_panoptic, policy_info, validate_category_table
 
 
 SCHEMA = "b4dl-grounded4d-v1"
@@ -38,8 +41,11 @@ def load_scene_tokens(path):
 
 class Grounded4DDataset(Dataset):
     def __init__(self, manifest, nuscenes_root, label_root, config,
-                 scene_whitelist, split="train", supervision="panoptic"):
+                 scene_whitelist, split="train", supervision="panoptic",
+                 panoptic_root=None, min_target_points=1, normalize_ignored_points=False):
         config.validate()
+        if type(min_target_points) is not int or min_target_points < 1:
+            raise ValueError("min-target-points must be a positive integer")
         if split not in ("train", "internal_dev"):
             raise ValueError("training accepts only train/internal_dev from official train scenes")
         if supervision not in LABEL_KINDS:
@@ -48,6 +54,12 @@ class Grounded4DDataset(Dataset):
         self.manifest_sha256 = hashlib.sha256(self.manifest.read_bytes()).hexdigest()
         self.nuscenes_root, self.label_root = Path(nuscenes_root), Path(label_root)
         self.config, self.supervision = config, supervision
+        self.panoptic_root = Path(panoptic_root).resolve() if panoptic_root else None
+        self.min_target_points = min_target_points
+        self.normalize_ignored_points = normalize_ignored_points
+        self.source_category_sha256 = None
+        if supervision == "panoptic" and self.panoptic_root is None:
+            raise ValueError("panoptic training requires --panoptic-root for original class admission checks")
         self.records = []
         seen = set()
         for line_number, line in enumerate(self.manifest.read_text(encoding="utf-8-sig").splitlines(), 1):
@@ -84,6 +96,16 @@ class Grounded4DDataset(Dataset):
             self.records.append(row)
         if not self.records:
             raise ValueError("empty training manifest; zero candidates cannot start training")
+        if supervision == "panoptic":
+            versions = {row.get("dataset_version") for row in self.records}
+            if len(versions) != 1 or not versions.issubset({"v1.0-mini", "v1.0-trainval"}):
+                raise ValueError("panoptic admission requires one explicit nuScenes dataset version")
+            category_path = (self.panoptic_root / next(iter(versions)) / "category.json").resolve()
+            if not category_path.is_relative_to(self.panoptic_root):
+                raise ValueError("panoptic category path escapes declared source root")
+            category_raw = category_path.read_bytes()
+            validate_category_table(json.loads(category_raw))
+            self.source_category_sha256 = hashlib.sha256(category_raw).hexdigest()
 
     @property
     def scenes(self):
@@ -130,6 +152,7 @@ class Grounded4DDataset(Dataset):
         if (labels.ndim != 2 or labels.shape != (len(tokens), len(points))
                 or labels.dtype.kind not in "ib" or not np.isin(labels, [-1, 0, 1]).all()):
             raise ValueError("labels must be integer [instances, original_points] with values -1/0/1")
+        labels = labels.astype(np.int8, copy=False)
         if (len(set(tokens)) != len(tokens) or any(not isinstance(t, str) or not t for t in tokens)):
             raise ValueError("instance_tokens must identify unique instances, not panoptic numeric IDs")
         if classes.shape != (len(tokens),) or (len(tokens) and classes.dtype.kind not in "iu"):
@@ -142,6 +165,17 @@ class Grounded4DDataset(Dataset):
         valid = ((points[:, :3] >= bounds[:3]) & (points[:, :3] < bounds[3:])).all(1)
         if not valid.any() or (len(tokens) and not ((labels[:, valid] == 1).any(1)).all()):
             raise ValueError("no in-range points for frame or supervised instance")
+        class_admission = None
+        if self.supervision == "panoptic":
+            source = frame.get("source_panoptic_file")
+            if not isinstance(source, dict):
+                raise ValueError("original panoptic source is required to verify training classes")
+            encoded = decode_panoptic(read_hashed_file(self.panoptic_root, source), len(points))
+            class_admission = audit_frame(frame, labels, classes, tokens, valid, encoded,
+                                          self.config.class_names, self.min_target_points,
+                                          self.normalize_ignored_points)
+        elif not tokens or ((labels[:, valid] == 1).sum(1) < self.min_target_points).any():
+            raise ValueError("box-pseudo frame has no target or insufficient in-range foreground")
         references = frame.get("references")
         reference_features, reference_tokens = None, []
         if references is not None:
@@ -176,6 +210,7 @@ class Grounded4DDataset(Dataset):
                     class_ids=torch.as_tensor(classes, dtype=torch.long),
                     instance_tokens=tokens, timestamp_us=frame["timestamp_us"],
                     sample_data_token=frame["sample_data_token"],
+                    class_admission=class_admission,
                     reference_features=reference_features, reference_tokens=reference_tokens)
 
     def __getitem__(self, index):
@@ -187,6 +222,8 @@ class Grounded4DDataset(Dataset):
         frame_count, instance_count, reference_count = 0, 0, 0
         encoder_ids = set()
         max_instances, max_detection_targets = 0, 0
+        class_counts, point_counts = Counter(), Counter()
+        in_range_points, ignored_in_range_points = 0, 0
         versions = {row.get("dataset_version", "unspecified") for row in self.records}
         if len(versions) != 1:
             raise ValueError("dataset versions cannot be mixed in one manifest")
@@ -196,6 +233,12 @@ class Grounded4DDataset(Dataset):
             last_seen = {}
             for frame, source in zip(clip["frames"], row["frames"]):
                 frame_count += 1
+                admission = frame["class_admission"]
+                if admission:
+                    class_counts.update(admission["instance_class_counts"])
+                    point_counts.update(admission["target_point_counts"])
+                    in_range_points += admission["in_range_points"]
+                    ignored_in_range_points += admission["ignored_in_range_points"]
                 instance_count += len(frame["instance_tokens"])
                 max_instances = max(max_instances, len(frame["instance_tokens"]))
                 new_targets = sum(token not in last_seen or
@@ -212,9 +255,17 @@ class Grounded4DDataset(Dataset):
                     class_per_token[token] = class_id
         if len(encoder_ids) > 1:
             raise ValueError("reference embeddings from different encoder checkpoints cannot be mixed")
-        return dict(clips=len(self), scenes=len(self.scenes), frames=frame_count,
+        report = dict(clips=len(self), scenes=len(self.scenes), frames=frame_count,
                     dataset_version=next(iter(versions)),
                     max_instances_per_frame=max_instances, max_detection_targets=max_detection_targets,
                     instances=instance_count, references=reference_count,
                     reference_encoder_ids=sorted(encoder_ids), manifest_sha256=self.manifest_sha256,
                     label_kind=LABEL_KINDS[self.supervision])
+        if self.supervision == "panoptic":
+            report["class_admission"] = dict(**policy_info(self.config.class_names, self.min_target_points),
+                                             source_category_sha256=self.source_category_sha256,
+                                             instance_class_counts=dict(class_counts),
+                                             target_point_counts=dict(point_counts),
+                                             in_range_points=in_range_points,
+                                             ignored_in_range_points=ignored_in_range_points)
+        return report

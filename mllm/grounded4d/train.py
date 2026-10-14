@@ -84,6 +84,8 @@ def parse_args(argv=None):
     parser.add_argument("--validation-manifest", type=Path)
     parser.add_argument("--nuscenes-root", required=True, type=Path)
     parser.add_argument("--label-root", required=True, type=Path)
+    parser.add_argument("--panoptic-root", type=Path, help="Original panoptic root, required for class admission in panoptic mode")
+    parser.add_argument("--min-target-points", type=int, default=1)
     parser.add_argument("--train-scene-tokens", type=Path, default=OFFICIAL_TRAIN_WHITELIST)
     parser.add_argument("--dev-scene-tokens", type=Path, help="Explicit disjoint whitelist, e.g. official mini_val")
     parser.add_argument("--supervision", choices=["panoptic", "box-pseudo"], default="panoptic")
@@ -126,18 +128,22 @@ def run(args):
         raise ValueError("resume and init-from have different contracts and cannot be combined")
     whitelist = load_scene_tokens(args.train_scene_tokens)
     train = Grounded4DDataset(args.train_manifest, args.nuscenes_root, args.label_root, config,
-                             whitelist, supervision=args.supervision)
+                             whitelist, supervision=args.supervision, panoptic_root=args.panoptic_root,
+                             min_target_points=args.min_target_points)
     validate_stage(train, args.stage)
     preflight = dict(train=train.preflight())
     development = None
     if args.validation_manifest:
         dev_whitelist = load_scene_tokens(args.dev_scene_tokens) if args.dev_scene_tokens else whitelist
         development = Grounded4DDataset(args.validation_manifest, args.nuscenes_root, args.label_root,
-                                       config, dev_whitelist, "internal_dev", args.supervision)
+                                       config, dev_whitelist, "internal_dev", args.supervision,
+                                       panoptic_root=args.panoptic_root, min_target_points=args.min_target_points)
         validate_stage(development, args.stage)
         if train.scenes & development.scenes:
             raise ValueError("training and internal-dev scenes overlap")
         preflight["internal_dev"] = development.preflight()
+        if preflight["train"]["dataset_version"] != preflight["internal_dev"]["dataset_version"]:
+            raise ValueError("train/dev nuScenes dataset versions differ")
         if preflight["train"]["reference_encoder_ids"] and preflight["internal_dev"]["reference_encoder_ids"]:
             if preflight["train"]["reference_encoder_ids"] != preflight["internal_dev"]["reference_encoder_ids"]:
                 raise ValueError("train/dev reference encoder identity differs")
@@ -180,7 +186,7 @@ def run(args):
                                  lr=args.learning_rate)
     training_config = dict(learning_rate=args.learning_rate, gradient_accumulation=args.gradient_accumulation,
                            gradient_clip=args.gradient_clip, seed=args.seed, supervision=args.supervision,
-                           stage=args.stage, freeze_encoder=args.freeze_encoder)
+                           stage=args.stage, freeze_encoder=args.freeze_encoder, min_target_points=args.min_target_points)
     metadata = dict(schema_version=CHECKPOINT_SCHEMA, config=config.to_dict(),
                     training_config=training_config, data=preflight,
                     debug_encoder=config.encoder == "point_mlp_debug",

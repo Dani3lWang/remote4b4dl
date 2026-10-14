@@ -2,11 +2,7 @@
 from dataclasses import asdict, dataclass
 import math
 
-
-THING_CLASSES = (
-    "barrier", "bicycle", "bus", "car", "construction_vehicle",
-    "motorcycle", "pedestrian", "traffic_cone", "trailer", "truck",
-)
+from .taxonomy import THING_CLASSES
 
 
 @dataclass
@@ -41,6 +37,8 @@ class Grounded4DConfig:
             raise ValueError("encoder must be spconv or point_mlp_debug")
         if not self.class_names or len(set(self.class_names)) != len(self.class_names):
             raise ValueError("class_names must be nonempty and unique")
+        if any(name not in THING_CLASSES for name in self.class_names):
+            raise ValueError("instance training accepts only the ten official nuScenes thing classes")
         bounds = self.point_cloud_range
         if len(bounds) != 6 or not all(math.isfinite(v) for v in bounds):
             raise ValueError("point_cloud_range must contain six finite values")

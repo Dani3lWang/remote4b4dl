@@ -7,7 +7,6 @@ targets can never silently become background set-prediction supervision.
 import argparse
 from collections import Counter, defaultdict
 import hashlib
-import io
 import json
 from pathlib import Path
 import random
@@ -16,18 +15,9 @@ import numpy as np
 
 from .config import Grounded4DConfig, THING_CLASSES
 from .data import SCHEMA, load_scene_tokens
+from .taxonomy import IGNORE_IDS, LEAF_TO_CLASS, decode_panoptic, policy_info, validate_category_table
 
 
-LEAF_TO_CLASS = {
-    "movable_object.barrier": "barrier", "vehicle.bicycle": "bicycle",
-    "vehicle.bus.bendy": "bus", "vehicle.bus.rigid": "bus", "vehicle.car": "car",
-    "vehicle.construction": "construction_vehicle", "vehicle.motorcycle": "motorcycle",
-    "human.pedestrian.adult": "pedestrian", "human.pedestrian.child": "pedestrian",
-    "human.pedestrian.construction_worker": "pedestrian",
-    "human.pedestrian.police_officer": "pedestrian",
-    "movable_object.trafficcone": "traffic_cone", "vehicle.trailer": "trailer",
-    "vehicle.truck": "truck",
-}
 REQUIRED_TABLES = ("scene", "sample", "sample_data", "sample_annotation", "instance",
                    "category", "calibrated_sensor", "sensor", "ego_pose")
 
@@ -119,11 +109,7 @@ def prepare_frame(sample, lidar, annotations, instances, categories, calibration
         raise ValueError("invalid_original_lidar_ring")
     source_mask = safe_path(args.panoptic_root, panoptic["filename"])
     mask_raw = source_mask.read_bytes()
-    with np.load(io.BytesIO(mask_raw), allow_pickle=False) as archive:
-        encoded = archive["data"]
-        if encoded.ndim != 1 or encoded.dtype.kind not in "ui" or len(encoded) != len(points):
-            raise ValueError("panoptic_point_count_or_layout_mismatch")
-        encoded = encoded.astype(np.int64)
+    encoded = decode_panoptic(mask_raw, len(points))
     semantic_ids = encoded // 1000
     if not set(np.unique(semantic_ids)).issubset(semantic_names):
         raise ValueError("unknown_panoptic_semantic_index")
@@ -148,8 +134,11 @@ def prepare_frame(sample, lidar, annotations, instances, categories, calibration
         if class_name not in config.class_names:
             continue
         mask = encoded == panoptic_id
-        if not (mask & valid).any():
+        point_count = int((mask & valid).sum())
+        if point_count == 0:
             continue
+        if point_count < args.min_target_points:
+            raise ValueError("instance_has_insufficient_in_range_foreground_points")
         if int(panoptic_id) % 1000 == 0:
             raise ValueError("configured_thing_has_no_panoptic_instance")
         scores = [(box_fraction(global_xyz[mask], annotation), annotation)
@@ -172,7 +161,10 @@ def prepare_frame(sample, lidar, annotations, instances, categories, calibration
                              sample_annotation_token=annotation["token"],
                              inside_annotation_box_fraction=best, runner_up_fraction=second,
                              point_count=int(mask.sum())))
-    label_array = np.stack(labels) if labels else np.zeros((0, len(points)), dtype=np.int8)
+    if not labels:
+        raise ValueError("no_configured_instance_in_frame_roi")
+    label_array = np.stack(labels)
+    label_array[:, np.isin(semantic_ids, IGNORE_IDS)] = -1
     point_hash = hashlib.sha256(raw).hexdigest()
     relative_mask = "masks/" + lidar["token"] + ".npz"
     mask_path = safe_path(output, relative_mask)
@@ -202,6 +194,8 @@ def run(args):
         raise ValueError("scene and frame budgets must be positive")
     if not 0 < args.min_box_overlap <= 1 or not 0 < args.min_match_margin <= 1:
         raise ValueError("annotation correspondence thresholds must lie in (0,1]")
+    if args.min_target_points < 1:
+        raise ValueError("min-target-points must be positive")
     output = args.output_dir.resolve()
     immutable_roots = [args.metadata_root, args.panoptic_root]
     immutable_roots.extend(root / sub for root in args.point_source_roots for sub in ("samples", "sweeps"))
@@ -279,9 +273,7 @@ def run(args):
     poses = read("ego_pose", lambda row: row["token"] in pose_tokens)
     category_path = args.panoptic_root / args.version / "category.json"
     panoptic_path = args.panoptic_root / args.version / "panoptic.json"
-    semantic_names = {row["index"]: row["name"] for row in table_rows(category_path)}
-    if set(semantic_names) != set(range(32)):
-        raise ValueError("panoptic source must provide the original 32-class index mapping")
+    semantic_names = validate_category_table(table_rows(category_path))
     panoptic = {row["sample_data_token"]: row for row in table_rows(panoptic_path)}
     source_info["panoptic_category"], source_info["panoptic_table"] = file_info(category_path), file_info(panoptic_path)
     source_info["train_scene_whitelist"] = file_info(output / "train_scene_tokens.json")
@@ -330,6 +322,7 @@ def run(args):
                    point_source_roots=[str(path.resolve()) for path in args.point_source_roots],
                    config=config.to_dict(), seed=args.seed, frames_per_scene=args.frames_per_scene,
                    min_box_overlap=args.min_box_overlap, min_match_margin=args.min_match_margin,
+                   class_admission=policy_info(config.class_names, args.min_target_points),
                    original_point_order_preserved=True, instance_identity="conservative_panoptic_to_annotation_geometry_match",
                    qa_grounding_verified=False, temporal_identity_verified=False,
                    model_performance_accepted=False)
@@ -360,6 +353,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--min-box-overlap", type=float, default=0.8)
     parser.add_argument("--min-match-margin", type=float, default=0.15)
+    parser.add_argument("--min-target-points", type=int, default=1,
+                        help="Reject the whole frame if any configured ROI instance has fewer foreground points")
     return parser.parse_args()
 
 

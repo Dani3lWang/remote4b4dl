@@ -69,6 +69,7 @@ flowchart LR
 ```json
 {
   "schema_version": "b4dl-grounded4d-v1",
+  "dataset_version": "v1.0-trainval",
   "clip_id": "scene-and-window-stable-id",
   "scene_token": "official-training-scene-token",
   "split": "train",
@@ -90,6 +91,13 @@ flowchart LR
       },
       "class_ids": [3],
       "mask_verified": true,
+      "source_panoptic_file": {
+        "path": "panoptic/v1.0-trainval/original_panoptic.npz",
+        "sha256": "actual-64-lowercase-hex-sha256"
+      },
+      "instance_mapping_evidence": [
+        {"panoptic_id": 17001, "instance_token": "actual-instance-token-in-mask-row"}
+      ],
       "lidar_to_anchor": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
     }
   ]
@@ -110,6 +118,41 @@ flowchart LR
 | `mask_verified` | panoptic 模式必须为 true；框弱监督无需提升该标记 |
 
 `class_ids` 顺序必须与 NPZ 的 `instance_tokens`/mask 行顺序一致。默认类别依次为 barrier、bicycle、bus、car、construction_vehicle、motorcycle、pedestrian、traffic_cone、trailer、truck。panoptic 原始语义编号须在数据准备时转换到该映射，不把 32 类原始编号当成 10 类训练下标。轮椅、婴儿车等候选扩展类不自动进入默认训练类别。
+
+panoptic 训练必须提供 `--panoptic-root`。`source_panoptic_file` 指向该根目录内的原始标签，并携带真实哈希；`instance_mapping_evidence` 按 mask 行顺序保留真实 panoptic 数字 ID 和 `instance_token`。上例 `17001` 仅解释原始 car 语义编号 17 与实例数字编号 1 的组合，使用时必须替换为实际来源 ID。
+
+### 按 nuScenes 类别筛选与训练准入
+
+`taxonomy.py` 固定使用 nuScenes SDK 的原始 32 类到官方 16 类评测映射。本轮用户选择其中 10 个 Thing 类进行实例训练；6 个 Stuff 类 driveable_surface、other_flat、sidewalk、terrain、manmade、vegetation 保留为非目标背景。noise、animal、轮椅、婴儿车、personal_mobility、debris、pushable_pullable、bicycle_rack、应急车辆、static.other、ego 等官方 ignore 类不产生目标，其点在每个实例标签中标为 `-1`，不参与掩码损失。
+
+输入只有满足以下条件才可训练：
+
+1. 原始 category 表的 32 个编号与官方名称完整一致，模型类别属于上述 10 类。
+2. 每帧至少一个配置类别实例，每个实例在模型 ROI 内至少有 `--min-target-points` 个前景点，默认 1。保留可见小对象，不设置额外的经验点数阈值。
+3. 每个模型类别编号与原始 panoptic 的语义类别一致，实例数字 ID、`instance_token`、mask 行顺序一致。
+4. 正例逐点等于对应原始 panoptic 实例，官方 ignore 点为 `-1`，背景为 0；ROI 内所有配置类别实例完整保留。
+5. 点数、原始点序、哈希、坐标变换、场景划分及查询容量均通过检查。带语言引用或多帧身份的输入继续执行原有审核条件。
+
+数据准备器直接应用上述规则；训练入口在加载 CUDA 模型前重新检查全部样本，绕过筛选脚本也无法跳过准入检查。一个实例不合格时，筛选器拒绝整个 clip 并写入原因，防止删掉个别 GT 后将其错误监督为无对象。schema 错误、场景泄漏和源类别表错误会直接中止筛选任务。
+
+现有旧格式掩码先使用 `mllm/scripts/filter_grounded4d.py` 派生新数据。它保留原始点云、全部合格实例和引用身份，只在新掩码中规范官方 ignore 点；不会提升 QA 或时序验证标记。
+
+```bash
+conda run -n wqlc python mllm/scripts/filter_grounded4d.py \
+  --stage spatial \
+  --train-manifest /path/to/old-labels/train.jsonl \
+  --validation-manifest /path/to/old-labels/internal_dev.jsonl \
+  --train-scene-tokens /path/to/old-labels/train_scene_tokens.json \
+  --dev-scene-tokens /path/to/old-labels/dev_scene_tokens.json \
+  --nuscenes-root /path/to/common-point-root \
+  --panoptic-root /path/to/nuScenes-panoptic-v1.0-all \
+  --label-root /path/to/old-labels \
+  --config mllm/scripts/grounded4d_mini_config.json \
+  --min-target-points 1 \
+  --output-dir datageneration/data/grounded4d-mini/admitted-run-001
+```
+
+输出目录包含筛选后的 train/internal_dev manifest、新掩码、场景白名单、`rejected.jsonl` 和 `filtering_summary.json`。报告记录筛选前后数量、拒绝原因、每类实例及 ROI 点数、源类别表和 manifest 哈希。后续训练必须使用新 manifest 与新 `--label-root`，同时传入原始 `--panoptic-root`。输入监督发生改变时使用新输出目录；可用 `--init-from` 加载兼容空间权重，不使用旧运行的 `--resume` 混用新数据。
 
 `annotation_scope=all_configured_instances` 表示模型 ROI 内全部配置类别实例都已包含。QA 构建器只列出回答类别候选，可能缺少其他对象；直接把这些候选用于集合预测会把未标注对象错误地监督为“无对象”，因此本入口明确拒绝这种输入。`prepare_grounded4d.py` 直接读取真实 panoptic 标签准备完整空间监督，不升级 QA 候选的语言验证状态。
 
@@ -175,6 +218,7 @@ conda run -n wqlc python mllm/scripts/train_grounded4d.py \
   --dev-scene-tokens datageneration/data/grounded4d-mini/run-001/dev_scene_tokens.json \
   --nuscenes-root /path/to/common-point-root \
   --label-root datageneration/data/grounded4d-mini/run-001 \
+  --panoptic-root /path/to/nuScenes-panoptic-v1.0-all \
   --config mllm/scripts/grounded4d_mini_config.json \
   --output-dir mllm/checkpoints/grounded4d-mini-spatial
 ```
@@ -194,6 +238,7 @@ conda run -n wqlc python mllm/scripts/train_grounded4d.py \
   --train-manifest /path/to/single_frame_train.jsonl \
   --validation-manifest /path/to/single_frame_internal_dev.jsonl \
   --nuscenes-root /path/to/nuScenes --label-root /path/to/grounded4d-labels \
+  --panoptic-root /path/to/nuScenes-panoptic-v1.0-all \
   --config mllm/scripts/grounded4d_config.json \
   --output-dir mllm/checkpoints/grounded4d-spatial --preflight-only
 
