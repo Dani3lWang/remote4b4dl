@@ -1,0 +1,19 @@
+{
+  "feature_dim": 128,
+  "num_queries": 100,
+  "decoder_layers": 3,
+  "attention_heads": 8,
+  "memory_points": 4096,
+  "encoder": "spconv",
+  "reference_dim": 4096,
+  "voxel_size": 0.1,
+  "point_cloud_range": [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
+  "track_lifetime_seconds": 2.5,
+  "position_sigma": 3.0,
+  "no_object_weight": 0.1,
+  "mask_bce_weight": 5.0,
+  "mask_dice_weight": 5.0,
+  "identity_weight": 1.0,
+  "reference_weight": 1.0,
+  "match_points": 8192
+}

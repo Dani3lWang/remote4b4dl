@@ -1,0 +1,195 @@
+# 回答绑定的 4D 实例分割：独立训练路径
+
+本轮依据用户提供的 `E:/Download/seg-deepsearch.md` 实现训练代码。引用的 Codex 对话没有可用的 `read_thread` 工具，未将其正文当作已核实的设计约定。
+
+**当前交付是可供云端验证的训练原型。按用户要求，本轮未执行测试、数据预检、模型前向、训练或 GPU 验证。** 新入口不导入 B3/Vicuna，不修改 B3 的数据、投影器、LoRA 和训练入口。
+
+## 九篇论文分别对应什么
+
+| 论文 | 对当前任务的执行方法 | 本轮实现范围 |
+| --- | --- | --- |
+| MaskPLS | 先学习整帧实例集合：query → 点级掩码/类别；用集合匹配监督 | 独立稀疏 U-Net、位置特征、掩码注意力、匈牙利匹配、BCE/Dice/类别损失 |
+| Mask4D | 让已匹配实例的查询跨帧继续解码，加入时间、位置、运动和错误实例负约束 | 时间有序 clip、持续查询、按秒设置生命周期、预测位置先验、固定身份匹配及其他实例前景抑制 |
+| Grounded 3D-LLM | 将回答短语与具体对象查询对齐；先独立训练对齐头 | 可选短语嵌入到查询的对齐头，明确的无目标候选，已审核短语—实例对应 |
+| PixelLM | 先建设回答 span → 实例的监督，随后增加多对象输出 | 支持每帧多条短语对齐；未复制二维分割码本/像素解码器 |
+| MORE3D | 每个回答对象使用独立对象表示；掩码和类别分别预测 | 独立 mask/class head；尚未接入 B3 的 `<SEG>` 生成或文本 CE |
+| Box2Mask | 缺少点标签时使用有明确身份的框弱监督，保留重叠忽略 | 显式 `box-pseudo` 模式及 `-1` 忽略；未实现原论文 box voting/NMC，不能称为 Box2Mask 复现 |
+| LiDAR Grounding | 建立语言选对象基线，分别检查候选覆盖率和选中正确率 | 查询选择对齐头；未实现 MSSG 的 BEV 单次框回归 |
+| VideoGLaMM | 保留语言到时序掩码的接口；先用已审核的跨帧身份训练 | 查询记忆及短语接口；未接入二维视频编码器/SAM，也未完成自由生成视频式回答 |
+| STRIDE-QA | 用轨迹和自车几何生成有证据的时序 QA，最后再研究未来预测 | 要求时间戳及统一坐标；距离/方位 QA 生成、未来预测和 TLC 指标留作后续任务 |
+
+这些机制是迁移到 B4DL/nuScenes 的原型，不是九篇模型的逐项复现。默认 3 层 decoder、固定宽度高斯位置先验、简化稀疏 U-Net 和负实例损失属于本实现的工程选择；不对应论文公布的完整配置或性能。
+
+## 当前数据进度与先后顺序
+
+已核对的本地产物中，官方训练 QA 为 79,576 条，其中 71,477 条有帧关联，57,834 条有支持类别提及；真实候选和已验证掩码均为 0。原因是本地原始 nuScenes 根目录缺失。框伪掩码工具的真实本地输入也为空。对应证据在 `datageneration/data/stage3-seg-candidates/audit_report_20261012.md` 和框伪掩码的 `current-local-empty-audit/summary.json`。
+
+服务器开放后的顺序为：
+
+1. 核对原始 LiDAR、标注表、panoptic 标签、点顺序、官方训练场景和 GPU。
+2. 制作完整实例监督的单帧 manifest；先用 panoptic 真标签完成 `spatial`。
+3. 审核 `instance_token` 与逐帧掩码的对应、统一坐标，制作多帧 manifest，以 `--init-from` 进入 `temporal`。
+4. 人工审核约 300–500 条 QA 的具体指代，保留同类多实例、运动、遮挡、无目标及模糊指代；准备来自同一 B3 checkpoint 的短语嵌入，以 `grounding` 单独训练对齐头。
+5. 上述模块分别验收后进入 `joint`；之后另行接入 B3 生成的 `<ref>/<SEG>` 隐状态与语言 LoRA。
+
+第 4 步的数量是本项目建议的小规模审核预算，不是九篇论文证明的必要样本量。正式主对照稳定后再补多随机种子和按场景计算的不确定性；当前阶段不要求同时复现九篇 benchmark。
+
+## 模块与阶段
+
+`mllm/grounded4d/` 是独立包，`mllm/scripts/train_grounded4d.py` 是入口。
+
+```mermaid
+flowchart LR
+    A[原始 LiDAR 与经过审核的点标签] --> B[统一到 anchor LiDAR 坐标]
+    B --> C[稀疏点特征与原始点序映射]
+    C --> D[检测查询与持续跟踪查询]
+    D --> E[逐点掩码与类别]
+    D --> F[下一帧查询记忆]
+    G[经过审核的回答短语嵌入] --> H[短语到对象查询对齐]
+    D --> H
+```
+
+| 阶段 | 数据要求 | 更新的参数 |
+| --- | --- | --- |
+| `spatial`，默认 | 每个 clip 恰好一帧，完整实例标签 | 点编码器与掩码/类别模块；不使用短语损失 |
+| `temporal` | 至少存在一个多帧 clip，跨帧身份已核实 | 掩码模块、查询更新及时间表示；可选 `--freeze-encoder` |
+| `grounding` | 每个训练 clip 至少一条已审核短语对应 | 仅短语投影和无目标表示；几何模型及 BatchNorm 状态冻结 |
+| `joint` | 每个训练 clip 至少一条已审核短语对应 | 几何、时序和短语对齐；可选冻结点编码器 |
+
+每次从 clip 第一帧重置记忆，完整 clip 的损失平均后反向传播。跨帧查询保留计算图；clip 之间不会泄漏身份。梯度累积最后不足一个窗口时按实际 clip 数归一化。
+
+**当前跟踪训练使用 GT `instance_token` 建立固定 query 对应。** 位置与速度先验来自预测掩码，不从 GT 框中心读取。验证入口的身份对应仍是 teacher forcing，只输出诊断损失；还未实现凭预测置信度初始化新轨迹、自由推理重识别和真正的最终轨迹评测。
+
+点编码器保留全部原始点输出，超出配置范围的点在损失中忽略。cross-attention 均匀选取最多 `memory_points` 个有效点作为 memory，最终 logits 仍覆盖所有原始点。固定 Fourier 位置特征与点特征融合，跟踪查询额外接收秒单位的时间差。
+
+## 输入 manifest
+
+新入口读取 **JSONL clip manifest**，不直接读取 `candidates.jsonl` 或 `pseudo_masks.jsonl`。每行结构如下；SHA-256、token 和路径必须换成实际审计值。
+
+```json
+{
+  "schema_version": "b4dl-grounded4d-v1",
+  "clip_id": "scene-and-window-stable-id",
+  "scene_token": "official-training-scene-token",
+  "split": "train",
+  "label_kind": "panoptic_gt",
+  "annotation_scope": "all_configured_instances",
+  "coordinate_frame": "anchor_lidar",
+  "track_verified": true,
+  "frames": [
+    {
+      "sample_data_token": "lidar-top-keyframe-token",
+      "timestamp_us": 1000000,
+      "point_file": {
+        "path": "samples/LIDAR_TOP/original.pcd.bin",
+        "sha256": "actual-64-lowercase-hex-sha256"
+      },
+      "mask_file": {
+        "path": "masks/frame.npz",
+        "sha256": "actual-64-lowercase-hex-sha256"
+      },
+      "class_ids": [3],
+      "mask_verified": true,
+      "lidar_to_anchor": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+    }
+  ]
+}
+```
+
+原始点文件相对 `--nuscenes-root`，掩码和短语文件相对 `--label-root`。拒绝越出各自根目录的绝对路径/符号链接。点文件按原始 little-endian float32 × 5 的 XYZ、intensity、ring 读取；ring 应为整数 0–31。点坐标经显式刚体矩阵变换，不删点或重排。
+
+一个 mask NPZ 需要：
+
+| 字段 | 含义 |
+| --- | --- |
+| `labels` | int8，`(K,N)`；1 为目标点，0 为非目标，-1 为忽略 |
+| `instance_tokens` | 长度 K 的字符串数组；来自 annotation 的跨帧身份，不是逐帧 panoptic 数字 ID |
+| `point_indices` | 严格为 `0..N-1` |
+| `point_file_sha256` | 对应原始点文件的 SHA-256 字符串标量 |
+| `label_kind` | `panoptic_gt` 或 `box_geometry_pseudo_mask` 字符串标量 |
+| `mask_verified` | panoptic 模式必须为 true；框弱监督无需提升该标记 |
+
+`class_ids` 顺序必须与 NPZ 的 `instance_tokens`/mask 行顺序一致。默认类别依次为 barrier、bicycle、bus、car、construction_vehicle、motorcycle、pedestrian、traffic_cone、trailer、truck。panoptic 原始语义编号须在数据准备时转换到该映射，不把 32 类原始编号当成 10 类训练下标。轮椅、婴儿车等候选扩展类不自动进入默认训练类别。
+
+`annotation_scope=all_configured_instances` 表示整帧全部配置类别实例都已包含。QA 构建器只列出回答类别候选，可能缺少其他对象；直接把这些候选用于集合预测会把未标注对象错误地监督为“无对象”，因此本入口明确拒绝这种输入。需要在数据准备阶段收集整帧实例，并去重、核对掩码和身份。**本轮未新增自动将候选审核结果升级为真实监督的数据生成器。**
+
+哈希和点索引验证文件一致性，不能独立证明来源官方、语言指代正确或 panoptic 与 annotation 身份对应正确；这些仍须由原始数据导入和监督审计建立。对 panoptic 使用真实实例标签，对框标签保留其几何近似身份。
+
+训练和 internal-dev 都只能来自 `--train-scene-tokens` 白名单，默认是仓库的 699 个官方训练场景。internal-dev manifest 使用 `split=internal_dev`，且场景必须与训练集无交集。官方 val 对应 B4DL test，不能因为命名为 val 而进入训练。
+
+## 可选的短语监督
+
+在单帧记录中增加 `references`，与原始 QA 一起保留对应证据：
+
+```json
+{
+  "references": {
+    "grounding_verified": true,
+    "answer_source": "ground_truth",
+    "question": "Which car blocks the road?",
+    "answer": "The car ahead blocks the road.",
+    "encoder_checkpoint_id": "immutable-B3-checkpoint-fingerprint",
+    "feature_file": {
+      "path": "phrase_features/frame.npy",
+      "sha256": "actual-64-lowercase-hex-sha256"
+    },
+    "targets": [
+      {"phrase": "The car ahead", "status": "matched", "instance_token": "same-token-as-mask-row"},
+      {"phrase": "a nonexistent target", "status": "no_target", "instance_token": null}
+    ]
+  }
+}
+```
+
+NPY 为 `(短语数量,reference_dim)` 的有限浮点嵌入，顺序与 targets 对齐。使用同一个冻结 B3 checkpoint，在包含视觉上下文的问题/回答中提取短语 hidden states，再按短语 span 聚合；不能把类别词向量冒充包含指代关系的回答表示。此缓存提取器及 B3 在线隐状态接入尚未实现。
+
+训练数据记录 `answer_source=ground_truth` 属于监督学习；生成回答缓存必须明确记为 `prediction`。当前 trainer 只训练缓存表示到实例查询的对齐，并不训练 B3 自由生成，也不证明端到端 QA→mask 的效果。
+
+`matched` 必须对应该帧可见实例；`no_target` 必须确认为无目标。模糊指代、暂时不可见和未审核引用不能当作无目标；这类帧暂不提供该条短语损失。多帧轨迹的不可见状态仍可通过查询生命周期保留，不能强行生成空 GT 对象掩码。
+
+## 云端运行方式
+
+以下命令供服务器开放并准备好数据之后使用，本轮没有执行。先在服务器的 `wqlc` 中确认 PyTorch/NumPy 和与 CUDA 匹配的 spconv。当前仓库依赖表中的 NumPy 2.3.5 要求 Python ≥3.11，与 `CLAUDE.md` 的 Python 3.10 存在冲突；不要直接据此全量重装已有云端环境，先核对实际环境版本与可兼容依赖。
+
+从仓库根目录执行，并将路径替换成实际数据位置：
+
+```bash
+# 1. 数据预检：只审核 manifest 与所有引用文件，不加载 CUDA 模型
+conda run -n wqlc python mllm/scripts/train_grounded4d.py \
+  --stage spatial --supervision panoptic \
+  --train-manifest /path/to/single_frame_train.jsonl \
+  --validation-manifest /path/to/single_frame_internal_dev.jsonl \
+  --nuscenes-root /path/to/nuScenes --label-root /path/to/grounded4d-labels \
+  --config mllm/scripts/grounded4d_config.json \
+  --output-dir mllm/checkpoints/grounded4d-spatial --preflight-only
+
+# 2. 单帧掩码训练：使用上面的参数，移除 --preflight-only
+# 3. 新阶段：使用多帧 manifest，--stage temporal，并增加：
+#    --init-from mllm/checkpoints/grounded4d-spatial/last.pt
+# 4. 短语对齐：使用带 references 的 manifest，--stage grounding，并增加：
+#    --init-from mllm/checkpoints/grounded4d-temporal/last.pt
+# 5. 同一阶段续训：使用相同 config、数据、训练参数、输出目录，增加：
+#    --resume mllm/checkpoints/grounded4d-spatial/last.pt --epochs 40
+```
+
+`--init-from` 只恢复兼容的模型权重，用于新阶段、新数据和新的输出目录。`--resume` 同时恢复模型、优化器、完成 epoch、步数及 Python/NumPy/Torch RNG，要求配置、监督模式、阶段、数据身份和优化参数一致。两者不可同时使用。当前恢复粒度是完整 epoch；中断后从上一个完整 epoch 重跑，不声称已经支持任意 step 精确恢复。
+
+框弱监督必须显式改为 `--supervision box-pseudo`，并提供相应 label_kind 的完整实例 manifest。`-1` 在匹配、BCE、Dice 和负实例抑制中忽略；不会修改原审计产物的 `mask_verified/grounding_verified/supervision_ready`。框内几何正例仍可能含背景，这个模式不能用作真实 panoptic 性能的最终验收。
+
+`point_mlp_debug` 仅用于后续 CPU 接线排查，运行元数据会明确标记 `debug_encoder=true`；正式实验使用默认 `spconv`。所有网络目前采用 FP32，没有加入 B3/LM 混合精度或大模型分布式训练。
+
+## 产物、验收及尚未完成的接口
+
+输出目录包含 `run_config.json`、`training.jsonl`、`last.pt` 和 `progress.json`。配置、代码哈希、manifest 哈希、标签类型、阶段和短语编码器身份均记录到 checkpoint；权重与进度文件先写 `.part` 再原子替换。输出属于运行产物，应位于已忽略的 checkpoint 目录。
+
+验证损失使用 `teacher_forced_gt_track_assignment` 协议，并明确保持 `model_performance_accepted=false`。训练结束不是最终效果验收。云端验证时至少分别检查：
+
+- 空间：实例 mask IoU、Recall@0.5、假阳性/假阴性、远距离与小对象。
+- 时序：身份切换、轨迹碎片、遮挡重现，并在匹配任务下使用合适的关联指标。
+- 语言：真实候选中的短语选中准确率、无目标准确率、同类多实例与几何关系。
+- 端到端：B3 实际生成回答→实例轨迹→各帧点掩码；GT 回答/GT 框/GT 轨迹只能单列为 Oracle 诊断。
+- 回归：在相同 checkpoint、数据和输入口径下核对 B3 QA。原有 `answer_frames` 使用答案选择输入的结果需单列，不能当作无 Oracle 的部署成绩。
+
+语言绑定评测不能仅按掩码 IoU 重新匹配对象；那会把“短语指错了对象”隐藏为正确分割。应先固定已审核的短语—实例/轨迹身份，再计算掩码和时序成功率。
+
+尚待后续实现并在云端验证：完整训练 manifest 生成与人工审核接口、B3 短语隐状态缓存提取、在线 `<ref>/<SEG>` 生成、纯预测轨迹初始化/重识别、自由生成的端到端评测和 STRIDE 风格未来几何监督。本轮未声称这些接口已完成。
