@@ -1,0 +1,22 @@
+{
+  "num_queries": 100,
+  "voxel_size": 0.05,
+  "point_cloud_range": [
+    -51.2,
+    -51.2,
+    -5,
+    51.2,
+    51.2,
+    3
+  ],
+  "intensity_mode": "raw",
+  "knn_backend": "keops",
+  "knn_chunk_size": 512,
+  "checkpoint_decoder": false,
+  "loss_points": 16384,
+  "points_per_instance": 500,
+  "match_points": 8192,
+  "score_threshold": 0.25,
+  "mask_threshold": 0.5,
+  "overlap_threshold": 0.8
+}

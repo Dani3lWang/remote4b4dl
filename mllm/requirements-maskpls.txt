@@ -1,0 +1,7 @@
+# Isolated Linux wqlc environment only. Do not install into the accepted B3 environment.
+# Install a CUDA-compatible PyTorch >=2.1 first.
+# Build MinkowskiEngine 0.5.4 against that exact PyTorch + CUDA toolkit separately.
+# Its native extension build and RTX 4090 compatibility must be verified by the smoke command.
+numpy>=1.24,<2
+nuscenes-devkit>=1.1.11,<2
+pykeops>=2.1,<3
