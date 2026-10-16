@@ -253,6 +253,71 @@ def independent_pairs(iou, gc, pc):
     return {int(i) for i,j in zip(r,c) if j<m and eligible[i,j]}
 
 
+def continue_screen(args):
+    """One additional prespecified arm; reuse audited A/frozen references without retraining them."""
+    if args.reference_dir is None:
+        raise ValueError('continuation requires an audited reference directory')
+    parent_plan=json.loads((args.reference_dir/'plan.json').read_text())
+    previous=json.loads((args.reference_dir/'comparison.json').read_text())
+    previous_audit=json.loads((args.reference_dir/'audit.json').read_text())
+    if not previous_audit['complete'] or args.steps!=parent_plan['steps'] or args.lr!=parent_plan['lr'] or args.seed!=parent_plan['seed']:
+        raise ValueError('continuation must retain the audited budget and random stream')
+    if hashed(args.checkpoint)!=parent_plan['source_weights_sha256'] or hashed(args.checkpoint)!=args.source_weights_sha256:
+        raise ValueError('continuation parent weights differ')
+    parent=torch.load(args.checkpoint,map_location='cpu',weights_only=True)
+    config=MaskPLSConfig.from_dict(dict(parent['metadata']['config'],mask_bce_reduction=args.policy))
+    parent=load_warm_start(args.checkpoint,config,args.source_implementation_sha256)
+    train,tr=make_dataset(args,config);dev,dr=make_dataset(args,config,development=True)
+    check_warm_start_data(parent['metadata'],dict(data=tr,internal_dev_data=dr))
+    if train.manifest_sha256!=parent_plan['train_manifest_sha256'] or dev.manifest_sha256!=parent_plan['dev_manifest_sha256'] or train.scenes&dev.scenes:
+        raise ValueError('continuation data identity changed')
+    fit=parent_plan['fit_indices'];sequence=parent_plan['optimization_sequence']
+    assert [train.records[i]['frames'][0]['sample_data_token'] for i in fit]==parent_plan['fit_frame_tokens']
+    args.output_dir.mkdir(parents=True,exist_ok=False)
+    plan=dict(parent_plan,implementation_sha256=implementation_digest(),script_sha256=hashed(__file__),
+              new_arm='C',new_policy=args.policy,
+              reference_dir=str(args.reference_dir),reference_comparison_sha256=hashed(args.reference_dir/'comparison.json'),
+              reference_audit_sha256=hashed(args.reference_dir/'audit.json'),
+              reason='full 50/50 balancing broadened masks; cap positive reweighting without removing negative supervision')
+    write_json(args.output_dir/'plan.json',plan)
+    arm_dir=args.output_dir/'C';arm_dir.mkdir()
+    torch.set_float32_matmul_precision('highest')
+    model=load_model(parent,config,args.seed)
+    optimizer=torch.optim.AdamW(model.parameters(),lr=args.lr,weight_decay=.01)
+    criterion=MaskPLSCriterion(config);model.train()
+    for step,index in enumerate(sequence,1):
+        torch.manual_seed(args.seed+step);torch.cuda.manual_seed_all(args.seed+step)
+        frame=to_device(train[index]['frames'][0],torch.device('cuda:0'))
+        optimizer.zero_grad(set_to_none=True)
+        loss,parts,_=criterion(model(frame['points']),frame)
+        if not torch.isfinite(loss):raise FloatingPointError('nonfinite continuation loss')
+        loss.backward();norm=torch.nn.utils.clip_grad_norm_(model.parameters(),1.,error_if_nonfinite=True);optimizer.step()
+        log(arm_dir/'steps.jsonl',dict(step=step,dataset_index=index,loss=float(loss.detach()),gradient_norm=float(norm),
+                                    **{k:float(v.detach()) for k,v in parts.items()}))
+        write_json(args.output_dir/'progress.json',dict(stage='train_C',completed_updates=step,expected_updates=args.steps))
+        if step in (args.steps//2,args.steps):
+            torch.save(dict(schema_version='b4dl-maskpls-loss-probe-v1',config=config.to_dict(),model=model.state_dict(),
+                optimizer=optimizer.state_dict(),completed_updates=step,source_weights_sha256=args.source_weights_sha256,
+                fit_frame_tokens=plan['fit_frame_tokens'],implementation_sha256=implementation_digest(),model_performance_accepted=False),
+                arm_dir/('step-%04d.pt'%step))
+    fit_metrics,_=evaluate(model,train,fit,arm_dir/'fit_eval','fit_eval_C',args.output_dir/'progress.json')
+    dev_metrics,_=evaluate(model,dev,parent_plan['dev_indices'],arm_dir/'dev_eval','dev_eval_C',args.output_dir/'progress.json')
+    a=previous['arms']['A']['dev'];frozen=previous['frozen_dev'];b=dev_metrics
+    gates=dict(small_geometry=b['point_buckets']['1-10']['raw_geometry_tp']>=max(a['point_buckets']['1-10']['raw_geometry_tp'],frozen['point_buckets']['1-10']['raw_geometry_tp'])+5,
+               final_tp=b['tp']>=max(a['tp'],frozen['tp']),precision=b['precision']>=frozen['precision']-.05,
+               ignored_fraction=b['ignored_fraction']<=max(a['ignored_fraction'],frozen['ignored_fraction'])+.02,
+               ego_points=b['ego_points']<=max(a['ego_points'],frozen['ego_points'])*1.1+100)
+    current=dict(previous,new_arm='C',previous_gates=previous['gates'],gates=gates,screen_passed=all(gates.values()),
+                 source_weights_unchanged=hashed(args.checkpoint)==args.source_weights_sha256)
+    current['arms']=dict(previous['arms'],C=dict(fit=fit_metrics,dev=dev_metrics,
+                           checkpoint_sha256=hashed(arm_dir/('step-%04d.pt'%args.steps))))
+    assert current['source_weights_unchanged']
+    write_json(args.output_dir/'comparison.json',current)
+    write_json(args.output_dir/'inference_training_completion.json',dict(complete=True,new_arm='C',steps_per_arm=args.steps,
+               all_evaluation_frames_completed=True,source_weights_unchanged=True,screen_passed=current['screen_passed']))
+    print('CAPPED_POSITIVE_LOSS_SCREEN_COMPLETED',flush=True)
+
+
 def cpu_iou(a, b):
     intersection = a.astype(np.float32) @ b.astype(np.float32).T
     union = a.sum(1)[:,None] + b.sum(1)[None] - intersection
@@ -265,7 +330,13 @@ def audit(args):
     assert complete['complete'] and hashed(args.checkpoint)==plan['source_weights_sha256']
     assert hashed(args.manifest)==plan['train_manifest_sha256']
     assert hashed(args.validation_manifest)==plan['dev_manifest_sha256']
-    scopes = ['frozen_train_probe','frozen_dev','A/fit_eval','A/dev_eval','B/fit_eval','B/dev_eval']
+    if args.audit_arm:
+        if args.audit_arm!='C' or args.reference_dir is None:raise ValueError('audit continuation requires C reference')
+        assert hashed(args.reference_dir/'audit.json')==plan['reference_audit_sha256']
+        assert hashed(args.reference_dir/'comparison.json')==plan['reference_comparison_sha256']
+        scopes=['C/fit_eval','C/dev_eval']
+    else:
+        scopes = ['frozen_train_probe','frozen_dev','A/fit_eval','A/dev_eval','B/fit_eval','B/dev_eval']
     audited = {}
     for scope in scopes:
         directory = args.output_dir / scope
@@ -310,9 +381,11 @@ def audit(args):
         audited[scope]=dict(frames=len(rows),gt=recomputed['gt'],tp=recomputed['tp'])
         print(json.dumps({'audited':scope,**audited[scope]}),flush=True)
     comparison=json.loads((args.output_dir/'comparison.json').read_text())
-    for arm in ('A','B'):
+    for arm in ((args.audit_arm,) if args.audit_arm else ('A','B')):
         ckpt=args.output_dir/arm/('step-%04d.pt'%args.steps)
         assert hashed(ckpt)==comparison['arms'][arm]['checkpoint_sha256']
+        for scope in ('fit','dev'):
+            assert comparison['arms'][arm][scope]==json.loads((args.output_dir/arm/(scope+'_eval')/'metrics.json').read_text())
     write_json(args.output_dir/'audit.json',dict(complete=True,independent_numpy_iou=True,
         independent_scipy_matching=True,all_point_buckets_verified=True,scopes=audited,
         source_weights_unchanged=True,model_performance_accepted=False))
@@ -321,7 +394,10 @@ def audit(args):
 
 if __name__ == '__main__':
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode',choices=['run','audit'])
+    parser.add_argument('mode',choices=['run','audit','continuation'])
+    parser.add_argument('--reference-dir',type=Path)
+    parser.add_argument('--policy',choices=['sqrt_positive'],default='sqrt_positive')
+    parser.add_argument('--audit-arm',choices=['C'])
     parser.add_argument('--checkpoint',type=Path,required=True)
     parser.add_argument('--source-weights-sha256',required=True)
     parser.add_argument('--source-implementation-sha256',required=True)
@@ -338,4 +414,6 @@ if __name__ == '__main__':
     parser.add_argument('--lr',type=float,default=1e-4)
     parser.add_argument('--seed',type=int,default=2026)
     args=parser.parse_args();args.command='evaluate';args.split='train';args.official_val=False
-    run(args) if args.mode=='run' else audit(args)
+    if args.mode=='run':run(args)
+    elif args.mode=='continuation':continue_screen(args)
+    else:audit(args)

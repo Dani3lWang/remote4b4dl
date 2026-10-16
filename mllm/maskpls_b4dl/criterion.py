@@ -14,7 +14,7 @@ def mask_binary_cross_entropy(prediction, truth, reduction="point_mean"):
     """Balance positive/negative means per matched instance, without removing negatives."""
     if reduction == "point_mean":
         return F.binary_cross_entropy_with_logits(prediction, truth)
-    if reduction != "instance_balanced":
+    if reduction not in ("instance_balanced", "sqrt_positive"):
         raise ValueError("unknown mask BCE reduction")
     if prediction.ndim != 2 or prediction.shape != truth.shape or not len(truth):
         raise ValueError("balanced mask BCE requires nonempty [instances, points] targets")
@@ -27,6 +27,12 @@ def mask_binary_cross_entropy(prediction, truth, reduction="point_mean"):
     negative = ~positive
     negative_count = negative.sum(1)
     losses = F.binary_cross_entropy_with_logits(prediction, truth, reduction="none")
+    if reduction == "sqrt_positive":
+        # Full 50/50 balancing can overwhelm an existing low-positive-rate model.
+        # Limit the per-point amplification; retain every sampled negative.
+        positive_weight = (negative_count.to(losses.dtype) / positive_count).sqrt().clamp(1, 20)
+        weights = torch.where(positive, positive_weight[:, None], 1.)
+        return ((losses * weights).sum(1) / weights.sum(1)).mean()
     positive_mean = (losses * positive).sum(1) / positive_count
     negative_mean = (losses * negative).sum(1) / negative_count.clamp_min(1)
     # An all-positive sampled target has one nonempty group, not half a loss.

@@ -69,6 +69,25 @@ class BalancedMaskBCETests(unittest.TestCase):
         second = MaskPLSCriterion(MaskPLSConfig(mask_bce_reduction="instance_balanced")).match(*inputs)
         self.assertEqual(first, second)
 
+    def test_sqrt_positive_caps_amplification_and_retains_negative_gradients(self):
+        logits = torch.zeros(1, 10001, requires_grad=True)
+        truth = torch.zeros_like(logits); truth[0, 0] = 1
+        mask_binary_cross_entropy(logits, truth, "sqrt_positive").backward()
+        torch.testing.assert_close(logits.grad[0, 0], torch.tensor(-.5 * 20 / 10020))
+        self.assertTrue((logits.grad[0, 1:] > 0).all())
+
+    def test_sqrt_positive_is_between_unweighted_and_full_balancing(self):
+        magnitudes = []
+        for mode in ("point_mean", "sqrt_positive", "instance_balanced"):
+            logits = torch.zeros(1, 100, requires_grad=True)
+            truth = torch.zeros_like(logits); truth[0, 0] = 1
+            mask_binary_cross_entropy(logits, truth, mode).backward()
+            magnitudes.append(float(logits.grad[0, 0].abs()))
+        self.assertLess(magnitudes[0], magnitudes[1])
+        self.assertLess(magnitudes[1], magnitudes[2])
+        config = MaskPLSConfig.from_dict({"mask_bce_reduction": "sqrt_positive"})
+        self.assertEqual(config.mask_bce_reduction, "sqrt_positive")
+
 
 if __name__ == "__main__":
     unittest.main()

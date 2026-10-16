@@ -55,8 +55,8 @@ class MaskPLSConfig:
             raise ValueError("checkpoint_decoder must be boolean")
         if self.mask_ignore_policy not in ("exclude", "background"):
             raise ValueError("mask_ignore_policy must be exclude or background")
-        if self.mask_bce_reduction not in ("point_mean", "instance_balanced"):
-            raise ValueError("mask_bce_reduction must be point_mean or instance_balanced")
+        if self.mask_bce_reduction not in ("point_mean", "instance_balanced", "sqrt_positive"):
+            raise ValueError("mask_bce_reduction must be point_mean, instance_balanced or sqrt_positive")
 
     def to_dict(self):
         value = asdict(self)
