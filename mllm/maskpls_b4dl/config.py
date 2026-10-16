@@ -31,6 +31,8 @@ class MaskPLSConfig:
     # Semantic ignore and instance-mask background are different contracts.
     # Keep the legacy setting explicit; the corrected recipe uses background.
     mask_ignore_policy: str = "exclude"
+    # Preserve the original point-mean objective unless explicitly opted in.
+    mask_bce_reduction: str = "point_mean"
 
     def validate(self):
         for key in ("num_queries", "knn_chunk_size", "loss_points", "points_per_instance", "match_points"):
@@ -53,6 +55,8 @@ class MaskPLSConfig:
             raise ValueError("checkpoint_decoder must be boolean")
         if self.mask_ignore_policy not in ("exclude", "background"):
             raise ValueError("mask_ignore_policy must be exclude or background")
+        if self.mask_bce_reduction not in ("point_mean", "instance_balanced"):
+            raise ValueError("mask_bce_reduction must be point_mean or instance_balanced")
 
     def to_dict(self):
         value = asdict(self)

@@ -13,7 +13,7 @@ import torch
 from torch import nn
 
 from maskpls_b4dl.config import MaskPLSConfig, SCHEMA, UPSTREAM_COMMIT
-from maskpls_b4dl.criterion import MaskPLSCriterion, sample_supervised_points
+from maskpls_b4dl.criterion import MaskPLSCriterion, sample_supervised_points, mask_binary_cross_entropy
 from maskpls_b4dl.data import build_targets, semantic_from_panoptic
 from maskpls_b4dl.interpolate import KNNInterpolation
 from maskpls_b4dl.model import MaskPLS, extract_instances, import_official_state
@@ -185,6 +185,7 @@ class CheckpointTests(unittest.TestCase):
     def test_audited_warm_start_allows_only_explicit_loss_policy_change(self):
         source = dict(metadata=dict(schema_version=SCHEMA, upstream_commit=UPSTREAM_COMMIT,
                                     implementation_sha256="a" * 64, config=MaskPLSConfig().to_dict()))
+        source["metadata"]["config"].pop("mask_bce_reduction")  # pre-policy native checkpoints
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "last.pt"
             torch.save(source, path)
@@ -193,8 +194,10 @@ class CheckpointTests(unittest.TestCase):
             for digest in (None, "short", "b" * 64):
                 with self.assertRaises(ValueError):
                     runner.load_warm_start(path, corrected, digest)
-            with self.assertRaisesRegex(ValueError, "only the mask ignore policy"):
+            with self.assertRaisesRegex(ValueError, "only explicit mask loss policies"):
                 runner.load_warm_start(path, MaskPLSConfig(num_queries=100), "a" * 64)
+            balanced = MaskPLSConfig(mask_ignore_policy="background", mask_bce_reduction="instance_balanced")
+            self.assertEqual(runner.load_warm_start(path, balanced, "a" * 64), source)
 
     def test_warm_start_rejects_changed_or_missing_data_identity(self):
         source = dict(data={"manifest_sha256": "train"}, internal_dev_data={"manifest_sha256": "dev"})

@@ -10,6 +10,29 @@ from .config import NO_OBJECT
 from .data import build_targets
 
 
+def mask_binary_cross_entropy(prediction, truth, reduction="point_mean"):
+    """Balance positive/negative means per matched instance, without removing negatives."""
+    if reduction == "point_mean":
+        return F.binary_cross_entropy_with_logits(prediction, truth)
+    if reduction != "instance_balanced":
+        raise ValueError("unknown mask BCE reduction")
+    if prediction.ndim != 2 or prediction.shape != truth.shape or not len(truth):
+        raise ValueError("balanced mask BCE requires nonempty [instances, points] targets")
+    if not ((truth == 0) | (truth == 1)).all():
+        raise ValueError("balanced mask BCE expects binary sampled targets")
+    positive = truth.eq(1)
+    positive_count = positive.sum(1)
+    if (positive_count == 0).any():
+        raise ValueError("balanced mask BCE requires positive support for every instance")
+    negative = ~positive
+    negative_count = negative.sum(1)
+    losses = F.binary_cross_entropy_with_logits(prediction, truth, reduction="none")
+    positive_mean = (losses * positive).sum(1) / positive_count
+    negative_mean = (losses * negative).sum(1) / negative_count.clamp_min(1)
+    # An all-positive sampled target has one nonempty group, not half a loss.
+    return ((positive_mean + negative_mean) / (1 + negative_count.gt(0).to(losses.dtype))).mean()
+
+
 def sample_supervised_points(labels, valid, budget, per_instance):
     """Shared sample with guaranteed foreground support for every supervised mask."""
     available = valid.nonzero(as_tuple=True)[0]
@@ -84,7 +107,7 @@ class MaskPLSCriterion:
         if assignment:
             prediction = output["mask_logits"][assignment][:, indices].float()
             truth = labels[:, indices].float()
-            bce = F.binary_cross_entropy_with_logits(prediction, truth)
+            bce = mask_binary_cross_entropy(prediction, truth, self.config.mask_bce_reduction)
             probability = prediction.sigmoid()
             dice = (1 - (2 * (probability * truth).sum(1) + 1) /
                     (probability.sum(1) + truth.sum(1) + 1)).mean()
