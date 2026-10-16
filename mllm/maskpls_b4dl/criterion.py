@@ -93,10 +93,19 @@ class MaskPLSCriterion:
         return dict(classification=classification, mask_bce=bce, mask_dice=dice)
 
     def __call__(self, output, frame):
-        labels, classes, valid = build_targets(frame, output["valid_points"])
-        match_indices = sample_supervised_points(labels, valid, self.config.match_points,
+        labels, classes, semantic_valid = build_targets(frame, output["valid_points"])
+        mask_valid = semantic_valid
+        if self.config.mask_ignore_policy == "background":
+            # Upstream binary instance masks contain zero at ignored semantic points.
+            # They are not any admitted Thing/Stuff instance, but remain in the input
+            # and attention. Excluding them from every mask loss leaves unconstrained
+            # foreground (notably ego returns). Do not change semantic supervision,
+            # evaluation eligibility, raw point order, or label-free inference.
+            labels = labels.clamp_min(0)
+            mask_valid = output["valid_points"]
+        match_indices = sample_supervised_points(labels, mask_valid, self.config.match_points,
                                                   self.config.points_per_instance)
-        loss_indices = sample_supervised_points(labels, valid, self.config.loss_points,
+        loss_indices = sample_supervised_points(labels, mask_valid, self.config.loss_points,
                                                  self.config.points_per_instance)
         parts = {}
         assignment = None
@@ -108,8 +117,8 @@ class MaskPLSCriterion:
             for key, value in current.items():
                 parts[key] = parts.get(key, 0) + value
         # Upstream sums auxiliary layer losses; do not silently average them away.
-        semantic = output["semantic_logits"][valid].float()
-        semantic_labels = frame["semantic_labels"][valid]
+        semantic = output["semantic_logits"][semantic_valid].float()
+        semantic_labels = frame["semantic_labels"][semantic_valid]
         parts["semantic_ce"] = F.cross_entropy(semantic, semantic_labels)
         parts["semantic_lovasz"] = lovasz_softmax(semantic, semantic_labels)
         total = (2 * parts["classification"] + 5 * parts["mask_bce"] + 5 * parts["mask_dice"]

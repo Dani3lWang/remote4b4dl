@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from maskpls_b4dl.config import MaskPLSConfig
+from maskpls_b4dl.config import MaskPLSConfig, SCHEMA, UPSTREAM_COMMIT
 from maskpls_b4dl.criterion import MaskPLSCriterion, sample_supervised_points
 from maskpls_b4dl.data import build_targets, semantic_from_panoptic
 from maskpls_b4dl.interpolate import KNNInterpolation
@@ -155,8 +155,55 @@ class SupervisionTests(unittest.TestCase):
             criterion.match(dict(mask_logits=torch.zeros(1, 2)), torch.eye(2),
                             torch.tensor([1, 4]), torch.arange(2))
 
+    def test_mask_background_policy_penalizes_ignore_without_semantic_or_roi_leak(self):
+        frame = dict(labels=torch.tensor([[1., 0., -1., -1.]]), class_ids=torch.tensor([0]),
+                     semantic_labels=torch.tensor([1, 11, 0, 0]))
+        output = dict(mask_logits=torch.full((3, 4), 2., requires_grad=True),
+                      class_logits=torch.zeros(3, 18, requires_grad=True),
+                      semantic_logits=torch.zeros(4, 20, requires_grad=True),
+                      valid_points=torch.tensor([True, True, True, False]), auxiliary=[])
+        before = frame["labels"].clone()
+        config = MaskPLSConfig(mask_ignore_policy="background")
+        loss, _, assignment = MaskPLSCriterion(config)(output, frame)
+        loss.backward()
+        # Gradient descent must reduce foreground logits at ignored points.
+        self.assertTrue((output["mask_logits"].grad[assignment, 2] > 0).all())
+        self.assertTrue((output["mask_logits"].grad[:, 3] == 0).all())
+        self.assertTrue((output["semantic_logits"].grad[2:] == 0).all())
+        torch.testing.assert_close(frame["labels"], before)
+        self.assertEqual(len(assignment), 2)  # one Thing and one Stuff; neither dropped
+
+    def test_mask_background_policy_is_recorded_and_rejects_unknown_values(self):
+        config = MaskPLSConfig.from_dict({"mask_ignore_policy": "background"})
+        self.assertEqual(config.to_dict()["mask_ignore_policy"], "background")
+        self.assertEqual(MaskPLSConfig.from_dict({}).mask_ignore_policy, "exclude")
+        with self.assertRaisesRegex(ValueError, "mask_ignore_policy"):
+            MaskPLSConfig.from_dict({"mask_ignore_policy": "drop_ego"})
+
 
 class CheckpointTests(unittest.TestCase):
+    def test_audited_warm_start_allows_only_explicit_loss_policy_change(self):
+        source = dict(metadata=dict(schema_version=SCHEMA, upstream_commit=UPSTREAM_COMMIT,
+                                    implementation_sha256="a" * 64, config=MaskPLSConfig().to_dict()))
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "last.pt"
+            torch.save(source, path)
+            corrected = MaskPLSConfig(mask_ignore_policy="background")
+            self.assertEqual(runner.load_warm_start(path, corrected, "a" * 64), source)
+            for digest in (None, "short", "b" * 64):
+                with self.assertRaises(ValueError):
+                    runner.load_warm_start(path, corrected, digest)
+            with self.assertRaisesRegex(ValueError, "only the mask ignore policy"):
+                runner.load_warm_start(path, MaskPLSConfig(num_queries=100), "a" * 64)
+
+    def test_warm_start_rejects_changed_or_missing_data_identity(self):
+        source = dict(data={"manifest_sha256": "train"}, internal_dev_data={"manifest_sha256": "dev"})
+        runner.check_warm_start_data(source, copy.deepcopy(source))
+        for changed in ({}, dict(source, data={"manifest_sha256": "other"}),
+                        dict(source, internal_dev_data={"manifest_sha256": "train"})):
+            with self.assertRaisesRegex(ValueError, "identical"):
+                runner.check_warm_start_data(source, changed)
+
     def test_query_expansion_is_explicit_and_preserves_pretrained_rows(self):
         source, destination = WeightFixture(2), WeightFixture(3)
         state = source.state_dict()

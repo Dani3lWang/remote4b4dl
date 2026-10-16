@@ -24,6 +24,7 @@
 7. 主指标为 B4DL 的类别正确、一对一实例召回/精确率与全部 GT 平均 IoU，不冒充官方 PQ。候选 oracle 诊断单列。
 8. 保留对象特征及稳定的帧内 ID；不把帧内 query ID 当作轨迹 ID，不将候选类别当作回答指代绑定。
 9. 当前默认保持原始坐标，不做随机增强；正式泛化训练所需的增强须另行核对 ROI、点序与完整实例保留。
+10. 掩码损失的 ignore 策略显式配置：旧版本 `exclude` 同时排除语义与掩码监督；修正配方 `background` 按上游二值实例掩码构造，将 ROI 内未归属任何准入实例的语义 ignore 点作为掩码负样本。语义损失及评测继续忽略这些标签，预测只读取原始点云。
 
 nuScenes 原始坐标与上游转换器的一致性依据：
 https://github.com/PRBonn/nuscenes2kitti/blob/5bfe90069820a4276c62bcbc1aaf00314957c20a/nuscenes2kitti.py

@@ -1,0 +1,34 @@
+# MaskPLS 自车掩码问题：改进方案与执行约定
+
+2026-10-16 的旧运行完成 1 epoch、81 次更新，但 81 帧 mini_val 的 3,503 个真实实例全部漏检；每帧唯一输出覆盖自车忽略标签。此次改进首先验证空间掩码学习，不引入语言或跟踪结论。
+
+## 改动依据
+
+上游固定提交 `84881ba83f2f2e846cbded677544993d0c8ecd76` 的
+[semantic_dataset.py](https://github.com/PRBonn/MaskPLS/blob/84881ba83f2f2e846cbded677544993d0c8ecd76/mask_pls/datasets/semantic_dataset.py#L277-L324)
+将每个 Thing/Stuff 目标构造成完整点轴上的二值掩码，非该实例的点为 0；
+[loss.py](https://github.com/PRBonn/MaskPLS/blob/84881ba83f2f2e846cbded677544993d0c8ecd76/mask_pls/models/loss.py#L140-L172)
+对采样的二值掩码计算 BCE/Dice。原移植将语义 ignore 同时用于排除掩码匹配与损失，导致输入中保留的自车点没有实例掩码约束。
+
+新增 `mask_ignore_policy=background`：掩码匹配与 BCE/Dice 将 ROI 内语义 ignore 点视为负样本；语义 CE/Lovasz 和评测仍忽略它们。保留全部原始点、全部一点评测目标、原始 ROI 和输出阈值。模型前向及候选提取没有读取 GT。默认值仍是 `exclude`，旧配方的含义不被静默改变。
+
+## 先对照，再扩大预算
+
+1. 从已完成的同一份 1-epoch 权重开始；按照训练场景 token 排序，每个场景固定选时间戳居中的一帧，共 8 帧、255 个 Thing，其中 42 个有至少 50 个有效点。选择不使用 mini_val 结果。
+2. 三组各训练 160 步，batch=1、AdamW lr=1e-4、相同帧顺序与逐步采样随机种子。A 保留旧监督和 masked attention；B 仅将第一层 cross-attention 放开；C 只修正掩码负监督。每 40 步评估这 8 帧。
+3. 仅 C 继续进行有上限的小样本收敛诊断：最多累计 800 步，每 160 步检查训练集门槛；这部分不能再声称与 160 步 A/B 等预算。
+4. 预设扩大训练门槛：50+ 点目标的原始 query 几何召回至少 50%，最终类别正确召回至少 20%，至少 6/8 帧有正确实例，忽略区域占输出前景不超过 10%。所有大小目标始终计入完整主指标。
+5. 小样本诊断结束后，对全部 81 帧 mini_val 评估一次，并独立复算保存的预测。若训练门槛失败，停止直接扩大完整数据训练，记录失败项；不把消除自车误检等同于实例分割可用。
+6. 门槛通过后，使用相同完整 323 帧训练 manifest 启动修正配方的有限预算 pilot，保留 81 帧开发集和完整评测链路。训练集过拟合指标与开发集指标分别报告。
+
+## 可复现入口
+
+修正配置：`mllm/scripts/maskpls_background_config.json`。`train` 新增显式 `--warm-start` 和 `--warm-start-source-sha256`：只迁移已审核源代码的模型权重，训练和开发数据身份必须一致，模型结构/ROI/阈值不允许随迁移变化。优化器和轮数重置，来源训练量单列；`--resume` 保持原来的精确恢复限制。
+
+脚本及运行证据不提交：本地 `training_logs/maskpls_autodl3_20261016/`；旧服务器运行目录 `/root/autodl-tmp/mmb4dl-maskpls-20261016` 下的 `training_logs/improvement-001`、`improvement-002`、`improvement-003`。修正代码单独部署在 `/root/autodl-tmp/mmb4dl-maskpls-improved-20261016`，原代码与原始权重保留。
+
+阶段结果和最终是否满足门槛，以本地运行目录中的《改进执行报告.md》和对应 JSON/退出码为准。本文件描述方案，不把正在执行的阶段当成完成结果。
+
+## 边界
+
+指标是原始点空间、类别正确、一对一实例 Recall/Precision@0.5，以及分层与原始 query 诊断，不是官方 PQ，也不是 B3 语言指代、NOOBJ 或跨帧跟踪结果。若以后使用官方预训练权重，应逐场景核对训练暴露；官方 mini_train 与完整 train/val 的成员并非简单子集关系，不能仅根据 mini 名称推断泄漏或独立性。

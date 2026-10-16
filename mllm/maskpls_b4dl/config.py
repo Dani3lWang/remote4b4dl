@@ -28,6 +28,9 @@ class MaskPLSConfig:
     score_threshold: float = 0.25
     mask_threshold: float = 0.5
     overlap_threshold: float = 0.8
+    # Semantic ignore and instance-mask background are different contracts.
+    # Keep the legacy setting explicit; the corrected recipe uses background.
+    mask_ignore_policy: str = "exclude"
 
     def validate(self):
         for key in ("num_queries", "knn_chunk_size", "loss_points", "points_per_instance", "match_points"):
@@ -48,6 +51,8 @@ class MaskPLSConfig:
             raise ValueError("knn_backend must be keops or torch")
         if type(self.checkpoint_decoder) is not bool:
             raise ValueError("checkpoint_decoder must be boolean")
+        if self.mask_ignore_policy not in ("exclude", "background"):
+            raise ValueError("mask_ignore_policy must be exclude or background")
 
     def to_dict(self):
         value = asdict(self)

@@ -47,6 +47,10 @@ def parse_args(argv=None):
             weights.add_argument("--official-checkpoint", type=Path)
             if name == "train":
                 weights.add_argument("--resume", type=Path)
+                weights.add_argument("--warm-start", type=Path,
+                                     help="Initialize a new run from native weights; reset optimizer and schedule.")
+                command.add_argument("--warm-start-source-sha256",
+                                     help="Required source implementation digest for an audited warm start.")
             else:
                 weights.add_argument("--checkpoint", type=Path)
         if name in ("evaluate", "predict"):
@@ -74,6 +78,33 @@ def load_native(path):
     if metadata.get("implementation_sha256") != implementation_digest():
         raise ValueError("checkpoint implementation differs; use its recorded code version")
     return value
+
+
+def load_warm_start(path, config, source_sha256):
+    """Explicit loss-policy migration, never an implicit bypass of exact resume."""
+    if (not isinstance(source_sha256, str) or len(source_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in source_sha256)):
+        raise ValueError("warm start requires the audited source implementation SHA-256")
+    value = torch.load(path, map_location="cpu", weights_only=True)
+    metadata = value.get("metadata", {})
+    if (metadata.get("schema_version") != SCHEMA
+            or metadata.get("implementation_sha256") != source_sha256
+            or metadata.get("upstream_commit") != UPSTREAM_COMMIT):
+        raise ValueError("warm-start source identity mismatch")
+    old = MaskPLSConfig.from_dict(metadata["config"]).to_dict()
+    new = config.to_dict()
+    changed = {key for key in new if old[key] != new[key]}
+    if changed - {"mask_ignore_policy"}:
+        raise ValueError("warm start may change only the mask ignore policy")
+    return value
+
+
+def check_warm_start_data(source, target):
+    # This migration is intentionally narrow: no unseen change in training scenes,
+    # no prior training exposure to a newly claimed held-out validation split.
+    for key in ("data", "internal_dev_data"):
+        if key not in source or source[key] != target.get(key):
+            raise ValueError("warm start requires identical training and development data")
 
 
 def make_dataset(args, config, *, development=False):
@@ -226,6 +257,8 @@ def evaluate(model, dataset, args, identity, device):
                    benchmark_pq=False, language_grounding_accepted=False, tracking_accepted=False,
                    noobj_query_capability="not evaluated; manifest is spatial instance supervision")
     atomic_json(args.output_dir / "metrics.json", metrics)
+    atomic_json(args.output_dir / "progress.json",
+                dict(completed_frames=len(dataset), expected_frames=len(dataset), partial=False))
     return metrics
 
 
@@ -247,6 +280,10 @@ def raw_frame(args, device):
 
 def run(args):
     is_train = args.command == "train"
+    warm_start = getattr(args, "warm_start", None)
+    warm_source_sha = getattr(args, "warm_start_source_sha256", None)
+    if warm_source_sha and not warm_start:
+        raise ValueError("--warm-start-source-sha256 requires --warm-start")
     if args.command in ("train", "smoke") and (args.split != "train" or args.official_val):
         raise ValueError("training/smoke cannot use official validation or internal-dev")
     checkpoint_path = getattr(args, "resume", None) or getattr(args, "checkpoint", None)
@@ -259,6 +296,7 @@ def run(args):
         config = MaskPLSConfig.from_dict(checkpoint["metadata"]["config"])
     else:
         config = MaskPLSConfig()
+    warm_checkpoint = load_warm_start(warm_start, config, warm_source_sha) if warm_start else None
     if args.command in ("evaluate", "predict") and not (checkpoint or args.official_checkpoint):
         raise ValueError("inference requires trained weights; random initialization is not an evaluation")
     # Frozen official inference must keep the original 100 query rows.
@@ -283,6 +321,8 @@ def run(args):
             if report["dataset_version"] != dev_report["dataset_version"]:
                 raise ValueError("train/dev dataset versions differ")
             metadata["internal_dev_data"] = dev_report
+            if warm_checkpoint:
+                check_warm_start_data(warm_checkpoint["metadata"], metadata)
         if not resume:
             atomic_json(args.output_dir / "preflight.json", metadata)
     if args.command == "preflight":
@@ -303,13 +343,27 @@ def run(args):
     if checkpoint:
         model.load_state_dict(checkpoint["model"], strict=True)
         metadata["initialization"] = checkpoint["metadata"].get("initialization")
+    elif warm_checkpoint:
+        model.load_state_dict(warm_checkpoint["model"], strict=True)
+        metadata["initialization"] = dict(
+            kind="native_warm_start", checkpoint_sha256=sha256_file(warm_start),
+            source_implementation_sha256=warm_source_sha,
+            source_config=warm_checkpoint["metadata"]["config"],
+            source_completed_epoch=warm_checkpoint["completed_epoch"],
+            source_global_step=warm_checkpoint["global_step"],
+            source_initialization=warm_checkpoint["metadata"].get("initialization"),
+            pretrained_official_train_exposure=warm_checkpoint["metadata"].get(
+                "pretrained_official_train_exposure", False), optimizer_reset=True)
     elif args.official_checkpoint:
         metadata["initialization"] = load_official(model, args.official_checkpoint,
                                                    allow_query_expansion=is_train or args.command == "smoke")
     else:
         metadata["initialization"] = dict(kind="random", seed=args.seed)
+    initialization = metadata["initialization"] or {}
     metadata["pretrained_official_train_exposure"] = bool(
-        metadata["initialization"] and "checkpoint_sha256" in metadata["initialization"])
+        initialization.get("pretrained_official_train_exposure", False)
+        if initialization.get("kind") == "native_warm_start"
+        else "checkpoint_sha256" in initialization)
     if is_train:
         return train(model, dataset, development, args, metadata, checkpoint, device)
     identity = dict(**metadata, weights_sha256=sha256_file(checkpoint_path or args.official_checkpoint)

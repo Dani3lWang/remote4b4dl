@@ -1,6 +1,6 @@
 # MaskPLS → B4DL 空间实例后端
 
-当前交付是本地代码移植。未运行实际 GPU 推理或训练，未证明优于旧 seg；当前机器没有可用的 wqlc，Conda 启动失败。源码静态检查可在本地完成，下面的单元测试和真实点云冒烟留到隔离的 Linux/CUDA 环境执行。
+已在 AutoDL3 的隔离 wqlc 环境完成 RTX 4090 实际前后向和 mini 单轮训练。该旧配方在 81 帧 mini_val 上的正确实例数为 0，不能视为效果验收通过。2026-10-16 的改进使用独立目录，修正实例掩码负监督，并开展固定 8 帧对照与收敛诊断；详见 [改进方案](maskpls_improvement.md)。仍未证明优于旧语言指代 seg。
 
 ## 已实现的路径
 
@@ -53,7 +53,7 @@
 - 必须包含完整 10 个 Thing 类实例，不接受 QA 候选、框伪标签或部分对象监督。
 - 使用 `min_target_points=1`，含 1 点实例。
 - 要求原始点文件 [N,5]（XYZ/intensity/ring）、原始 panoptic、标签哈希及 instance_token 证据。
-- 从原始 panoptic 恢复 16 类语义，原始 ignore 不参与掩码/语义损失及指标；从语义标签构建 Stuff 掩码。
+- 从原始 panoptic 恢复 16 类语义，从语义标签构建 Stuff 掩码。原始 ignore 始终不参与语义损失和评测；实例掩码监督由 `mask_ignore_policy` 显式控制：旧配方 `exclude` 排除这些点，新配方 `background` 将 ROI 内这些点作为每个已匹配实例掩码的零目标，与上游二值掩码构造一致。推理只读取 XYZ/intensity。
 - 已有准备器的 ROI 若不同，应先重建 manifest，不能把没有 ROI 内正点的实例转成 NOOBJ。
 - 仅接受单帧、identity lidar_to_anchor；多帧关联后续单独实现。
 - 此版本沿用已有 manifest 的准入范围：准备器拒绝没有 Thing 的帧。因此不能用它声称完成了无物体帧或无目标语言请求的训练。
@@ -132,6 +132,8 @@ conda run -n wqlc python mllm/scripts/run_maskpls.py train \
 
 恢复时使用同样命令及 `--resume mllm/checkpoints/maskpls-mini-001/last.pt`，output-dir 必须相同；不能同时指定官方初始化。将 `--epochs` 设为大于已完成轮数的累计目标，例如从 1 轮继续至 2 轮时使用 `--epochs 2`。恢复严格检查数据、划分、配方、代码；验证未通过时保留旧运行状态。按完整 epoch 恢复，崩溃发生在 epoch 中途时重放该 epoch；steps 日志可能保留未提交的尝试，应以 checkpoint/progress 的已提交 epoch 为准。
 
+修正监督策略后不能冒充原配方的精确恢复。新建实验时可显式使用 `--warm-start /path/to/old/last.pt --warm-start-source-sha256 SOURCE_IMPLEMENTATION_SHA256`，并提供 `maskpls_background_config.json`。此入口只迁移严格匹配的模型权重，重置优化器、调度器和轮数；要求相同训练/开发数据身份，配置只允许改变 `mask_ignore_policy`。记录来源权重、源码摘要和已完成训练量。原始旧权重的评测仍应使用其记录的旧代码快照。
+
 5. 全 manifest 评测：
 
 ```bash
@@ -179,9 +181,9 @@ B4DL 集成时，可将候选对象提供给回答绑定模块，再用 `resolve
 ## 验收状态
 
 - 源码审查、Ruff 静态检查：本地执行。
-- 契约测试：已提供，需在可用 wqlc 环境执行。
-- MinkowskiEngine 编译、真实点云 CUDA 前后向、官方权重实际加载：待 GPU 环境验证。
-- 训练收敛、与旧 seg 同帧对照：待实际实验。
+- 契约测试：24 项已在 AutoDL3 的 wqlc 环境通过，包含忽略点掩码梯度、语义排除、原始点序以及权重迁移身份/划分检查。
+- MinkowskiEngine 编译、真实点云 CUDA 前后向、旧配方完整 mini 训练及 81 帧评测：已完成；旧配方实例效果失败。
+- 修正配方的收敛及评测：以独立运行目录中的完整报告为准；与旧 seg 同帧同协议对照尚未完成。
 - 回答绑定、NOOBJ 语言评测、自由跨帧关联：未由本空间移植实现。
 
 验收以 status.json、退出码、checkpoint/数据/代码身份、完整评测范围和独立指标为依据；单个 completion.json 或低训练 loss 不代表模型效果达标。

@@ -1,0 +1,15 @@
+{
+  "num_queries": 128,
+  "voxel_size": 0.05,
+  "point_cloud_range": [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
+  "intensity_mode": "raw",
+  "knn_backend": "keops",
+  "checkpoint_decoder": true,
+  "loss_points": 16384,
+  "match_points": 8192,
+  "points_per_instance": 500,
+  "score_threshold": 0.25,
+  "mask_threshold": 0.5,
+  "overlap_threshold": 0.8,
+  "mask_ignore_policy": "background"
+}
