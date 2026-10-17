@@ -94,8 +94,8 @@ def load_warm_start(path, config, source_sha256):
     old = MaskPLSConfig.from_dict(metadata["config"]).to_dict()
     new = config.to_dict()
     changed = {key for key in new if old[key] != new[key]}
-    if changed - {"mask_ignore_policy", "mask_bce_reduction"}:
-        raise ValueError("warm start may change only explicit mask loss policies")
+    if changed - {"mask_ignore_policy", "mask_bce_reduction", "no_object_weight"}:
+        raise ValueError("warm start may change only explicit loss policies")
     return value
 
 

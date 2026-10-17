@@ -194,7 +194,7 @@ class CheckpointTests(unittest.TestCase):
             for digest in (None, "short", "b" * 64):
                 with self.assertRaises(ValueError):
                     runner.load_warm_start(path, corrected, digest)
-            with self.assertRaisesRegex(ValueError, "only explicit mask loss policies"):
+            with self.assertRaisesRegex(ValueError, "only explicit.*loss policies"):
                 runner.load_warm_start(path, MaskPLSConfig(num_queries=100), "a" * 64)
             balanced = MaskPLSConfig(mask_ignore_policy="background", mask_bce_reduction="instance_balanced")
             self.assertEqual(runner.load_warm_start(path, balanced, "a" * 64), source)

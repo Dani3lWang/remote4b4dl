@@ -33,6 +33,8 @@ class MaskPLSConfig:
     mask_ignore_policy: str = "exclude"
     # Preserve the original point-mean objective unless explicitly opted in.
     mask_bce_reduction: str = "point_mean"
+    # DETR-style unmatched-query class weight; independent of matching costs.
+    no_object_weight: float = 0.1
 
     def validate(self):
         for key in ("num_queries", "knn_chunk_size", "loss_points", "points_per_instance", "match_points"):
@@ -57,6 +59,9 @@ class MaskPLSConfig:
             raise ValueError("mask_ignore_policy must be exclude or background")
         if self.mask_bce_reduction not in ("point_mean", "instance_balanced", "sqrt_positive"):
             raise ValueError("mask_bce_reduction must be point_mean, instance_balanced or sqrt_positive")
+        if (isinstance(self.no_object_weight, bool) or not math.isfinite(self.no_object_weight)
+                or not 0 < self.no_object_weight <= 1):
+            raise ValueError("no_object_weight must lie in (0,1]")
 
     def to_dict(self):
         value = asdict(self)

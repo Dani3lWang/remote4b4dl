@@ -61,6 +61,17 @@ def sample_supervised_points(labels, valid, budget, per_instance):
     return torch.cat((selected, fill))
 
 
+def validate_sample_indices(indices, labels, valid, budget):
+    """Explicit paired-experiment samples must preserve supervision coverage."""
+    if (indices.dtype != torch.long or indices.device != valid.device or indices.ndim != 1
+            or not len(indices) or len(indices) > budget or len(indices.unique()) != len(indices)):
+        raise ValueError("invalid explicit supervised point indices")
+    if (indices < 0).any() or (indices >= len(valid)).any() or not valid[indices].all():
+        raise ValueError("explicit sample contains ineligible points")
+    if len(labels) and not labels[:, indices].eq(1).any(1).all():
+        raise ValueError("explicit sample misses a supervised target")
+
+
 def lovasz_softmax(logits, labels):
     """Present-class Lovasz-Softmax; ignore points are removed by the caller."""
     if not len(labels):
@@ -107,7 +118,7 @@ class MaskPLSCriterion:
         if assignment:
             target_classes[assignment] = classes
         weights = output["class_logits"].new_ones(NO_OBJECT + 1)
-        weights[-1] = 0.1
+        weights[-1] = self.config.no_object_weight
         classification = F.cross_entropy(output["class_logits"].float(), target_classes, weight=weights.float())
         zero = output["mask_logits"].sum() * 0
         if assignment:
@@ -121,7 +132,7 @@ class MaskPLSCriterion:
             bce, dice = zero, zero
         return dict(classification=classification, mask_bce=bce, mask_dice=dice)
 
-    def __call__(self, output, frame):
+    def __call__(self, output, frame, *, match_indices=None, loss_indices=None):
         labels, classes, semantic_valid = build_targets(frame, output["valid_points"])
         mask_valid = semantic_valid
         if self.config.mask_ignore_policy == "background":
@@ -132,10 +143,16 @@ class MaskPLSCriterion:
             # evaluation eligibility, raw point order, or label-free inference.
             labels = labels.clamp_min(0)
             mask_valid = output["valid_points"]
-        match_indices = sample_supervised_points(labels, mask_valid, self.config.match_points,
-                                                  self.config.points_per_instance)
-        loss_indices = sample_supervised_points(labels, mask_valid, self.config.loss_points,
-                                                 self.config.points_per_instance)
+        if match_indices is None:
+            match_indices = sample_supervised_points(labels, mask_valid, self.config.match_points,
+                                                      self.config.points_per_instance)
+        else:
+            validate_sample_indices(match_indices, labels, mask_valid, self.config.match_points)
+        if loss_indices is None:
+            loss_indices = sample_supervised_points(labels, mask_valid, self.config.loss_points,
+                                                     self.config.points_per_instance)
+        else:
+            validate_sample_indices(loss_indices, labels, mask_valid, self.config.loss_points)
         parts = {}
         assignment = None
         # Every decoder output, including initial query prediction, is supervised.
