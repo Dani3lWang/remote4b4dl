@@ -60,5 +60,21 @@ class NoObjectTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_warm_start(path,MaskPLSConfig(num_queries=100,no_object_weight=.05),'a'*64)
 
+    def test_explicit_samples_do_not_consume_model_rng(self):
+        output=dict(class_logits=torch.zeros(3,18,requires_grad=True),
+                    mask_logits=torch.zeros(3,4,requires_grad=True),
+                    semantic_logits=torch.zeros(4,20,requires_grad=True),
+                    valid_points=torch.tensor([True,True,True,False]),auxiliary=[])
+        frame=dict(labels=torch.tensor([[1.,0.,-1.,-1.]]),class_ids=torch.tensor([0]),
+                   semantic_labels=torch.tensor([1,11,0,0]))
+        cfg=MaskPLSConfig(mask_ignore_policy='background');indices=torch.tensor([0,1,2])
+        losses=[]
+        for value in (7,2026):
+            torch.manual_seed(value);before=torch.get_rng_state().clone()
+            loss,_,_=MaskPLSCriterion(cfg)(output,frame,match_indices=indices,loss_indices=indices)
+            self.assertTrue(torch.equal(before,torch.get_rng_state()))
+            losses.append(loss)
+        self.assertTrue(torch.equal(losses[0],losses[1]))
+
 
 if __name__=='__main__':unittest.main()
