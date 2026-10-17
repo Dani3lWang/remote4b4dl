@@ -236,6 +236,7 @@ def prepare(a):
         dev_indices=list(range(96)),ignored_raw_semantic_ids=old_plan['ignored_raw_semantic_ids'],
         zero_epoch='reuse first audited E1 epoch14 masks for both arms; objective weight does not enter forward',
         e1_completion_sha256=sha(a.e1/'completion.json'),e1_identity_sha256=sha(a.e1/'identity.json'),
+        parent_state_sha256=read(a.e1/'epoch-0014-dev/completion.json')['state_sha256'],
         metric='IoU>=0.5 max cardinality then max total IoU; SciPy linear_sum_assignment and stable input order for ALL strata',
         primary_endpoint=3,eval_new_forwards=960,extra_smoke_forwards=2,
         stop='per arm: two consecutive epoch1/2/3 evaluations below half F TP or small geometry; epoch0 excluded',
@@ -337,6 +338,7 @@ def smoke(a):
             peak_cuda_allocated_bytes=torch.cuda.max_memory_allocated(),optimizer_updates=0))
         del model,output,loss,parts;torch.cuda.empty_cache()
     assert initial[0]==initial[1]
+    assert initial[0]==plan['parent_state_sha256']
     write(a.out/'smoke.json',dict(complete=True,extra_forwards=2,training_updates=0,initial_state_sha256=initial[0],
         default_loss_exactly_matches_parent=True,only_classification_changed=True,records=records))
 
