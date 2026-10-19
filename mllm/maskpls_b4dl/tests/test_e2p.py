@@ -143,6 +143,13 @@ workflow = importlib.util.module_from_spec(spec);spec.loader.exec_module(workflo
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_same_feature_equivalence_rejects_any_changed_head_without_tolerance(self):
+        expected = {"mask":torch.tensor([[1.,2.]]),"aux":torch.tensor([[3.]])}
+        self.assertTrue(workflow.verify_decoder_equivalence(expected,expected)["exact_same_feature_decoder_equivalence"])
+        changed = {k:v.clone() for k,v in expected.items()};changed["aux"]+=1e-6
+        with self.assertRaisesRegex(ValueError,"exact same-feature"):
+            workflow.verify_decoder_equivalence(changed,expected)
+
     def test_small_medians_include_all_misses_and_both_small_buckets(self):
         # Existing score helpers establish the mandatory common denominator.
         gt = np.eye(4,dtype=bool);raw = np.array([[1,1,0,0],[0,0,1,1]],dtype=bool)

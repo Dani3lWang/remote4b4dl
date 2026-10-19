@@ -134,13 +134,14 @@ def prepare(a):
         reference_F_dev=reference_f,epochs_per_arm=6,updates_per_epoch=191,updates_per_arm=1146,
         total_planned_updates=3438,frame_exposures_per_arm=4584,total_planned_frame_exposures=13752,
         evaluation_epochs=[0,2,4,6],primary_endpoint=6,planned_evaluation_forwards=2080,
+        smoke_forwards=dict(full_model=3,shared_input_backbone=1,shared_feature_decoder=4),
         recipe=dict(seed=2026,lr=1e-4,weight_decay=.01,batch_size=1,accumulate=4,gradient_clip=1.,
                     precision="FP32",scheduler="constant 1e-4 for six epochs",trainable="all shared and new parameters"),
         mechanism=dict(base="unchanged dot(mask_embed(norm(query)), feature + existing PE)",
             P0="base",P1="base + dot(zero-final 3-layer MLP(norm(query)), feature)",
             P2="base + dot(same MLP(norm(query)), existing PE(raw XYZ))",
             heads="initial and all 9 decoder heads; same auxiliary losses and subsequent attention masks",
-            initialization="all F tensors including mature queries retained exactly; paired private CPU head seed; final weight and bias zero",
+            initialization="all F tensors including mature queries retained exactly; paired private CPU head seed; final weight and bias zero; exact decoder equality on identical cached backbone features",
             input="raw LiDAR XYZ/intensity only; no GT/camera/answer/target centers"),
         gates=dict(final_tp_margin=10,precision_absolute_drop=.02,small_final_tp_margin=10,
             small_geometry_tp_margin=20,small_median_purity_margin=.01,small_median_coverage_drop=.05,
@@ -199,24 +200,45 @@ def checkpoint_roundtrip(a,model,optimizer,arm):
     return result
 
 
+def decoder_snapshot(output):
+    flat = {k:output[k].detach().cpu() for k in ("pred_logits","pred_masks","queries")}
+    flat.update({f"aux_{i}_{k}":v[k].detach().cpu() for i,v in enumerate(output["aux_outputs"])
+                 for k in ("pred_logits","pred_masks")})
+    return flat
+
+
+def verify_decoder_equivalence(actual,expected):
+    if set(actual)!=set(expected) or any(not torch.equal(actual[k],expected[k]) for k in expected):
+        raise ValueError("zero residual decoder failed exact same-feature equivalence")
+    return dict(exact_same_feature_decoder_equivalence=True,outputs_sha256=tensor_digest(actual))
+
+
 def smoke(a):
     plan = h.read(a.out/"plan.json");check_sources(a,plan)
     if (a.out/"smoke.json").exists() or (a.out/"F").exists():raise ValueError("smoke evidence already exists")
     item = h.read(a.out/"sampling_manifest.json")[0];records = {}
-    baseline_output = None
+    # Sparse CUDA backbone repeated runs can differ by a few ULPs, even for F
+    # against itself. Isolate the inserted decoder operation with ONE shared
+    # feature tensor, so equality stays strict instead of hiding it in a tolerance.
+    baseline,initial = new_model(a)
+    baseline.eval();dataset = h.datasets(a,baseline.config)["train_probe"]
+    point_input = dataset[item["index"]]["frames"][0]["points"].cuda()
+    bounds = point_input.new_tensor(baseline.config.point_cloud_range)
+    valid = ((point_input[:,:3]>=bounds[:3])&(point_input[:,:3]<bounds[3:])).all(1)
+    if baseline.config.intensity_mode!="raw":raise ValueError("E2-P requires raw intensity")
+    with torch.no_grad():
+        cached = baseline.backbone(point_input[valid])
+        reference_output,_ = baseline.decoder(*cached[:3])
+        baseline_output = decoder_snapshot(reference_output)
+    del baseline,reference_output,point_input,dataset
     for arm in ARMS:
         model,initial = new_model(a,arm);datasets = h.datasets(a,model.config)
         frame = to_device(datasets["train_probe"][item["index"]]["frames"][0],torch.device("cuda:0"))
         model.eval()
         with torch.no_grad():
-            output = model(frame["points"])
-            compare = {k:output[k] for k in ("class_logits","mask_logits","queries")}
-            compare.update({f"aux_{i}_{k}":v[k] for i,v in enumerate(output["auxiliary"])
-                            for k in ("class_logits","mask_logits")})
-            compare = tensor_digest(compare)
-            if baseline_output is None:baseline_output = compare
-            elif compare!=baseline_output:
-                raise ValueError("zero residual branch failed exact baseline equivalence")
+            output,_ = model.decoder(*cached[:3])
+            compare = decoder_snapshot(output)
+            equivalence = verify_decoder_equivalence(compare,baseline_output)
         del output,compare
         model.train();torch.cuda.reset_peak_memory_stats();start = time.monotonic()
         mi,li = h.samples(a,item,frame["points"].device);output = model(frame["points"])
@@ -229,11 +251,12 @@ def smoke(a):
                     raise ValueError("new residual final layer has no finite nonzero gradient")
         record = dict(**initial,loss=float(loss.detach()),gradient_norm=float(norm),
             parts={k:float(v.detach()) for k,v in parts.items()},peak_cuda_allocated_bytes=torch.cuda.max_memory_allocated(),
-            exact_baseline_equivalence=True,initial_outputs_sha256=baseline_output,seconds=time.monotonic()-start)
+            **equivalence,seconds=time.monotonic()-start)
         del output,loss,parts,frame,mi,li
         optimizer = torch.optim.AdamW(model.parameters(),lr=1e-4,weight_decay=.01)
         record["checkpoint_roundtrip"] = checkpoint_roundtrip(a,model,optimizer,arm)
         records[arm] = record;del model,optimizer;torch.cuda.empty_cache()
+    del cached,baseline_output
     if len({r["inherited_state_sha256"] for r in records.values()})!=1:
         raise ValueError("inherited F states differ")
     if (records["P1"]["added_state_sha256"]!=records["P2"]["added_state_sha256"]
@@ -249,7 +272,8 @@ def smoke(a):
     for key in ("frames","gt","tp","pred","fp","raw_geometry_tp","raw_class_tp"):
         if actual[key]!=plan["reference_F_dev"][key]:raise ValueError("F baseline continuity failed: "+key)
     h.write(a.out/"smoke.json",dict(complete=True,initializations=records,training_updates=0,
-        scratch_optimizer_updates=6,extra_smoke_forwards=6,baseline_forwards=160,baseline_reproduced=True,
+        scratch_optimizer_updates=6,extra_smoke_forwards=3,shared_input_backbone_forwards=1,
+        shared_feature_decoder_forwards=4,baseline_forwards=160,baseline_reproduced=True,
         note="scratch updates discarded; all arms reinitialized from F for actual training"))
     del model;torch.cuda.empty_cache();check_sources(a,plan)
 
@@ -433,7 +457,8 @@ def finalize(a):
         actual_optimizer_updates=sum(d["updates"] for d in done.values()),
         actual_training_frame_exposures=sum(d["frame_exposures"] for d in done.values()),
         audited_evaluation_frames=audited["total_evaluation_frames"],scratch_optimizer_updates=6,
-        extra_smoke_forwards=6,audit_complete=True,screen_passed=passed,candidate_adopted=False,e3_started=False,
+        extra_smoke_forwards=3,shared_input_backbone_forwards=1,shared_feature_decoder_forwards=4,
+        audit_complete=True,screen_passed=passed,candidate_adopted=False,e3_started=False,
         human_reviewed=False,new_holdout_evaluated=False,model_performance_accepted=False))
     lines = ["# E2-P 执行报告","",f"固定第6轮终点完成：{endpoint}；位置分支筛选通过：{passed}。",
         "", "| 模型 | TP | FP | Precision | 小目标几何TP | 小目标最终TP | 小目标纯度中位数 |",

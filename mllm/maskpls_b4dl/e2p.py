@@ -29,7 +29,9 @@ def initialize_model(model, parent_state, arm, seed=2026):
     # Its paired hidden layers are random; final weight AND bias are zero.
     if extra:
         with torch.random.fork_rng(devices=[]):
-            torch.manual_seed(seed)
+            # torch.manual_seed also reseeds CUDA, which a CPU-only fork does
+            # not restore. Touch only the CPU default generator here.
+            torch.random.default_generator.manual_seed(seed)
             head = model.decoder.mask_residual_embed
             for layer in head.layers:
                 layer.reset_parameters()
