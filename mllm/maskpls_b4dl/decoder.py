@@ -73,12 +73,24 @@ class MaskedTransformerDecoder(nn.Module):
         # output FFNs
         self.class_embed = nn.Linear(hidden_dim, data_cfg.NUM_CLASSES + 1)
         self.mask_embed = blocks.MLP(hidden_dim, hidden_dim, cfg.HIDDEN_DIM, 3)
+        self.mask_residual_mode = getattr(cfg, "MASK_RESIDUAL_MODE", "none")
+        if self.mask_residual_mode != "none":
+            # Both treatment and capacity control have exactly the same head.
+            # A zero final layer preserves every parent logit at initialization;
+            # its gradients open the branch without a frozen zero scalar gate.
+            self.mask_residual_embed = blocks.MLP(hidden_dim, hidden_dim, hidden_dim, 3)
+            nn.init.zeros_(self.mask_residual_embed.layers[-1].weight)
+            nn.init.zeros_(self.mask_residual_embed.layers[-1].bias)
 
     def forward(self, feats, coors, pad_masks):
         # Do not mutate the backbone feature containers (used by the auxiliary head).
         feats, coors, pad_masks = list(feats), list(coors), list(pad_masks)
         last_coors = coors.pop()
-        mask_features = self.mask_feat_proj(feats.pop()) + self.pe_layer(last_coors)
+        feature_basis = self.mask_feat_proj(feats.pop())
+        position_basis = self.pe_layer(last_coors)
+        mask_features = feature_basis + position_basis
+        residual_basis = (feature_basis if self.mask_residual_mode == "feature" else
+                          position_basis if self.mask_residual_mode == "position" else None)
         last_pad = pad_masks.pop()
         src = []
         pos = []
@@ -101,6 +113,7 @@ class MaskedTransformerDecoder(nn.Module):
             output,
             mask_features,
             pad_mask=last_pad,
+            residual_basis=residual_basis,
         )
         predictions_class.append(outputs_class)
         predictions_mask.append(outputs_mask)
@@ -121,6 +134,7 @@ class MaskedTransformerDecoder(nn.Module):
                 output,
                 mask_features,
                 pad_mask=last_pad,
+                residual_basis=residual_basis,
             )
             predictions_class.append(outputs_class)
             predictions_mask.append(outputs_mask)
@@ -172,11 +186,17 @@ class MaskedTransformerDecoder(nn.Module):
         output,
         mask_features,
         pad_mask=None,
+        residual_basis=None,
     ):
         decoder_output = self.decoder_norm(output)
         outputs_class = self.class_embed(decoder_output)
         mask_embed = self.mask_embed(decoder_output)
         outputs_mask = torch.einsum("bqc,bpc->bpq", mask_embed, mask_features)
+        if self.mask_residual_mode != "none":
+            if residual_basis is None:
+                raise ValueError("active residual mask head requires its input basis")
+            residual_embed = self.mask_residual_embed(decoder_output)
+            outputs_mask = outputs_mask + torch.einsum("bqc,bpc->bpq", residual_embed, residual_basis)
 
         attn_mask = (outputs_mask.sigmoid() < 0.5).detach().bool()
         attn_mask[pad_mask] = True

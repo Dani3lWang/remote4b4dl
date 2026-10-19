@@ -37,8 +37,12 @@ class MaskPLSConfig:
     no_object_weight: float = 0.1
     # Explicit query experiment; old checkpoints/configs retain learned queries.
     query_initialization: str = "learned"
+    # E2-P: an explicitly migrated, zero-output residual mask head.
+    mask_residual_mode: str = "none"
 
     def validate(self):
+        if self.mask_residual_mode not in ("none", "feature", "position"):
+            raise ValueError("invalid mask_residual_mode")
         if self.query_initialization not in ("learned", "zero_learned", "zero_fps"):
             raise ValueError("invalid query_initialization")
         for key in ("num_queries", "knn_chunk_size", "loss_points", "points_per_instance", "match_points"):
@@ -92,5 +96,6 @@ class MaskPLSConfig:
                                   FEATURE_LEVELS=3, DEC_BLOCKS=3, NUM_QUERIES=self.num_queries,
                                   CHECKPOINT=self.checkpoint_decoder,
                                   QUERY_INITIALIZATION=self.query_initialization,
+                                  MASK_RESIDUAL_MODE=self.mask_residual_mode,
                                   POS_ENC=SimpleNamespace(MAX_FREQ=10000, DIMENSIONALITY=3, BASE=2))
         return backbone, decoder, SimpleNamespace(NUM_CLASSES=17)
