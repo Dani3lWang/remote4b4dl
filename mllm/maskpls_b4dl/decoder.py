@@ -1,10 +1,13 @@
 # Adapted from PRBonn/MaskPLS @ 84881ba8; see LICENSE-MaskPLS.txt and NOTICE.md.
 # Modified by Rodrigo Marcuzzi from https://github.com/facebookresearch/Mask2Former
 from . import blocks
+from collections import OrderedDict
+import hashlib
 import torch
 from .positional_encoder import PositionalEncoder
 from torch import nn
 from torch.utils.checkpoint import checkpoint
+from .query_init import farthest_point_indices
 
 
 class MaskedTransformerDecoder(nn.Module):
@@ -47,6 +50,11 @@ class MaskedTransformerDecoder(nn.Module):
 
         self.query_feat = nn.Embedding(cfg.NUM_QUERIES, hidden_dim)
         self.query_embed = nn.Embedding(cfg.NUM_QUERIES, hidden_dim)
+        self.query_initialization = getattr(cfg, "QUERY_INITIALIZATION", "learned")
+        self.query_feat.requires_grad_(self.query_initialization == "learned")
+        self.query_embed.requires_grad_(self.query_initialization != "zero_fps")
+        self._fps_cache = OrderedDict()  # only input hashes and row ids, no labels/features
+        self.last_query_point_indices = None
         self.level_embed = nn.Embedding(self.num_feature_levels, hidden_dim)
 
         self.mask_feat_proj = nn.Sequential()
@@ -83,8 +91,7 @@ class MaskedTransformerDecoder(nn.Module):
             src.append(feat)
 
         bs = src[0].shape[0]
-        query_embed = self.query_embed.weight.unsqueeze(0).repeat(bs, 1, 1)
-        output = self.query_feat.weight.unsqueeze(0).repeat(bs, 1, 1)
+        query_embed, output = self.initialize_queries(last_coors, last_pad)
 
         predictions_class = []
         predictions_mask = []
@@ -126,6 +133,31 @@ class MaskedTransformerDecoder(nn.Module):
         out["aux_outputs"] = self.set_aux(predictions_class, predictions_mask)
 
         return out, last_pad
+
+    def initialize_queries(self, coordinates, padding):
+        bs = coordinates.shape[0]
+        self.last_query_point_indices = None
+        if self.query_initialization == "zero_fps":
+            positions, indices = [], []
+            for xyz, pad in zip(coordinates, padding):
+                valid_ids = (~pad).nonzero(as_tuple=True)[0]
+                raw = xyz[valid_ids].detach().cpu().numpy()
+                key = hashlib.sha256(raw.tobytes()).hexdigest()
+                if key not in self._fps_cache:
+                    self._fps_cache[key] = farthest_point_indices(raw, self.num_queries)
+                    if len(self._fps_cache) > 2048:
+                        self._fps_cache.popitem(last=False)
+                local = torch.as_tensor(self._fps_cache[key], device=xyz.device)
+                ids = valid_ids[local]
+                positions.append(xyz[ids])
+                indices.append(ids.detach().cpu())
+            query_embed = self.pe_layer(torch.stack(positions))
+            self.last_query_point_indices = torch.stack(indices)
+        else:
+            query_embed = self.query_embed.weight.unsqueeze(0).repeat(bs, 1, 1)
+        output = (self.query_feat.weight.unsqueeze(0).repeat(bs, 1, 1)
+                  if self.query_initialization == "learned" else torch.zeros_like(query_embed))
+        return query_embed, output
 
     def decode_layer(self, index, output, memory, attn_mask, padding, position, query_embed):
         output = self.transformer_cross_attention_layers[index](

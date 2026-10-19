@@ -35,8 +35,12 @@ class MaskPLSConfig:
     mask_bce_reduction: str = "point_mean"
     # DETR-style unmatched-query class weight; independent of matching costs.
     no_object_weight: float = 0.1
+    # Explicit query experiment; old checkpoints/configs retain learned queries.
+    query_initialization: str = "learned"
 
     def validate(self):
+        if self.query_initialization not in ("learned", "zero_learned", "zero_fps"):
+            raise ValueError("invalid query_initialization")
         for key in ("num_queries", "knn_chunk_size", "loss_points", "points_per_instance", "match_points"):
             if type(getattr(self, key)) is not int or getattr(self, key) < 1:
                 raise ValueError(key + " must be a positive integer")
@@ -87,5 +91,6 @@ class MaskPLSConfig:
         decoder = SimpleNamespace(HIDDEN_DIM=256, NHEADS=8, DIM_FFN=1024,
                                   FEATURE_LEVELS=3, DEC_BLOCKS=3, NUM_QUERIES=self.num_queries,
                                   CHECKPOINT=self.checkpoint_decoder,
+                                  QUERY_INITIALIZATION=self.query_initialization,
                                   POS_ENC=SimpleNamespace(MAX_FREQ=10000, DIMENSIONALITY=3, BASE=2))
         return backbone, decoder, SimpleNamespace(NUM_CLASSES=17)
