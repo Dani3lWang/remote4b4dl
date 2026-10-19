@@ -39,3 +39,22 @@ Q2的最终TP至少高于 `max(F,Q0,Q1)+10`，Precision最多下降2个百分点
 本地先在独立Python3.10 wqlc CPU环境检查；该检查不能替代服务器MinkowskiEngine/KeOps CUDA验证。实际执行状态以 `training_logs/e2q_20261019/` 下的记录为准。
 
 方法来源：[Mask3D](https://arxiv.org/abs/2210.03105)。原始预算和门槛来自 `training_logs/experiment_design_20261017/实验方案.md`；本实现未根据结果放宽门槛。
+
+## 2026-10-19实际执行与结论
+
+RTX4090独立目录`/root/autodl-tmp/mmb4dl-maskpls-e2q-20261019`，实验源码`1b57aad`，工作流20:09:57–22:17:27（北京时间）完成、退出码0。服务器53项CPU契约、三臂真实帧CUDA前反向及F完整160帧复现通过。三臂均完成6轮1146更新，共3438更新、13752帧呈现；2080评估帧、26范围独立IoU/匹配/分桶审计通过，帧流/共享采样、Adam计数和18份checkpoint身份一致。
+
+| 第6轮开发集，3217 GT | F | Q0 | Q1 | Q2 |
+|---|---:|---:|---:|---:|
+| 最终TP | 188 | 223 | 246 | 247 |
+| FP | 260 | 343 | 412 | 345 |
+| Precision | 41.96% | 39.40% | 37.39% | 41.72% |
+| Recall@0.5 | 5.84% | 6.93% | 7.65% | 7.68% |
+| 1–10点几何TP | 213 | 241 | 226 | 209 |
+| 1–10点最终TP | 22 | 28 | 40 | 49 |
+
+**Q2九项门槛中三项失败，不采纳。** 最终TP247低于256，小目标几何TP209低于261；相对Q1仅3/8场景Recall不退步，未达到5/8（相对Q0为5/8）。Precision、小目标最终TP、中/大目标、忽略区与自车点约束通过。Q2相对Q1最终TP只多1、FP少67，不把相对冻结F多59TP全归因于FPS。Q1也未通过其Precision和小目标几何门槛。
+
+当前保留原epoch14，E3、真正留出评测和语言/时序训练均未启动。此结果只针对当前继承与6轮适应路线，不排除其他FPS设计或从头训练。小目标最终命中49/1938约2.53%，尚不代表空间性能验收通过。
+
+本地紧凑交付2201项文件hash和独立逐目标计数/门槛核验通过；完整checkpoint及预测/采样NPZ仍保留远端。详见[本轮执行结论](../../training_logs/e2q_20261019/本轮执行结论.md)、[完成记录](../../training_logs/e2q_20261019/final-delivery/training_logs/e2q-001/completion.json)、[全量独立审计](../../training_logs/e2q_20261019/final-delivery/training_logs/e2q-001/audit.json)和[本地交付核验](../../training_logs/e2q_20261019/final-local-audit.json)。
