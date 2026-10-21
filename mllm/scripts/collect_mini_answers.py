@@ -296,6 +296,39 @@ def legacy_single(model, tokenizer, prompt, feature, budget):
     }
 
 
+def load_collection_model(runtime, device, cpu_offload_layers):
+    if not cpu_offload_layers:
+        return load_b3(runtime, device)
+    from types import SimpleNamespace
+
+    from accelerate import dispatch_model
+    from vtimellm.model.builder import load_pretrained_model
+
+    if not device.startswith("cuda") or "chatglm" in runtime["model_base"].lower():
+        raise ValueError("CPU layer offload currently requires CUDA Vicuna/Llama")
+    tokenizer, model, _ = load_pretrained_model(
+        SimpleNamespace(
+            model_base=runtime["model_base"],
+            pretrain_mm_mlp_adapter=runtime["pretrain_mm_mlp_adapter"],
+        ),
+        runtime.get("stage2"),
+        runtime.get("stage3"),
+    )
+    count = len(model.get_model().layers)
+    if not 0 < cpu_offload_layers < count:
+        raise ValueError("offload layer count must leave at least one CUDA layer")
+    # CPU stores FP16 weights. Each offloaded layer is copied to CUDA only
+    # while executing, preserving the original computation precision.
+    mapping = {
+        f"model.layers.{i}": "cpu" if i >= count - cpu_offload_layers else device
+        for i in range(count)
+    }
+    for name in ("model.embed_tokens", "model.norm", "model.mm_projector", "lm_head"):
+        mapping[name] = device
+    model.config.use_cache = False
+    return tokenizer, dispatch_model(model, device_map=mapping)
+
+
 def run(args):
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest = json.loads((args.inputs / "manifest.json").read_text(encoding="utf-8"))
@@ -314,6 +347,7 @@ def run(args):
         "batch_size": args.batch_size,
         "max_new_tokens": args.max_new_tokens,
         "retry_tokens": args.retry_tokens,
+        "cpu_offload_layers": args.cpu_offload_layers,
         "do_sample": False,
         "answer_frames": False,
     }
@@ -337,12 +371,15 @@ def run(args):
     torch.manual_seed(2026)
     if args.device.startswith("cuda"):
         gpu = gpu_snapshot()
-        if gpu["free_mib"] < 14500:
-            raise RuntimeError("need 14500 MiB GPU headroom before model load")
+        required = 12500 if args.cpu_offload_layers else 14500
+        if gpu["free_mib"] < required:
+            raise RuntimeError(f"need {required} MiB GPU headroom before model load")
         torch.cuda.set_per_process_memory_fraction(args.memory_fraction)
         event("gpu_before_load", **gpu)
     event("loading_b3", pending=len(unique) - len(cache), requests=len(requests))
-    tokenizer, model = load_b3(runtime, args.device)
+    tokenizer, model = load_collection_model(
+        runtime, args.device, args.cpu_offload_layers
+    )
     model.eval()
     feature_cache = {}
     for row in unique.values():
@@ -405,7 +442,9 @@ def run(args):
         while offset < len(group):
             batch = group[offset : offset + batch_size]
             if args.device.startswith("cuda") and gpu_snapshot()["free_mib"] < 1200:
-                raise RuntimeError("GPU headroom below 1200 MiB; progress preserved")
+                torch.cuda.empty_cache()
+                if gpu_snapshot()["free_mib"] < 1200:
+                    raise RuntimeError("GPU headroom below 1200 MiB; progress preserved")
             prompts = [make_prompt(r["input_question"]) for r in batch]
             feats = [feature_cache[r["features"]["path"]] for r in batch]
             try:
@@ -425,8 +464,8 @@ def run(args):
                 gc.collect()
                 torch.cuda.empty_cache()
                 if batch_size > 1:
-                    batch_size = 1
-                    event("reduce_batch_after_oom", batch_size=1)
+                    batch_size = max(1, batch_size // 2)
+                    event("reduce_batch_after_oom", batch_size=batch_size)
                     continue
                 raise
             with cache_path.open("a", encoding="utf-8") as handle:
@@ -536,6 +575,7 @@ def main():
     execute.add_argument("--device", default="cuda:0")
     execute.add_argument("--batch-size", type=int, default=2)
     execute.add_argument("--memory-fraction", type=float, default=0.57)
+    execute.add_argument("--cpu-offload-layers", type=int, default=0)
     execute.add_argument("--max-new-tokens", type=int, default=256)
     execute.add_argument("--retry-tokens", type=int, default=512)
     args = parser.parse_args()
