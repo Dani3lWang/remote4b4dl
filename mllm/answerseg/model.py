@@ -8,6 +8,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from .language import LanguageBridge, mark_answer, training_sequence
+from .output import answer_spans, probe_answer, render_segmented_answer
 
 
 class BindingHead(nn.Module):
@@ -215,6 +216,100 @@ class AnswerSegModel(nn.Module):
     def predict(
         self, prompt, features, points, *, max_new_tokens=256, selection_threshold=0.5
     ):
+        """Free B3 answer -> segment -> insert SEG only for returned masks."""
+        if self.training:
+            raise ValueError("call eval() before free generation")
+        generated = self.bridge.generate(prompt, features, max_new_tokens)
+        # A previously adapted model may emit its own markers. The output
+        # contract still gates every rendered marker on a real selected mask.
+        plain = generated["answer"].replace("<SEG>", "").replace("<NOOBJ>", "").strip()
+        if not generated["finished"] or not plain:
+            return {
+                "answer": plain,
+                "plain_answer": plain,
+                "raw_answer": generated["answer"],
+                "status": "generation_truncated"
+                if not generated["finished"]
+                else "empty_answer",
+                "objects": [],
+                "masks": [],
+                "marker_counts": {"seg": 0, "noobj": 0},
+                "seg_token_source": "post_segmentation",
+            }
+        result = self.segment_answer(
+            prompt, features, points, plain, selection_threshold=selection_threshold
+        )
+        result["raw_answer"] = generated["answer"]
+        return result
+
+    @torch.no_grad()
+    def segment_answer(
+        self, prompt, features, points, answer, *, spans=None, selection_threshold=0.5
+    ):
+        """Segment an existing free answer; optional spans contain text offsets only.
+
+        No GT answer, target identity, mask or candidate ID is accepted. Default
+        scope is one referent described by the full answer. Multiple referents
+        require explicit text spans; no category-only instance binding is made.
+        """
+        if self.training:
+            raise ValueError("call eval() before segmentation")
+        if not math.isfinite(selection_threshold) or not 0 < selection_threshold <= 1:
+            raise ValueError("selection_threshold must lie in (0,1]")
+        spans = answer_spans(answer, spans)
+        ids, labels = training_sequence(
+            self.bridge.tokenizer, prompt, probe_answer(answer, spans)
+        )
+        _, states, kinds = self.bridge.forward(ids, labels, features)
+        if len(states) != len(spans) or not kinds.eq(self.tokens.seg).all():
+            raise ValueError("answer span probes and language hidden states disagree")
+        _, instances, queries = self.candidates(points)
+        probabilities = self.head(states, queries).softmax(-1)
+        objects, masks = [], []
+        for proposal, probability in enumerate(probabilities):
+            confidence, selected = probability.max(0)
+            if int(selected) == len(queries):
+                reason = "predicted_no_referent"
+            elif float(confidence) < selection_threshold:
+                reason = "low_binding_confidence"
+            elif not instances["masks"][int(selected)].any():
+                reason = "empty_spatial_mask"
+            else:
+                reason = "selected"
+            record = {
+                "proposal_index": proposal,
+                "status": reason,
+                "binding_confidence": float(confidence),
+                "mask_index": None,
+                "query_index": None,
+                "class_id": None,
+                "track_id": None,
+            }
+            if reason == "selected":
+                candidate = int(selected)
+                record.update(
+                    mask_index=len(masks),
+                    query_index=int(instances["query_indices"][candidate]),
+                    class_id=int(instances["class_ids"][candidate]),
+                    spatial_score=float(instances["scores"][candidate]),
+                )
+                masks.append(instances["masks"][candidate])
+            objects.append(record)
+        rendered = render_segmented_answer(answer, spans, objects)
+        return {
+            "answer": rendered,
+            "plain_answer": answer,
+            "status": "ok" if masks else "no_segment_selected",
+            "objects": objects,
+            "masks": masks,
+            "marker_counts": {"seg": len(masks), "noobj": 0},
+            "seg_token_source": "post_segmentation",
+        }
+
+    @torch.no_grad()
+    def predict_native(
+        self, prompt, features, points, *, max_new_tokens=256, selection_threshold=0.5
+    ):
         """Prediction accepts only input features/points: no masks, GT answers or identities."""
         if self.training:
             raise ValueError("call eval() before free generation")
@@ -222,10 +317,11 @@ class AnswerSegModel(nn.Module):
             raise ValueError("selection_threshold must lie in (0,1]")
         generated = self.bridge.generate(prompt, features, max_new_tokens)
         metadata = {
+            "seg_token_source": "native_generation",
             "marker_counts": {
                 "seg": int(generated["labels"].eq(self.tokens.seg).sum()),
                 "noobj": int(generated["labels"].eq(self.tokens.noobj).sum()),
-            }
+            },
         }
         if not generated["finished"]:
             return {

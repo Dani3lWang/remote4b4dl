@@ -1,7 +1,5 @@
-"""Geometry provenance, causal token learning and bounded free-generation checks."""
+"""Inline SEG learning and bounded free-generation checks."""
 
-import copy
-import json
 import tempfile
 import unittest
 from collections import Counter
@@ -10,42 +8,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
-from answerseg.bootstrap import geometry_records, verify_geometry_record
-from answerseg.data import AnswerSegDataset, digest
 from answerseg.language import make_prompt, mark_answer, training_sequence
 from answerseg.runner import prediction_metrics, score_prediction, train
-from test_answerseg import example_fixture, model_fixture, request_fixture
+from test_answerseg import example_fixture, model_fixture
 from torch.nn import functional as F
-
-
-def geometry_fixture():
-    frame = {
-        "points": torch.tensor(
-            [[1.0, 0, 0, 0], [1.0, 1, 0, 0], [5.0, 0, 0, 0], [5.0, 1, 0, 0]]
-        ),
-        "labels": torch.tensor([[1, 1, 0, 0], [0, 0, 1, 1]]),
-        "class_ids": torch.tensor([0, 0]),
-        "instance_tokens": ["near", "far"],
-        "sample_data_token": "frame1",
-    }
-    clip = {
-        "scene_token": "scene1",
-        "split": "train",
-        "label_kind": "panoptic_gt",
-        "frames": [
-            {
-                "sample_data_token": "frame1",
-                "mask_verified": True,
-                "point_file": {"path": "a", "sha256": "a" * 64},
-                "mask_file": {"path": "b", "sha256": "b" * 64},
-                "source_panoptic_file": {"path": "c", "sha256": "c" * 64},
-            }
-        ],
-    }
-    config = SimpleNamespace(
-        point_cloud_range=(-10, -10, -3, 10, 10, 3), class_names=("car",)
-    )
-    return frame, clip, config
 
 
 class FreeSegmentationTests(unittest.TestCase):
@@ -94,80 +60,6 @@ class FreeSegmentationTests(unittest.TestCase):
         )
         self.assertIsNone(model.language.get_output_embeddings().base.weight.grad)
 
-    def test_geometry_requires_multiple_instances_and_clear_distance_margin(self):
-        frame, clip, config = geometry_fixture()
-        rows = geometry_records(
-            frame, clip, request_fixture()["features"], config, min_points=2
-        )
-        self.assertEqual(
-            [r["targets"][0]["instance_token"] for r in rows], ["near", "far"]
-        )
-        self.assertTrue(all(r["grounding_verified"] is False for r in rows))
-        self.assertTrue(all(r["review_status"] == "not_human_reviewed" for r in rows))
-        frame["labels"] = frame["labels"][:1]
-        frame["class_ids"] = frame["class_ids"][:1]
-        self.assertEqual(geometry_records(frame, clip, {}, config, min_points=2), [])
-
-    def test_geometry_ties_and_unverified_masks_never_enter_training(self):
-        frame, clip, config = geometry_fixture()
-        frame["points"][2:, :2] = frame["points"][:2, :2]
-        self.assertEqual(geometry_records(frame, clip, {}, config, min_points=2), [])
-        clip["frames"][0]["mask_verified"] = False
-        with self.assertRaisesRegex(ValueError, "verified panoptic"):
-            geometry_records(frame, clip, {}, config, min_points=2)
-
-    def test_geometry_target_and_hash_cannot_be_rewritten_without_recomputation(self):
-        frame, clip, config = geometry_fixture()
-        row = geometry_records(
-            frame, clip, request_fixture()["features"], config, min_points=2
-        )[0]
-        verify_geometry_record(row, frame, clip, config)
-        for field in ("targets", "answer", "grounding_verified"):
-            tampered = copy.deepcopy(row)
-            tampered[field] = {
-                "targets": [
-                    {"span": [4, 15], "status": "matched", "instance_token": "far"}
-                ],
-                "answer": "The farthest car.",
-                "grounding_verified": True,
-            }[field]
-            tampered["source_fingerprint"] = digest(
-                {k: v for k, v in tampered.items() if k != "source_fingerprint"}
-            )
-            with self.assertRaisesRegex(ValueError, "panoptic rule"):
-                verify_geometry_record(tampered, frame, clip, config)
-
-    def test_dataset_reports_geometry_separately_and_rechecks_labels(self):
-        frame, clip, config = geometry_fixture()
-        row = geometry_records(
-            frame, clip, request_fixture()["features"], config, min_points=2
-        )[0]
-
-        class Spatial:
-            def __init__(self):
-                self.records = [clip]
-
-            def __getitem__(self, index):
-                return {"frames": [frame]}
-
-        spatial = Spatial()
-        spatial.config = config
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "rows.jsonl"
-            path.write_text(json.dumps(row) + "\n", encoding="utf-8")
-            dataset = AnswerSegDataset(path, spatial, directory)
-            with patch(
-                "answerseg.data.load_features", return_value=torch.zeros(1, 768)
-            ):
-                report = dataset.preflight()
-                self.assertEqual(
-                    report["supervision_sources"], {"geometry_bootstrap": 1}
-                )
-                self.assertIn("<SEG>", dataset[0]["prompt"])
-                frame["points"][:2, 0] = 8
-                with self.assertRaisesRegex(ValueError, "panoptic rule"):
-                    dataset[0]
-
     def test_emission_and_recall_retain_missing_token_failures(self):
         totals = Counter()
         prediction = {
@@ -178,7 +70,7 @@ class FreeSegmentationTests(unittest.TestCase):
         }
         score_prediction(prediction, example_fixture(), totals)
         metrics = prediction_metrics(totals, Counter(missing_seg_token=1))
-        self.assertEqual(metrics["seg_emission_rate"], 0)
+        self.assertEqual(metrics["seg_output_rate"], 0)
         self.assertEqual(metrics["recall_at_0_5"], 0)
         self.assertEqual(metrics["false_negatives"], 1)
 

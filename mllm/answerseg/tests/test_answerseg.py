@@ -362,7 +362,7 @@ class InferenceTests(unittest.TestCase):
                 model.head, "forward", return_value=torch.tensor([[20.0, -20.0, -20.0]])
             ),
         ):
-            prediction = model.predict(
+            prediction = model.predict_native(
                 make_prompt("truck"),
                 torch.randn(3, 768),
                 torch.zeros(4, 4),
@@ -382,7 +382,7 @@ class InferenceTests(unittest.TestCase):
             with patch.object(
                 model.language, "generate", return_value=self.generated(model, text)
             ):
-                prediction = model.predict(
+                prediction = model.predict_native(
                     make_prompt("truck"),
                     torch.randn(3, 768),
                     torch.zeros(4, 4),
@@ -396,7 +396,7 @@ class InferenceTests(unittest.TestCase):
                 self.assertFalse(prediction["masks"][0].any())
         ids = self.generated(model, "truck")[:, :-1]
         with patch.object(model.language, "generate", return_value=ids):
-            result = model.predict(
+            result = model.predict_native(
                 make_prompt("truck"),
                 torch.randn(3, 768),
                 torch.zeros(4, 4),

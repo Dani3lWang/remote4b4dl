@@ -39,28 +39,28 @@ def parse_args(argv=None):
     for name in (
         "collect",
         "prepare",
-        "bootstrap",
         "preflight",
         "train",
         "predict",
+        "segment-answer",
         "evaluate",
     ):
         command = commands.add_parser(name)
         command.add_argument("--output-dir", type=Path, required=True)
-        if name in ("collect", "train", "predict", "evaluate"):
+        if name in ("collect", "train", "predict", "segment-answer", "evaluate"):
             command.add_argument("--runtime", type=Path, required=True)
             command.add_argument("--device", default="cuda:0")
-        if name in ("prepare", "bootstrap", "preflight", "train", "evaluate"):
+        if name in ("prepare", "preflight", "train", "evaluate"):
             command.add_argument("--data", type=Path, required=True)
-        if name in ("collect", "predict"):
+        if name in ("collect", "predict", "segment-answer"):
             command.add_argument("--requests", type=Path, required=True)
             command.add_argument("--feature-root", type=Path, required=True)
         if name in ("collect", "predict", "evaluate"):
             command.add_argument("--max-new-tokens", type=int, default=256)
-        if name in ("predict", "evaluate"):
+        if name in ("predict", "segment-answer", "evaluate"):
             command.add_argument("--bundle", type=Path, required=True)
             command.add_argument("--selection-threshold", type=float, default=0.5)
-        if name == "predict":
+        if name in ("predict", "segment-answer"):
             command.add_argument("--point-root", type=Path, required=True)
         if name == "prepare":
             command.add_argument("--source", type=Path, required=True)
@@ -69,13 +69,6 @@ def parse_args(argv=None):
             command.add_argument(
                 "--split", choices=("train", "internal_dev"), default="train"
             )
-        if name == "bootstrap":
-            command.add_argument("--feature-index", type=Path, required=True)
-            command.add_argument(
-                "--split", choices=("train", "internal_dev"), required=True
-            )
-            command.add_argument("--min-points", type=int, default=20)
-            command.add_argument("--minimum-gap", type=float, default=0.5)
         if name == "train":
             command.add_argument(
                 "--stage", choices=("binding", "joint"), default="binding"
@@ -510,13 +503,31 @@ def predict(args, runtime):
             raise ValueError("duplicate prediction request")
         seen.add(request["request_id"])
         points = input_points(args.point_root, request).to(args.device)
-        prediction = model.predict(
-            make_prompt(request["question"], segmentation=True),
+        inputs = (
+            make_prompt(request["question"]),
             load_features(args.feature_root, request),
             points,
-            max_new_tokens=args.max_new_tokens,
-            selection_threshold=args.selection_threshold,
         )
+        if getattr(args, "command", "predict") == "segment-answer":
+            if any(
+                key in request
+                for key in ("targets", "instance_token", "query_index", "target_mask")
+            ):
+                raise ValueError(
+                    "segment-answer accepts free text spans, not GT identities/masks"
+                )
+            prediction = model.segment_answer(
+                *inputs,
+                request["answer"],
+                spans=request.get("answer_spans"),
+                selection_threshold=args.selection_threshold,
+            )
+        else:
+            prediction = model.predict(
+                *inputs,
+                max_new_tokens=args.max_new_tokens,
+                selection_threshold=args.selection_threshold,
+            )
         statuses[prediction["status"]] += 1
         save_prediction(
             args.output_dir,
@@ -546,11 +557,18 @@ def score_prediction(prediction, example, totals):
         for target in example["targets"]
         if target["status"] == "matched"
     ]
-    predicted = [
-        mask.cpu()
-        for mask, obj in zip(prediction["masks"], prediction["objects"])
-        if obj["status"] == "selected"
-    ]
+    if prediction.get("seg_token_source") == "post_segmentation":
+        predicted = [
+            prediction["masks"][obj["mask_index"]].cpu()
+            for obj in prediction["objects"]
+            if obj["status"] == "selected"
+        ]
+    else:
+        predicted = [
+            mask.cpu()
+            for mask, obj in zip(prediction["masks"], prediction["objects"])
+            if obj["status"] == "selected"
+        ]
     totals["records"] += 1
     markers = prediction.get("marker_counts", {})
     totals["records_with_seg_tokens"] += int(markers.get("seg", 0) > 0)
@@ -560,10 +578,11 @@ def score_prediction(prediction, example, totals):
     if not gt:
         totals["no_target_records"] += 1
         totals["correct_no_target_records"] += int(
-            prediction["status"] == "ok"
+            prediction["status"] in ("ok", "no_segment_selected")
             and bool(prediction["objects"])
             and all(
-                obj["status"] == "explicit_no_target" for obj in prediction["objects"]
+                obj["status"] in ("explicit_no_target", "predicted_no_referent")
+                for obj in prediction["objects"]
             )
         )
     iou = np.zeros((len(gt), len(predicted)))
@@ -602,7 +621,7 @@ def prediction_metrics(totals, statuses):
         / totals["no_target_records"]
         if totals["no_target_records"]
         else None,
-        seg_emission_rate=totals["records_with_seg_tokens"] / totals["records"]
+        seg_output_rate=totals["records_with_seg_tokens"] / totals["records"]
         if totals["records"]
         else None,
         statuses=dict(statuses),
@@ -666,15 +685,11 @@ def main(argv=None):
         result = collect(args, runtime)
     elif args.command == "prepare":
         result = prepare(args, spec)
-    elif args.command == "bootstrap":
-        from .bootstrap import bootstrap
-
-        result = bootstrap(args, spec)
     elif args.command == "preflight":
         _, _, result = preflight(spec)
     elif args.command == "train":
         result = train(args, runtime, spec)
-    elif args.command == "predict":
+    elif args.command in ("predict", "segment-answer"):
         result = predict(args, runtime)
     else:
         result = evaluate(args, runtime, spec)

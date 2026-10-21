@@ -13,7 +13,7 @@
 ```
 
 - 先恢复、合并原 B3 adapter，再增加 `<SEG>/<NOOBJ>`，避免把扩词表后的模型直接送入原 adapter 恢复流程。保留 `<4DLiDAR>/<meta>`。
-- `binding`：冻结 B3 和 MaskPLS，只训练对齐头。此阶段使用人工审核的回答标记作 teacher forcing；冻结的 B3 尚未学会自由生成新 token，不能把它作为最终自由生成模型。
+- `binding`：冻结 B3 和 MaskPLS，只训练对齐头。此阶段使用人工审核的回答标记作内部 probe。对齐头训练完成后，可直接用于“自由文本→分割→后插入标记”输出；不要求冻结的 B3 学会生成新 token。
 - `joint`：在线读取 B3 隐状态，更新新增 q/v LoRA、两个新 token 的输入/输出行和对齐头。`--tune-spatial` 才允许更新 MaskPLS。新增 token 行单独以 FP32 训练，旧词表冻结，不为整张词表建立 Adam 状态。
 - `--init-bundle` 仅支持从 `binding` 进入 `joint`，继承已训练的对齐头，重置优化器。只读取小型对齐权重，不同时加载第二个 7B 模型。当前没有断点续训入口；每次训练使用新目录。
 - 联合损失为 `L_text + L_bind + L_mask`。对齐 CE 以实际预测实例与 GT 掩码的几何一对一匹配为目标；mask 损失为候选软掩码加权后的 BCE + Dice。`binding` 不计算文本梯度。推理使用离散选择实例的原始点序掩码。
@@ -113,40 +113,30 @@ conda run -n wqlc python mllm/scripts/run_answerseg.py evaluate \
 
 输出 JSON 包含回答、每个标记的选择状态、帧内 query/object ID 和置信度；NPZ 包含 `[目标数,原始点数]` bool masks、原始 point_indices 和点云哈希。帧内 query ID 不作为跨帧身份。
 
-缺少分割 token、生成截断、明确 NOOBJ、选择器拒绝和低置信度分别记录，不使用随机向量或最近实例兜底。所有失败正例都计入 Recall 分母；评测输出 Recall/Precision@0.5、每个目标的最佳 IoU 均值和明确 NOOBJ 准确率，不将后者命名为标准 cIoU/gIoU。评测范围为审核过的 internal_dev 绑定；mini 或已暴露场景不能据此宣称独立泛化。B3 六任务回归需使用本接口恢复模型，再通过 `model.bridge.generate()` 以相同问题和特征生成文本，并沿用原六任务指标计算；不能直接将本bundle作为旧入口的stage2/stage3 adapter。本轮尚未执行该回归。
+默认先自由回答再分割，不以回答中是否存在 SEG 作为准入条件。生成截断、选择器拒绝、低置信度与空掩码分别记录；失败不插入输出标记。旧的原生 token 诊断保留为 model.predict_native()，它单独区分缺少 token、NOOBJ 等状态，不使用随机向量或最近实例兜底。所有失败正例都计入 Recall 分母；评测输出 Recall/Precision@0.5、每个目标的最佳 IoU 均值和明确 NOOBJ 准确率，不将后者命名为标准 cIoU/gIoU。评测范围为审核过的 internal_dev 绑定；mini 或已暴露场景不能据此宣称独立泛化。B3 六任务回归需使用本接口恢复模型，再通过 `model.bridge.generate()` 以相同问题和特征生成文本，并沿用原六任务指标计算；不能直接将本bundle作为旧入口的stage2/stage3 adapter。本轮尚未执行该回归。
 
 ## 本地验证与边界
 
-### 自由分割补充（2026-10-21）
+### 自由回答后插入 SEG（2026-10-21）
 
-训练数据读取和 `predict/evaluate` 共用 `make_prompt(..., segmentation=True)`，要求回答在指代短语后生成 `<SEG>`，明确无目标才用 `<NOOBJ>`。`collect` 继续使用原 B3 提示。提示中的格式说明不计入语言监督；生成仍为普通贪心解码，没有强制 token、固定回答或 GT query 回放。`--marker-loss-weight 8` 可显式提高 assistant 标记的因果 CE 权重，默认 1；计算位置为视觉展开后标记的前一个 logit。损失加权是启动选项，尚未证明最优。
+默认 `model.predict()` 和 CLI `predict/evaluate` 的顺序为：原问题及原始输入 → B3 自由纯文本回答 → 对回答所指对象推理分割 → 对成功的非空掩码插入 `<SEG>` → 一起输出文本和分割结果。自由回答使用普通 `make_prompt(question)`，无需模型生成特殊 token，也不改成几何模板问题。
 
-正式自然语言绑定不足时，可独立构造几何规则启动集。它只读取已核验 `panoptic_gt` 的原始点序实例，按同类实例在模型 ROI 中的 XY 点质心距离构造 nearest/farthest 问题；默认至少 20 个前景点、至少两个同类实例，第一与第二名相差至少 0.5 m。类别单候选、距离不唯一、box pseudo、未核验掩码不准入。问题写明点数、ROI 和距离规则，目标不依赖 B3 回答或空间模型预测。每次加载重新从点标签计算完整记录，不能改目标后只重算指纹。
+分割内部将回答文本的指代位置编码成 SEG probe，第二次 forward 提取其隐状态，交给已训练的对齐头选择真实 MaskPLS 候选。这些内部标记不作为输出成功的证据；只有通过置信度门槛且确有非空原始点序掩码的对象，才由渲染函数将 `<SEG>` 插入最终文本。默认单目标，使用完整回答（保留后置描述，略过末尾标点）作为一个指代；多个目标可调用 `segment_answer(..., spans=[[start,end], ...])` 指定纯文本字符位置，最多八个，不接受目标实例 ID、query 或 GT mask。该默认单目标约定不宣称能自动解析任意多对象回答。
 
-该数据使用单独的 `b4dl-answerseg-v1-geometry-bootstrap` schema，`answer_source=panoptic_geometry_template`、`review_status=not_human_reviewed`、`grounding_verified=false`，不会修改 pending 问答或伪造人工接受。它验证简单几何指代与格式学习，不能代替复杂问题的人工绑定、B3 自生成回答审核或推理分割效果验收。原人工审核准入保持有效。
+Python 返回 `plain_answer`、含标记的 `answer`、`objects` 和实际 `masks`；每个对象含原文 `text_span/phrase`、状态、`seg_index`、`mask_index` 和输出文本中的 `output_marker_span`。拒绝对象的索引为 null，不占掩码行；前一个对象失败不会使后一个对象的标记与掩码错位。原文字符和标点保留，只新增成功标记。`seg_token_source=post_segmentation` 明确说明标记由分割后渲染产生，`seg_output_rate` 为输出标记比例，不冒充模型自然 token 生成率。CLI 的 JSON 与 NPZ 一起输出，用 `mask_file/mask_index` 连接；NPZ 继续保存完整原始点序及源点云哈希。
 
-```bash
-conda run -n wqlc python mllm/scripts/run_answerseg.py bootstrap \
-  --data /path/data.json --feature-index /path/feature-index.jsonl \
-  --split train --output-dir /path/new-geometry-train
-
-conda run -n wqlc python mllm/scripts/run_answerseg.py bootstrap \
-  --data /path/data.json --feature-index /path/dev-feature-index.jsonl \
-  --split internal_dev --output-dir /path/new-geometry-dev
-```
-
-将这两个 `bootstrap.jsonl` 分别作为 data 中的 `manifest/dev_manifest`，使用原空间 train/internal_dev 的场景划分和同一 SST 编码器。`preflight` 分列 `supervision_sources`。以下仅演示有限步数工程验证参数：
+若自由回答已由外部 B3 生成，使用新增入口，不必再生成回答：
 
 ```bash
-conda run -n wqlc python mllm/scripts/run_answerseg.py train \
-  --runtime /path/runtime.json --data /path/data.json --stage joint \
-  --epochs 4 --max-steps 16 --marker-loss-weight 8 --lr 0.001 \
-  --free-dev-samples 2 --max-new-tokens 64 --output-dir /path/new-free-smoke
+conda run -n wqlc python mllm/scripts/run_answerseg.py segment-answer \
+  --runtime /path/runtime.json --bundle /path/trained-binding/epoch-1 \
+  --requests /path/free-answers.jsonl --feature-root /path/features \
+  --point-root /path/nuScenes --output-dir /path/segmented-answers
 ```
 
-`--max-steps` 是实际优化器更新上限；中途停止保存为 `step-N` 并如实记录未完成的 epoch。每次保存前可执行独立的自由生成开发检查，只传问题、SST 特征和原始点云，日志在 `free-development.jsonl`。它与 teacher-forcing 诊断分开，报告自然 SEG 生成率、所有正例分母、Recall/Precision@0.5、缺少标记/截断/拒绝等状态；`evaluate` 同样报告生成率。几何启动集没有显式负例，不能据此验收 NOOBJ。训练后仍须用 `predict/evaluate` 检查保存重载和真正未暴露数据，不能把接口或单帧成功当作正式新模型。
+请求在原 `predict` 格式上增加 `answer`，可选 `answer_spans`。例如原文 `The car ahead.` 成功后输出 `The car ahead <SEG>.`；若对齐拒绝或低置信度则保留原文，不硬塞 SEG，不输出伪掩码。普通 `predict` 仍自动完成“生成→分割→渲染”全链路。人工审核绑定准入保持不变，几何启动模块及其 CLI 已依用户澄清移除。
 
-本次代码改变 bundle 的实现指纹；旧工程 bundle 不兼容，必须使用新源码重新构造，未绕过严格身份校验。
+`train` 另外支持 `--max-steps` 作为优化器更新上限、`--free-dev-samples` 进行独立自由回答后分割检查；部分 epoch 保存为 `step-N` 并如实记录。没有有效绑定监督则失败，不将纯文本更新称为分割训练。当前正式已审核 train/dev 仍为空，不能将工程权重或 CPU fixture 当成已训练的回答绑定模型。代码改变实现指纹，旧 bundle 不可静默加载。
 
 ```bash
 conda run -n wqlc python -m unittest discover -s mllm/answerseg/tests -v
