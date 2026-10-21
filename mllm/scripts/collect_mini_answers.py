@@ -326,6 +326,9 @@ def load_collection_model(runtime, device, cpu_offload_layers):
     for name in ("model.embed_tokens", "model.norm", "model.mm_projector", "lm_head"):
         mapping[name] = device
     model.config.use_cache = False
+    # initialize_vision_modules creates its projector in FP32 even when the
+    # base Llama was restored in FP16. Match load_b3's final dtype conversion.
+    model = model.half()
     return tokenizer, dispatch_model(model, device_map=mapping)
 
 
@@ -444,7 +447,9 @@ def run(args):
             if args.device.startswith("cuda") and gpu_snapshot()["free_mib"] < 1200:
                 torch.cuda.empty_cache()
                 if gpu_snapshot()["free_mib"] < 1200:
-                    raise RuntimeError("GPU headroom below 1200 MiB; progress preserved")
+                    raise RuntimeError(
+                        "GPU headroom below 1200 MiB; progress preserved"
+                    )
             prompts = [make_prompt(r["input_question"]) for r in batch]
             feats = [feature_cache[r["features"]["path"]] for r in batch]
             try:
