@@ -21,6 +21,7 @@ class MiniCollectionTests(unittest.TestCase):
         self.assertEqual(model.get_model().mm_projector.weight.dtype, torch.float32)
 
         def dispatch(restored, device_map):
+            self.assertEqual(device_map["model.rotary_emb"], "cuda:0")
             self.assertTrue(
                 all(p.dtype == torch.float16 for p in restored.parameters())
             )

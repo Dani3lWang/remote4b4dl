@@ -325,6 +325,10 @@ def load_collection_model(runtime, device, cpu_offload_layers):
     }
     for name in ("model.embed_tokens", "model.norm", "model.mm_projector", "lm_head"):
         mapping[name] = device
+    if hasattr(model.get_model(), "rotary_emb"):
+        # Transformers 4.47 keeps RoPE outside the decoder layers. Its
+        # nonpersistent inv_freq buffer also needs an explicit CUDA mapping.
+        mapping["model.rotary_emb"] = device
     model.config.use_cache = False
     # initialize_vision_modules creates its projector in FP32 even when the
     # base Llama was restored in FP16. Match load_b3's final dtype conversion.
