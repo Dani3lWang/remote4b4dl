@@ -22,6 +22,9 @@ class BindingHead(nn.Module):
         self.no_referent = nn.Parameter(torch.randn(query_dim) * 0.02)
 
     def forward(self, states, queries):
+        device = self.no_referent.device
+        states = states.to(device=device, dtype=torch.float32)
+        queries = queries.to(device=device, dtype=torch.float32)
         candidates = torch.cat(
             (self.object(queries.float()), self.no_referent[None]), 0
         )
@@ -178,7 +181,9 @@ class AnswerSegModel(nn.Module):
         zero = logits.sum() * 0
         binding_loss = torch.stack(losses).mean() if losses else zero
         mask_loss = torch.stack(mask_losses).mean() if mask_losses else zero
-        language_term = language_loss if self.stage == "joint" else zero
+        language_term = (
+            language_loss.to(logits.device) if self.stage == "joint" else zero
+        )
         weights = self.loss_weights
         loss = (
             weights[0] * language_term

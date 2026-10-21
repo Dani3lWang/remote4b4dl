@@ -90,6 +90,7 @@ def configure_lora(language, tokens, *, rank=16, alpha=32):
 def load_b3(runtime, device):
     from vtimellm.model.builder import load_pretrained_model
 
+    device = runtime.get("language_device", device)
     if not runtime.get("pretrain_mm_mlp_adapter"):
         raise ValueError("restore B3 with its explicit stage1/mm_projector artifact")
     if "chatglm" in runtime["model_base"].lower():

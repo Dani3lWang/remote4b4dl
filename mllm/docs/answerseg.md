@@ -31,6 +31,8 @@ conda run -n wqlc python -m pip install -r mllm/answerseg/requirements.txt
 
 B3 原训练路径的环境、数据和特征闭合仍按 `mllm/scripts/preflight_b3.py` 检查。回答分割另有下面的 `preflight`，检查其实际绑定数据。当前接口未声明 7B + 稀疏骨干在特定显存上的峰值；应先用真实权重、真实一帧执行最小训练预算，再决定正式训练预算。
 
+共享 GPU 空闲显存不足时，runtime 可显式增加 `"language_device":"cpu"`：7B 语言部分和其 LoRA 位于 CPU，空间模型与对齐头仍在 `--device` 指定的 GPU。在线隐状态和文本损失会跨设备传递，保留反向梯度；CPU 模式需要额外主存并降低速度。未填写时两端沿用同一设备。测试前应读取当前 GPU 占用并给已有任务留下余量，不自动结束其他任务。
+
 ## 请求与特征映射
 
 `requests.jsonl` 每行给出问题和真实输入帧，**不含真实回答或分割目标**。`question` 可以原样包含既有 `<video>/<4DLiDAR>/<meta>` 文本；没有 `<video>` 时自动添加一个。元数据由调用者按 B3 的既有协议构造，此入口不会从答案恢复帧或元数据。

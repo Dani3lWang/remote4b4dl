@@ -557,6 +557,24 @@ class DataTests(unittest.TestCase):
 
 
 class CheckpointTests(unittest.TestCase):
+    def test_cpu_language_offload_overrides_gpu_request_without_cuda_allocation(self):
+        from answerseg.runtime import load_b3
+
+        tokenizer, language = tiny_language()
+        runtime = {
+            "model_base": "vicuna",
+            "stage2": "b3",
+            "pretrain_mm_mlp_adapter": "projector",
+            "language_device": "cpu",
+        }
+        with patch(
+            "vtimellm.model.builder.load_pretrained_model",
+            return_value=(tokenizer, language, 512),
+        ):
+            _, restored = load_b3(runtime, "cuda:0")
+        self.assertEqual(restored.get_input_embeddings().weight.device.type, "cpu")
+        self.assertEqual(restored.get_input_embeddings().weight.dtype, torch.float32)
+
     def test_roundtrip_retains_joint_parameters_and_rejects_wrong_stage(self):
         model = model_fixture("joint", tune=True)
         model.train()
