@@ -1,0 +1,4 @@
+# Install into the existing wqlc + MaskPLS environment; retain its CUDA/native stack.
+transformers==4.47.0
+peft==0.13.2
+sentencepiece>=0.2.0,<0.3

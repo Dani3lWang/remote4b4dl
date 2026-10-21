@@ -1,0 +1,14 @@
+{
+  "manifest": "/path/to/reviewed-train/reviewed.jsonl",
+  "dev_manifest": "/path/to/reviewed-dev/reviewed.jsonl",
+  "spatial_manifest": "/path/to/answer-binding/spatial/train.jsonl",
+  "dev_spatial_manifest": "/path/to/answer-binding/spatial/internal_dev.jsonl",
+  "scene_tokens": "/path/to/spatial/train_scene_tokens.json",
+  "dev_scene_tokens": "/path/to/spatial/dev_scene_tokens.json",
+  "nuscenes_root": "/path/to/nuScenes",
+  "label_root": "/path/to/answer-binding/spatial",
+  "panoptic_root": "/path/to/nuScenes-panoptic-v1.0-all",
+  "metadata_root": "/path/to/nuScenes",
+  "feature_root": "/path/to/existing-SST-features",
+  "spatial_checkpoint": "/path/to/audited-native-maskpls/best.pt"
+}
