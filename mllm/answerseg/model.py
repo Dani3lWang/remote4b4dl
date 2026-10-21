@@ -77,6 +77,7 @@ class AnswerSegModel(nn.Module):
         language_weight=1.0,
         binding_weight=1.0,
         mask_weight=1.0,
+        marker_loss_weight=1.0,
     ):
         super().__init__()
         if stage not in ("binding", "joint") or (stage == "binding" and tune_spatial):
@@ -90,6 +91,9 @@ class AnswerSegModel(nn.Module):
         self.bridge = LanguageBridge(language, tokenizer, tokens)
         self.tokens, self.stage, self.tune_spatial = tokens, stage, tune_spatial
         self.minimum_iou = minimum_iou
+        if not math.isfinite(marker_loss_weight) or marker_loss_weight < 1:
+            raise ValueError("marker_loss_weight must be finite and at least one")
+        self.marker_loss_weight = marker_loss_weight
         self.loss_weights = (language_weight, binding_weight, mask_weight)
         self.head = BindingHead(language.config.hidden_size)
         if stage == "binding":
@@ -122,7 +126,10 @@ class AnswerSegModel(nn.Module):
         )
         with torch.set_grad_enabled(self.stage == "joint" and self.training):
             language_loss, states, kinds = self.bridge.forward(
-                ids, labels, example["features"]
+                ids,
+                labels,
+                example["features"],
+                marker_loss_weight=self.marker_loss_weight,
             )
         if len(states) != len(targets):
             raise ValueError(
@@ -214,10 +221,17 @@ class AnswerSegModel(nn.Module):
         if not math.isfinite(selection_threshold) or not 0 < selection_threshold <= 1:
             raise ValueError("selection_threshold must lie in (0,1]")
         generated = self.bridge.generate(prompt, features, max_new_tokens)
+        metadata = {
+            "marker_counts": {
+                "seg": int(generated["labels"].eq(self.tokens.seg).sum()),
+                "noobj": int(generated["labels"].eq(self.tokens.noobj).sum()),
+            }
+        }
         if not generated["finished"]:
             return {
                 "answer": generated["answer"],
                 "status": "generation_truncated",
+                **metadata,
                 "objects": [],
                 "masks": [],
             }
@@ -228,6 +242,7 @@ class AnswerSegModel(nn.Module):
             return {
                 "answer": generated["answer"],
                 "status": "missing_seg_token",
+                **metadata,
                 "objects": [],
                 "masks": [],
             }
@@ -235,6 +250,7 @@ class AnswerSegModel(nn.Module):
             return {
                 "answer": generated["answer"],
                 "status": "too_many_seg_tokens",
+                **metadata,
                 "objects": [],
                 "masks": [],
             }
@@ -273,6 +289,7 @@ class AnswerSegModel(nn.Module):
         return {
             "answer": generated["answer"],
             "status": "ok",
+            **metadata,
             "objects": objects,
             "masks": masks,
         }

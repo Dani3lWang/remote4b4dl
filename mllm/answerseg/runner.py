@@ -36,13 +36,21 @@ from .runtime import (
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("collect", "prepare", "preflight", "train", "predict", "evaluate"):
+    for name in (
+        "collect",
+        "prepare",
+        "bootstrap",
+        "preflight",
+        "train",
+        "predict",
+        "evaluate",
+    ):
         command = commands.add_parser(name)
         command.add_argument("--output-dir", type=Path, required=True)
         if name in ("collect", "train", "predict", "evaluate"):
             command.add_argument("--runtime", type=Path, required=True)
             command.add_argument("--device", default="cuda:0")
-        if name in ("prepare", "preflight", "train", "evaluate"):
+        if name in ("prepare", "bootstrap", "preflight", "train", "evaluate"):
             command.add_argument("--data", type=Path, required=True)
         if name in ("collect", "predict"):
             command.add_argument("--requests", type=Path, required=True)
@@ -61,6 +69,13 @@ def parse_args(argv=None):
             command.add_argument(
                 "--split", choices=("train", "internal_dev"), default="train"
             )
+        if name == "bootstrap":
+            command.add_argument("--feature-index", type=Path, required=True)
+            command.add_argument(
+                "--split", choices=("train", "internal_dev"), required=True
+            )
+            command.add_argument("--min-points", type=int, default=20)
+            command.add_argument("--minimum-gap", type=float, default=0.5)
         if name == "train":
             command.add_argument(
                 "--stage", choices=("binding", "joint"), default="binding"
@@ -72,6 +87,12 @@ def parse_args(argv=None):
             command.add_argument("--lora-rank", type=int, default=16)
             command.add_argument("--lora-alpha", type=int, default=32)
             command.add_argument("--seed", type=int, default=2026)
+            command.add_argument("--marker-loss-weight", type=float, default=1.0)
+            command.add_argument(
+                "--max-steps", type=int, help="Hard optimizer-update budget."
+            )
+            command.add_argument("--free-dev-samples", type=int, default=0)
+            command.add_argument("--max-new-tokens", type=int, default=64)
             command.add_argument(
                 "--init-bundle",
                 type=Path,
@@ -80,7 +101,7 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def make_dataset(spec, *, development=False, manifest=None):
+def make_spatial_dataset(spec, *, development=False):
     from grounded4d.data import load_scene_tokens
     from maskpls_b4dl.config import MaskPLSConfig
     from maskpls_b4dl.data import MaskPLSDataset
@@ -101,6 +122,12 @@ def make_dataset(spec, *, development=False, manifest=None):
         panoptic_root=spec["panoptic_root"],
     )
     policy = verify_source_split(spatial, spec["metadata_root"])
+    return spatial, policy
+
+
+def make_dataset(spec, *, development=False, manifest=None):
+    prefix = "dev_" if development else ""
+    spatial, policy = make_spatial_dataset(spec, development=development)
     dataset = AnswerSegDataset(
         manifest or spec[prefix + "manifest"], spatial, spec["feature_root"]
     )
@@ -254,6 +281,12 @@ def initialize_stage(model, directory, identity):
 def train(args, runtime, spec):
     if args.epochs < 1:
         raise ValueError("epochs must be positive")
+    maximum = getattr(args, "max_steps", None)
+    free_count = getattr(args, "free_dev_samples", 0)
+    if maximum is not None and maximum < 1:
+        raise ValueError("max_steps must be positive")
+    if free_count < 0:
+        raise ValueError("free_dev_samples cannot be negative")
     if (
         Path(runtime["spatial_checkpoint"]).resolve()
         != Path(spec["spatial_checkpoint"]).resolve()
@@ -275,6 +308,7 @@ def train(args, runtime, spec):
         minimum_iou=args.minimum_iou,
         rank=args.lora_rank,
         alpha=args.lora_alpha,
+        marker_loss_weight=getattr(args, "marker_loss_weight", 1.0),
     )
     if args.init_bundle:
         initialize_stage(model, args.init_bundle, identity)
@@ -285,6 +319,7 @@ def train(args, runtime, spec):
         model.train()
         order = list(range(len(train_data)))
         random.shuffle(order)
+        processed = 0
         for index in order:
             example = move_example(train_data[index], args.device)
             optimizer.zero_grad(set_to_none=True)
@@ -313,6 +348,9 @@ def train(args, runtime, spec):
             )
             with history.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, allow_nan=False) + "\n")
+            processed += 1
+            if maximum is not None and step >= maximum:
+                break
         if step == 0 or binding_supervision == 0:
             raise ValueError(
                 "zero supervised optimizer updates: spatial candidates did not cover reviewed targets"
@@ -331,7 +369,9 @@ def train(args, runtime, spec):
                     dev_totals[key] += result[key]
                 dev_totals["language_loss_sum"] += float(result["language_loss"])
         training = {
-            "completed_epoch": epoch + 1,
+            "completed_epoch": epoch + int(processed == len(order)),
+            "epoch_in_progress": epoch + 1,
+            "epoch_complete": processed == len(order),
             "global_step": step,
             "seed": args.seed,
             "data": report,
@@ -342,19 +382,59 @@ def train(args, runtime, spec):
             "optimizer_reset": True,
             "free_generation_accepted": False,
         }
+        if free_count:
+            totals, statuses = Counter(), Counter()
+            for index in range(min(free_count, len(dev_data))):
+                example = dev_data[index]
+                prediction = model.predict(
+                    example["prompt"],
+                    example["features"],
+                    example["frame"]["points"].to(args.device),
+                    max_new_tokens=args.max_new_tokens,
+                )
+                score_prediction(prediction, example, totals)
+                statuses[prediction["status"]] += 1
+                with (args.output_dir / "free-development.jsonl").open(
+                    "a", encoding="utf-8"
+                ) as handle:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "global_step": step,
+                                "request_id": example["request_id"],
+                                **{
+                                    key: value
+                                    for key, value in prediction.items()
+                                    if key != "masks"
+                                },
+                            },
+                            allow_nan=False,
+                        )
+                        + "\n"
+                    )
+            training["free_generation_development"] = prediction_metrics(
+                totals, statuses
+            )
+        bundle = args.output_dir / (
+            f"epoch-{epoch + 1}" if processed == len(order) else f"step-{step}"
+        )
         save_bundle(
-            args.output_dir / f"epoch-{epoch + 1}",
+            bundle,
             model,
             options,
             identity,
             training,
             optimizer,
         )
+        if maximum is not None and step >= maximum:
+            break
     return {
         "training_workflow_complete": True,
-        "completed_epoch": args.epochs,
+        "completed_epoch": training["completed_epoch"],
         "global_step": step,
-        "bundle": str(args.output_dir / f"epoch-{args.epochs}"),
+        "bundle": str(bundle),
+        "budget_exhausted": maximum is not None and step >= maximum,
+        "free_generation_development": training.get("free_generation_development"),
         "model_performance_accepted": False,
         "free_generation_accepted": False,
     }
@@ -431,7 +511,7 @@ def predict(args, runtime):
         seen.add(request["request_id"])
         points = input_points(args.point_root, request).to(args.device)
         prediction = model.predict(
-            make_prompt(request["question"]),
+            make_prompt(request["question"], segmentation=True),
             load_features(args.feature_root, request),
             points,
             max_new_tokens=args.max_new_tokens,
@@ -472,6 +552,9 @@ def score_prediction(prediction, example, totals):
         if obj["status"] == "selected"
     ]
     totals["records"] += 1
+    markers = prediction.get("marker_counts", {})
+    totals["records_with_seg_tokens"] += int(markers.get("seg", 0) > 0)
+    totals["records_with_noobj_tokens"] += int(markers.get("noobj", 0) > 0)
     totals["positive_targets"] += len(gt)
     totals["predicted_masks"] += len(predicted)
     if not gt:
@@ -503,6 +586,30 @@ def score_prediction(prediction, example, totals):
     totals["false_negatives"] += len(gt) - hits
 
 
+def prediction_metrics(totals, statuses):
+    value = dict(totals)
+    value.update(
+        recall_at_0_5=totals["true_positives"] / totals["positive_targets"]
+        if totals["positive_targets"]
+        else None,
+        precision_at_0_5=totals["true_positives"] / totals["predicted_masks"]
+        if totals["predicted_masks"]
+        else None,
+        mean_best_target_iou=totals["best_target_iou_sum"] / totals["positive_targets"]
+        if totals["positive_targets"]
+        else None,
+        no_target_accuracy=totals["correct_no_target_records"]
+        / totals["no_target_records"]
+        if totals["no_target_records"]
+        else None,
+        seg_emission_rate=totals["records_with_seg_tokens"] / totals["records"]
+        if totals["records"]
+        else None,
+        statuses=dict(statuses),
+    )
+    return value
+
+
 def evaluate(args, runtime, spec):
     if (
         Path(runtime["spatial_checkpoint"]).resolve()
@@ -532,25 +639,11 @@ def evaluate(args, runtime, spec):
             example["frame"]["point_sha256"],
             metadata,
         )
-    value = dict(totals)
+    value = prediction_metrics(totals, statuses)
     value.update(
-        recall_at_0_5=totals["true_positives"] / totals["positive_targets"]
-        if totals["positive_targets"]
-        else None,
-        precision_at_0_5=totals["true_positives"] / totals["predicted_masks"]
-        if totals["predicted_masks"]
-        else None,
-        mean_best_target_iou=totals["best_target_iou_sum"] / totals["positive_targets"]
-        if totals["positive_targets"]
-        else None,
-        no_target_accuracy=totals["correct_no_target_records"]
-        / totals["no_target_records"]
-        if totals["no_target_records"]
-        else None,
-        statuses=dict(statuses),
         data=report,
         complete=True,
-        evaluation_scope="reviewed internal_dev bindings; B3/spatial exposure must be audited separately",
+        evaluation_scope="internal_dev; supervision_sources reported separately; B3/spatial exposure unaudited",
         model_performance_accepted=False,
     )
     return value
@@ -573,6 +666,10 @@ def main(argv=None):
         result = collect(args, runtime)
     elif args.command == "prepare":
         result = prepare(args, spec)
+    elif args.command == "bootstrap":
+        from .bootstrap import bootstrap
+
+        result = bootstrap(args, spec)
     elif args.command == "preflight":
         _, _, result = preflight(spec)
     elif args.command == "train":

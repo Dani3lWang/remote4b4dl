@@ -1,5 +1,6 @@
 """Assistant-only supervision and hidden states aligned by the real visual expansion."""
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -151,7 +152,7 @@ def mark_answer(answer, targets):
     return "".join(pieces), ordered
 
 
-def make_prompt(question):
+def make_prompt(question, *, segmentation=False):
     # Import lazily: data checks do not require a language-model runtime.
     from vtimellm.conversation import conv_templates
 
@@ -160,6 +161,11 @@ def make_prompt(question):
     if any(marker in question for marker in MARKERS) or question.count("<video>") > 1:
         raise ValueError("question contains reserved markers or multiple visual slots")
     query = question if "<video>" in question else "<video>\n" + question
+    if segmentation:
+        query += (
+            "\nAnswer briefly. Immediately after each referred object phrase, emit <SEG>."
+            " For an explicitly absent target emit <NOOBJ>."
+        )
     conv = conv_templates["v1"].copy()
     conv.append_message(conv.roles[0], query)
     conv.append_message(conv.roles[1], None)
@@ -191,8 +197,10 @@ class LanguageBridge:
     def __init__(self, model, tokenizer, tokens):
         self.model, self.tokenizer, self.tokens = model, tokenizer, tokens
 
-    def forward(self, ids, labels, features):
+    def forward(self, ids, labels, features, *, marker_loss_weight=1.0):
         """Use expanded labels as positions, never original text token offsets."""
+        if not math.isfinite(marker_loss_weight) or marker_loss_weight < 1:
+            raise ValueError("marker_loss_weight must be finite and at least one")
         if ids.shape[0] != 1 or ids.shape != labels.shape:
             raise ValueError(
                 "AnswerSeg currently supports one unpadded sample per forward"
@@ -246,7 +254,22 @@ class LanguageBridge:
         )
         states = output.hidden_states[-1][marker].float()
         kinds = expanded_labels[marker]
-        return output.loss, states, kinds
+        loss = output.loss
+        if marker_loss_weight != 1:
+            # Causal shift: supervise logits BEFORE each assistant marker. Never
+            # score a marker against the hidden state that already contains it.
+            shifted = expanded_labels[:, 1:]
+            weights = shifted.ne(IGNORE_INDEX).to(output.logits.dtype)
+            is_marker = shifted.eq(self.tokens.seg) | shifted.eq(self.tokens.noobj)
+            weights = weights * (1 + is_marker * (marker_loss_weight - 1))
+            per_token = F.cross_entropy(
+                output.logits[:, :-1].float().reshape(-1, output.logits.shape[-1]),
+                shifted.reshape(-1),
+                reduction="none",
+                ignore_index=IGNORE_INDEX,
+            ).reshape_as(shifted)
+            loss = (per_token * weights).sum() / weights.sum().clamp_min(1)
+        return loss, states, kinds
 
     @torch.no_grad()
     def generate(self, prompt, features, max_new_tokens=256):

@@ -119,6 +119,7 @@ def build_model(
     minimum_iou=0.5,
     rank=16,
     alpha=32,
+    marker_loss_weight=1.0,
 ):
     from maskpls_b4dl.config import MaskPLSConfig
     from maskpls_b4dl.model import MaskPLS
@@ -141,6 +142,7 @@ def build_model(
         stage=stage,
         tune_spatial=tune_spatial,
         minimum_iou=minimum_iou,
+        marker_loss_weight=marker_loss_weight,
     )
     model.head.to(device)
     options = {
@@ -149,6 +151,7 @@ def build_model(
         "minimum_iou": minimum_iou,
         "rank": rank,
         "alpha": alpha,
+        "marker_loss_weight": marker_loss_weight,
     }
     return model, options
 

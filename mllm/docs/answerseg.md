@@ -117,6 +117,37 @@ conda run -n wqlc python mllm/scripts/run_answerseg.py evaluate \
 
 ## 本地验证与边界
 
+### 自由分割补充（2026-10-21）
+
+训练数据读取和 `predict/evaluate` 共用 `make_prompt(..., segmentation=True)`，要求回答在指代短语后生成 `<SEG>`，明确无目标才用 `<NOOBJ>`。`collect` 继续使用原 B3 提示。提示中的格式说明不计入语言监督；生成仍为普通贪心解码，没有强制 token、固定回答或 GT query 回放。`--marker-loss-weight 8` 可显式提高 assistant 标记的因果 CE 权重，默认 1；计算位置为视觉展开后标记的前一个 logit。损失加权是启动选项，尚未证明最优。
+
+正式自然语言绑定不足时，可独立构造几何规则启动集。它只读取已核验 `panoptic_gt` 的原始点序实例，按同类实例在模型 ROI 中的 XY 点质心距离构造 nearest/farthest 问题；默认至少 20 个前景点、至少两个同类实例，第一与第二名相差至少 0.5 m。类别单候选、距离不唯一、box pseudo、未核验掩码不准入。问题写明点数、ROI 和距离规则，目标不依赖 B3 回答或空间模型预测。每次加载重新从点标签计算完整记录，不能改目标后只重算指纹。
+
+该数据使用单独的 `b4dl-answerseg-v1-geometry-bootstrap` schema，`answer_source=panoptic_geometry_template`、`review_status=not_human_reviewed`、`grounding_verified=false`，不会修改 pending 问答或伪造人工接受。它验证简单几何指代与格式学习，不能代替复杂问题的人工绑定、B3 自生成回答审核或推理分割效果验收。原人工审核准入保持有效。
+
+```bash
+conda run -n wqlc python mllm/scripts/run_answerseg.py bootstrap \
+  --data /path/data.json --feature-index /path/feature-index.jsonl \
+  --split train --output-dir /path/new-geometry-train
+
+conda run -n wqlc python mllm/scripts/run_answerseg.py bootstrap \
+  --data /path/data.json --feature-index /path/dev-feature-index.jsonl \
+  --split internal_dev --output-dir /path/new-geometry-dev
+```
+
+将这两个 `bootstrap.jsonl` 分别作为 data 中的 `manifest/dev_manifest`，使用原空间 train/internal_dev 的场景划分和同一 SST 编码器。`preflight` 分列 `supervision_sources`。以下仅演示有限步数工程验证参数：
+
+```bash
+conda run -n wqlc python mllm/scripts/run_answerseg.py train \
+  --runtime /path/runtime.json --data /path/data.json --stage joint \
+  --epochs 4 --max-steps 16 --marker-loss-weight 8 --lr 0.001 \
+  --free-dev-samples 2 --max-new-tokens 64 --output-dir /path/new-free-smoke
+```
+
+`--max-steps` 是实际优化器更新上限；中途停止保存为 `step-N` 并如实记录未完成的 epoch。每次保存前可执行独立的自由生成开发检查，只传问题、SST 特征和原始点云，日志在 `free-development.jsonl`。它与 teacher-forcing 诊断分开，报告自然 SEG 生成率、所有正例分母、Recall/Precision@0.5、缺少标记/截断/拒绝等状态；`evaluate` 同样报告生成率。几何启动集没有显式负例，不能据此验收 NOOBJ。训练后仍须用 `predict/evaluate` 检查保存重载和真正未暴露数据，不能把接口或单帧成功当作正式新模型。
+
+本次代码改变 bundle 的实现指纹；旧工程 bundle 不兼容，必须使用新源码重新构造，未绕过严格身份校验。
+
 ```bash
 conda run -n wqlc python -m unittest discover -s mllm/answerseg/tests -v
 ```

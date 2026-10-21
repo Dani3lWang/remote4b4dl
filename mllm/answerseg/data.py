@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -329,18 +330,25 @@ class AnswerSegDataset:
             raise ValueError("empty reviewed binding manifest")
         for row in self.records:
             validate_request(row)
-            if (
+            from .bootstrap import BOOTSTRAP_SCHEMA
+
+            geometry = row.get("schema_version") == BOOTSTRAP_SCHEMA
+            if not geometry and (
                 row.get("schema_version") != SCHEMA + "-reviewed"
                 or row.get("review_status") != "accepted"
                 or row.get("grounding_verified") is not True
             ):
                 raise ValueError("pending/unreviewed answer bindings cannot be trained")
-            for review in row.get("reviews", []):
-                validate_review(review)
-            if not row.get("reviews") or not row.get("source_fingerprint"):
-                raise ValueError("missing answer/review provenance")
-            if row.get("answer_source") not in ("dataset_ground_truth", "prediction"):
-                raise ValueError("unknown answer source")
+            if not geometry:
+                for review in row.get("reviews", []):
+                    validate_review(review)
+                if not row.get("reviews") or not row.get("source_fingerprint"):
+                    raise ValueError("missing answer/review provenance")
+                if row.get("answer_source") not in (
+                    "dataset_ground_truth",
+                    "prediction",
+                ):
+                    raise ValueError("unknown answer source")
             if row["answer_source"] == "prediction" and not row.get("answer_model_id"):
                 raise ValueError("generated answer model identity is required")
             if row["request_id"] in seen:
@@ -372,6 +380,15 @@ class AnswerSegDataset:
     def __getitem__(self, index):
         row = self.records[index]
         frame = self.spatial[self.lookup[row["sample_data_token"]]]["frames"][0]
+        from .bootstrap import BOOTSTRAP_SCHEMA, verify_geometry_record
+
+        if row.get("schema_version") == BOOTSTRAP_SCHEMA:
+            verify_geometry_record(
+                row,
+                frame,
+                self.spatial.records[self.lookup[row["sample_data_token"]]],
+                self.spatial.config,
+            )
         for target in row["targets"]:
             if (
                 target["status"] == "matched"
@@ -382,7 +399,7 @@ class AnswerSegDataset:
                 )
         return dict(
             row,
-            prompt=make_prompt(row["question"]),
+            prompt=make_prompt(row["question"], segmentation=True),
             features=load_features(self.feature_root, row),
             frame=frame,
         )
@@ -405,4 +422,10 @@ class AnswerSegDataset:
             "manifest_sha256": hashlib.sha256(self.manifest.read_bytes()).hexdigest(),
             "interface_validated": True,
             "language_grounding_accepted": False,
+            "supervision_sources": dict(
+                Counter(
+                    row.get("supervision_kind", "human_reviewed_binding")
+                    for row in self.records
+                )
+            ),
         }
