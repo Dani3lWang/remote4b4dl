@@ -296,8 +296,59 @@ def legacy_single(model, tokenizer, prompt, feature, budget):
     }
 
 
-def load_collection_model(runtime, device, cpu_offload_layers):
-    if not cpu_offload_layers:
+def quantize_decoder_int8(model, device, threshold=6.0):
+    """Quantize merged decoder weights in memory; never write source artifacts."""
+    import bitsandbytes as bnb
+
+    converted = []
+    for index, layer in enumerate(model.get_model().layers):
+        for name, module in list(layer.named_modules()):
+            if not isinstance(module, torch.nn.Linear):
+                continue
+            parent_name, _, child = name.rpartition(".")
+            parent = layer.get_submodule(parent_name) if parent_name else layer
+            replacement = bnb.nn.Linear8bitLt(
+                module.in_features,
+                module.out_features,
+                bias=module.bias is not None,
+                has_fp16_weights=False,
+                threshold=threshold,
+            )
+            replacement.weight = bnb.nn.Int8Params(
+                module.weight.detach(), requires_grad=False, has_fp16_weights=False
+            )
+            if module.bias is not None:
+                replacement.bias = torch.nn.Parameter(
+                    module.bias.detach(), requires_grad=False
+                )
+            # Quantize one CPU layer at a time, avoiding a full FP16 GPU copy.
+            setattr(parent, child, replacement.to(device))
+            converted.append(f"model.layers.{index}.{name}")
+    if not converted:
+        raise ValueError("no merged decoder linear weights found for INT8")
+    model = model.to(device=device)
+    model.requires_grad_(False)
+    model._collection_quantization_info = {
+        "mode": "int8",
+        "backend": "bitsandbytes",
+        "backend_version": bnb.__version__,
+        "outlier_threshold": threshold,
+        "converted_modules": converted,
+        "converted_weight_dtypes": dict(Counter(
+            str(model.get_submodule(name).weight.dtype) for name in converted
+        )),
+        "retained_fp16": ["embedding", "norm", "mm_projector", "lm_head"],
+        "source_weights_overwritten": False,
+    }
+    return model
+
+
+def load_collection_model(runtime, device, cpu_offload_layers, quantization="none"):
+    if quantization not in ("none", "int8"):
+        raise ValueError("unsupported collection quantization")
+    if quantization == "int8" and cpu_offload_layers:
+        raise ValueError("INT8 collection and CPU layer offload are exclusive")
+    if not cpu_offload_layers and quantization == "none":
         return load_b3(runtime, device)
     from types import SimpleNamespace
 
@@ -314,6 +365,10 @@ def load_collection_model(runtime, device, cpu_offload_layers):
         runtime.get("stage2"),
         runtime.get("stage3"),
     )
+    model = model.half()
+    model.config.use_cache = False
+    if quantization == "int8":
+        return tokenizer, quantize_decoder_int8(model, device)
     count = len(model.get_model().layers)
     if not 0 < cpu_offload_layers < count:
         raise ValueError("offload layer count must leave at least one CUDA layer")
@@ -329,14 +384,14 @@ def load_collection_model(runtime, device, cpu_offload_layers):
         # Transformers 4.47 keeps RoPE outside the decoder layers. Its
         # nonpersistent inv_freq buffer also needs an explicit CUDA mapping.
         mapping["model.rotary_emb"] = device
-    model.config.use_cache = False
     # initialize_vision_modules creates its projector in FP32 even when the
     # base Llama was restored in FP16. Match load_b3's final dtype conversion.
-    model = model.half()
     return tokenizer, dispatch_model(model, device_map=mapping)
 
 
 def run(args):
+    from importlib.metadata import version
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest = json.loads((args.inputs / "manifest.json").read_text(encoding="utf-8"))
     request_path = args.inputs / "requests.jsonl"
@@ -347,6 +402,14 @@ def run(args):
     if runtime.get("language_device", args.device) != args.device:
         raise ValueError("runtime language_device must match the collection device")
     identity = source_identity(runtime, include_spatial=False)
+    inference = {
+        "quantization": args.quantization,
+        "compute_dtype": "float16",
+        "int8_outlier_threshold": 6.0 if args.quantization == "int8" else None,
+        "bitsandbytes_version": version("bitsandbytes") if args.quantization == "int8" else None,
+        "torch_version": torch.__version__,
+        "transformers_version": version("transformers"),
+    }
     config = {
         "requests_sha256": manifest["requests_sha256"],
         "model_identity": identity,
@@ -355,6 +418,7 @@ def run(args):
         "max_new_tokens": args.max_new_tokens,
         "retry_tokens": args.retry_tokens,
         "cpu_offload_layers": args.cpu_offload_layers,
+        "inference": inference,
         "do_sample": False,
         "answer_frames": False,
     }
@@ -378,16 +442,27 @@ def run(args):
     torch.manual_seed(2026)
     if args.device.startswith("cuda"):
         gpu = gpu_snapshot()
-        required = 12500 if args.cpu_offload_layers else 14500
+        required = (
+            9500 if args.quantization == "int8"
+            else 12500 if args.cpu_offload_layers else 14500
+        )
         if gpu["free_mib"] < required:
             raise RuntimeError(f"need {required} MiB GPU headroom before model load")
         torch.cuda.set_per_process_memory_fraction(args.memory_fraction)
         event("gpu_before_load", **gpu)
     event("loading_b3", pending=len(unique) - len(cache), requests=len(requests))
     tokenizer, model = load_collection_model(
-        runtime, args.device, args.cpu_offload_layers
+        runtime, args.device, args.cpu_offload_layers, args.quantization
     )
     model.eval()
+    write_json(
+        args.output_dir / "model-load.json",
+        dict(
+            inference=inference,
+            quantization_details=getattr(model, "_collection_quantization_info", None),
+            gpu=gpu_snapshot() if args.device.startswith("cuda") else None,
+        ),
+    )
     feature_cache = {}
     for row in unique.values():
         feature = row["features"]
@@ -513,7 +588,8 @@ def run(args):
             **{k: v for k, v in cache[key].items() if k != "generation_key"},
             schema_version=SCHEMA,
             model_identity=identity,
-            answer_model_id=digest(identity),
+            answer_model_id=digest(dict(weights=identity, inference=inference)),
+            inference=inference,
             review_status="pending",
             eligible_for_binding_training=False,
             generation_reused=key in reused,
@@ -556,6 +632,7 @@ def run(args):
         "all_answers_pending_review": True,
         "binding_training_ready": False,
         "model_identity": identity,
+        "inference": inference,
         "batch_equivalence": all(equivalent),
         "effective_batch_size": batch_size,
         "cuda_peak_allocated_mib": torch.cuda.max_memory_allocated() / 2**20
@@ -585,6 +662,7 @@ def main():
     execute.add_argument("--batch-size", type=int, default=2)
     execute.add_argument("--memory-fraction", type=float, default=0.57)
     execute.add_argument("--cpu-offload-layers", type=int, default=0)
+    execute.add_argument("--quantization", choices=("none", "int8"), default="none")
     execute.add_argument("--max-new-tokens", type=int, default=256)
     execute.add_argument("--retry-tokens", type=int, default=512)
     args = parser.parse_args()
