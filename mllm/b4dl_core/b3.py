@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -78,8 +79,10 @@ def implementation_id():
 
 
 def identity_for(args, dataset):
-    return {"baseline_manifest_sha256": sha256(args.baseline), "dataset_id": dataset.manifest["dataset_id"],
-            "implementation_sha256": implementation_id()}
+    result = {"baseline_manifest_sha256": sha256(args.baseline), "dataset_id": dataset.manifest["dataset_id"],
+              "implementation_sha256": implementation_id()}
+    if getattr(args, "experiment", None): result["experiment_sha256"] = sha256(args.experiment)
+    return result
 
 
 def verify_sst_binding(lock, dataset):
@@ -129,7 +132,12 @@ def train_step(model, batches, optimizer, scaler):
     norm = torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.)
     scaler.step(optimizer)
     scaler.update()
-    return {"loss": sum(losses)/len(losses), "gradient_norm": float(norm), "grad_accum": len(batches)}
+    result = {"loss": sum(losses)/len(losses), "gradient_norm": float(norm), "grad_accum": len(batches)}
+    adapter = getattr(language_model(model).get_model(), "frame_adapter", None)
+    if adapter is not None:
+        gradient = adapter.blocks[0].attention.in_proj_weight.grad
+        result["adapter_attention_grad_abs_sum"] = float(gradient.abs().sum()) if gradient is not None else 0.
+    return result
 
 
 def legacy_generate(model, batch, budget):
@@ -224,6 +232,7 @@ def train(args, preparation, lock, dataset):
     identity = identity_for(args, dataset)
     recipe = {"lr": args.lr, "batch_size": args.batch_size, "grad_accum": args.grad_accum, "seed": args.seed,
               "engineering_only": args.engineering, "split": "train"}
+    if getattr(args, "experiment", None): recipe["experiment_sha256"] = sha256(args.experiment)
     start = 0
     if args.resume:
         status = load_checkpoint(args.resume, model, options, identity, optimizer, scaler)
@@ -233,19 +242,36 @@ def train(args, preparation, lock, dataset):
         if start >= args.steps:
             raise ValueError("resume steps must exceed completed optimizer steps")
     logs = []
+    write_json(Path(args.output)/"runtime.json", {"status": "model_loaded_training_ready", "identity": identity,
+        "options": options, "recipe": recipe, "trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
+        "frozen_parameters": sum(p.numel() for p in model.parameters() if not p.requires_grad),
+        "train_examples": len(dataset.requests), "optimizer_steps": args.steps,
+        "gpu": torch.cuda.get_device_name() if torch.device(args.device).type == "cuda" else None})
     for step in range(start, args.steps):
+        started = time.perf_counter()
         batches = []
         for micro in range(args.grad_accum):
             requests = [dataset.requests[i] for i in batch_indices(len(dataset.requests), step, micro, args.batch_size, args.grad_accum, args.seed)]
             batches.append(batch_inputs(model, tokenizer, [dataset.model_input(r) for r in requests],
                                         [dataset.targets[r["request_id"]] for r in requests]))
         row = {"step": step+1, **train_step(model, batches, optimizer, scaler)}
+        row.update(examples_seen=(step+1)*args.batch_size*args.grad_accum,
+                   epoch=(step+1)*args.batch_size*args.grad_accum/len(dataset.requests),
+                   seconds=time.perf_counter()-started)
         logs.append(row)
         print(json.dumps(row), flush=True)
-        write_jsonl(Path(args.output)/"loss.jsonl", logs)
-        if (step+1) % args.save_every == 0 or step+1 == args.steps:
+        with (Path(args.output)/"loss.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(row)+"\n")
+        if step == start or (step+1) % args.save_every == 0 or step+1 == args.steps:
             save_checkpoint(Path(args.output)/f"step-{step+1}.pt", model, options, identity,
                             {"step": step+1, "recipe": recipe}, optimizer, scaler)
+            write_json(Path(args.output)/"latest.json", {"step": step+1, "checkpoint": f"step-{step+1}.pt",
+                "identity": identity, "checkpoint_sha256": sha256(Path(args.output)/f"step-{step+1}.pt")})
+            keep = getattr(args, "keep_last", None)
+            if keep:
+                checkpoints = sorted((p for p in Path(args.output).glob("step-*.pt")
+                    if p.stem[5:].isdigit() and int(p.stem[5:]) != 1), key=lambda p: int(p.stem[5:]))
+                for old in checkpoints[:-keep]: old.unlink()
     report = {"status": "engineering_training_complete" if args.engineering else "training_complete",
               "identity": identity, "options": options, "recipe": recipe, "optimizer_steps": args.steps,
               "resumed_from_step": start, "quality_evaluation_completed": False}
@@ -308,6 +334,8 @@ def main():
     parser.add_argument("--grad-accum", type=int, default=1)
     parser.add_argument("--steps", type=int)
     parser.add_argument("--save-every", type=int, default=10)
+    parser.add_argument("--keep-last", type=int, help="Keep this many recent checkpoints, plus step 1")
+    parser.add_argument("--experiment", help="Frozen formal-training experiment manifest")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--engineering", action="store_true")
@@ -321,6 +349,7 @@ def main():
         args.max_new_tokens = 8 if args.command == "verify" else 256
     if min(args.batch_size, args.grad_accum, args.save_every, args.max_new_tokens) < 1 or args.lora_rank < 0:
         parser.error("invalid numerical settings")
+    if args.keep_last is not None and args.keep_last < 1: parser.error("keep-last must be positive")
     if args.command == "verify" and (args.arm != "A3" or args.lora_rank):
         parser.error("verify checks A3 with no new LoRA; separate tests cover optional LoRA")
     if args.command == "train" and (args.arm == "A0" or args.steps is None or args.steps < 1):
@@ -346,7 +375,9 @@ def main():
         else:
             try:
                 verify_sst_binding(lock, dataset)
-            except ValueError as error:
+                from .experiment import validate_experiment
+                validate_experiment(args, preparation, lock, dataset)
+            except (ValueError, OSError) as error:
                 parser.error(str(error))
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

@@ -75,4 +75,4 @@
 
 复跑数据准备时先新建独立根目录，依次使用 `python -m b4dl_core.sst_source inventory/support/reproduce` 和 `python -m b4dl_core.trainval`。参数完整记录在源文件 CLI 与运行日志中；支持记录、来源回执及 split 文件的绝对路径参与当前数据 ID，移动后复算 ID 时应作为新版本处理，不修改现有 manifest。
 
-正式训练还需固定 A0–A3 的新 LoRA rank、参数预算、步数/种子以及原六任务输入协议。此次来源核验和数据审计不构成模型效果结果。
+后续已冻结 A0–A3 的新 LoRA rank、参数预算、步数/种子与原六任务协议，并补齐实际指标运行依赖，详见[首轮训练说明](core_geometry_training.md)。此次来源核验和数据审计不构成模型效果结果。

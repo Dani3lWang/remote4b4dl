@@ -40,9 +40,14 @@
     "multimodal_expansion_and_generation_cache_integration",
     "real_b3_two_step_gradient_and_reload_verification",
     "matching_sst_encoder_and_preprocessing_provenance",
-    "full_trainval_scene_splits_and_coverage_audit"
+    "full_trainval_scene_splits_and_coverage_audit",
+    "fixed_compute_and_seed_plan",
+    "six_task_regression_inputs_and_protocol_frozen"
   ],
   "encoder_checkpoint_sha256": "9707de49b2a6bda21ddf72f4c9a51dc26080c7ee6d67b73180fc0e53e9e63eda",
+  "experiment_id": "bb4b46d916bbd403a6d9a9e776b4d4dffbd1d753299a0aff5408bd939b476f46",
+  "experiment_manifest": "mllm/configs/core_geometry_experiment_sft_v1.json",
+  "experiment_sha256": "153ae2cf00e7f1c674554663d84c6784854eb5eaaf3ceada2a1f452a155ff2c4",
   "frame_adapter": {
     "distance_scale_m": 10.0,
     "ff_width": 1536,
@@ -58,11 +63,15 @@
     "implemented": false,
     "require_identical_sft_endpoint_for_reward_arms": true
   },
-  "gates_before_real_training": [
-    "fixed_compute_and_seed_plan",
-    "six_task_regression_inputs_and_protocol_frozen"
-  ],
+  "gates_before_real_training": [],
   "integration_entrypoint": "python -m b4dl_core.b3",
+  "integration_verification": {
+    "date": "2026-10-23",
+    "engineering_only": true,
+    "implementation_sha256": "21b2904177bf04439797a2f9a640281e093b2390ba6d4e739434b97c97903e3e",
+    "remote_output": "/root/autodl-tmp/mmb4dl-core-integration-20261023-r1/verification-r3",
+    "task_performance_measured": false
+  },
   "offline_rewards": {
     "answer_and_evidence": {
       "answer_weight": 0.7,
@@ -74,32 +83,25 @@
     },
     "numeric_tolerance_m": 1.0
   },
-  "schema": "b4dl-core-preparation-v1",
-  "status": "sst_and_full_trainval_verified_experiment_protocol_pending",
-  "integration_verification": {
-    "date": "2026-10-23",
-    "remote_output": "/root/autodl-tmp/mmb4dl-core-integration-20261023-r1/verification-r3",
-    "implementation_sha256": "21b2904177bf04439797a2f9a640281e093b2390ba6d4e739434b97c97903e3e",
-    "engineering_only": true,
-    "task_performance_measured": false
-  },
   "prepared_dataset": {
-    "path": "/root/autodl-tmp/mmb4dl-core-trainval-20261023-r1/trainval-v1",
-    "local_copy": "D:/Github/mmb4dl/training_logs/core_geometry_20261022/trainval-data/trainval-v1",
+    "coverage_receipt": "/root/autodl-tmp/mmb4dl-core-trainval-20261023-r1/coverage.json",
     "dataset_id": "3c8f568806797d265119592eea219bdbe3b7180634ad05a3345fe9a9af8b4e03",
+    "frames": 34149,
+    "input_scope": "historical_CAM_BACK_RIGHT_crop_with_geometric_box_point_support",
+    "local_copy": "D:/Github/mmb4dl/training_logs/core_geometry_20261022/trainval-data/trainval-v1",
+    "path": "/root/autodl-tmp/mmb4dl-core-trainval-20261023-r1/trainval-v1",
+    "questions": 83952,
     "scenes": {
       "internal_dev": 140,
       "test": 150,
       "train": 560
-    },
-    "frames": 34149,
-    "questions": 83952,
-    "input_scope": "historical_CAM_BACK_RIGHT_crop_with_geometric_box_point_support",
-    "coverage_receipt": "/root/autodl-tmp/mmb4dl-core-trainval-20261023-r1/coverage.json"
+    }
   },
+  "schema": "b4dl-core-preparation-v1",
   "sst_provenance": {
     "path": "/root/autodl-tmp/mmb4dl-core-trainval-20261023-r1/sst-provenance.json",
     "provenance_id": "dd1b870dbc10203056c666ee8a2fe60c9573562f4aac76582b03bdb25b4dbee1",
     "sha256": "c43898048e83f8a5b99cfa81de79b776e6d56e74f8120b4dc1db2686a4bb1846"
-  }
+  },
+  "status": "formal_sft_ready"
 }

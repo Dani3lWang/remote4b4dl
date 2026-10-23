@@ -78,3 +78,12 @@
 - 可用于数据设置的事实：850 场景、34,149 帧；官方 700 train 场景拆为 560/140，官方 150 validation 作实验 test；383,258 候选筛为 83,952 题，距离题包含四次排列；122,990 个数值复算通过，严格 dev/test 配对 2,803/3,151。方位的 12 个 split/谓词桶无正例，必须随结果报告，不能宣称完整八方向覆盖。
 - 可用于来源段的事实：119 张量的历史 nuScenes 退火 SST，epoch2/step15750；850 特征逐文件哈希核验，24 帧原始数据抽样复算最大绝对误差 1.91e-6。该核验不等于全量逐位重提，也不构成效果结果。
 - 论文实验设置仍需填写匹配预算、种子、A0–A3 配方、六任务回归与实际模型结果。完整工程证据见[来源与 trainval 说明](../../mllm/docs/core_sst_trainval.md)。
+
+
+## 八、首轮正式 SFT 的实验设置
+
+- 固定原始B3及已核验SST，以55,404条可见范围训练问答做1轮SFT，batch1×accumulation4，13,851次AdamW更新，lr1e-4、weight_decay0.01、clip1，恒定学习率。训练projector和时序/几何适配器，语言模型冻结，无新增LoRA。主运行A3/seed42；A1/A2与seed43/44属于已登记的后续对照，不能写作已经完成。
+- 配方是首轮项目实验选择，不是论文给出的最佳超参数。各臂匹配数据顺序、样例呈现和优化步数，结构带来的参数量/FLOPs差异仍需报告。
+- 原六任务回归固定30,145条及原whole_scene/per_sequence/answer_frames协议，明确oracle-assisted元数据口径。新入口为扩展模型补充实际时间/位姿，解码continuation并保留失败分母。greedy、1024新token，METEOR主NLTK-2005/次Java1.5，RoBERTa-L17 BERTScore；GPT评分关闭。
+- 完整上下文和真实B3六类提示的初始生成等价已验证，指标fixture使用合成文本，不能写成当前B3的成绩。正式训练完成、完整geometry与六任务结果及多seed重复仍需实际运行证据。
+- 工程状态、不可变实验身份与后续结果记录见[训练说明](../../mllm/docs/core_geometry_training.md)。

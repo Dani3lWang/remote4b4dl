@@ -79,7 +79,7 @@ PREP=mllm/configs/core_geometry_preparation.json
 - 两步 loss 为 1.50855136、1.00260293，第二步内部 attention 梯度绝对值和为 14.31890297；峰值 PyTorch allocated 为 13,172.31 MiB。两步使用同一 train 样例，仅证明优化链路可运行，不能作为质量提升证据。
 - 首轮在旧路径 FP32 特征与 FP16 projector 不匹配处退出；随后修正参考输入精度及 PEFT 合并残留配置判断。第二轮在验证路径补齐 token 不一致处退出；统一 EOS 后第三轮全部通过。两次失败均在优化前，未发生训练更新，失败日志保留。
 - 本地回执：`training_logs/core_geometry_20261022/integration-tests-r3.txt`、`shared-b3-regression-tests.txt`。最终代码校验以补充的 `integration-tests-final.txt` 为准。
-- 后续 SST 来源及完整 trainval 已核验，见[全量说明](core_sst_trainval.md)。尚待正式训练预算/种子与六任务回归协议；mini 工程验收不能作为性能提升证据。
+- 后续 SST 来源及完整 trainval 已核验，见[全量说明](core_sst_trainval.md)。后续正式训练预算/种子与六任务协议已冻结，见[训练说明](core_geometry_training.md)；mini 工程验收不能作为性能提升证据。
 
 ## 真实验收身份与复核
 
@@ -91,3 +91,6 @@ PREP=mllm/configs/core_geometry_preparation.json
 
 
 2026-10-23 数据准备跟进：正式候选数据改为实际右后裁剪范围的完整 trainval，新来源绑定清单为 `core_geometry_baseline_original_b3_trainval.json`。正式训练额外核对数据与清单的 SST provenance_id/回执 SHA256，并要求输入范围声明；不匹配或回执被改动时在加载模型前拒绝。原清单及工程 checkpoint 的身份约定继续保留。
+
+
+正式训练现要求 `--experiment` 指向与准备配置SHA256匹配的冻结配方，检查数据、基底、步数、学习率、有效batch、seed、LoRA rank、checkpoint策略及六任务材料；checkpoint身份加入实验SHA256。新训练首步即保存，随后按固定间隔记录latest；保留step1与最近指定份数，loss采用追加记录。已有历史checkpoint须使用其对应源码版本。

@@ -1,0 +1,81 @@
+{
+  "additional_runs": "A1/A2 and replication seeds are frozen for later comparisons, not automatically launched by the primary job",
+  "baseline_manifest_sha256": "eb908007fde102e8b58b7ffb85912fe1c3e2eb8aac3ccf47bf273863746f025f",
+  "checkpoint_retention": "step 1 plus two recent checkpoints; final step always saved",
+  "comparison_budget": "A1/A2/A3 use identical steps, sample order, examples and new LoRA rank; parameter/FLOP counts differ and must be reported",
+  "dataset_id": "3c8f568806797d265119592eea219bdbe3b7180634ad05a3345fe9a9af8b4e03",
+  "endpoint_selection": "fixed last optimizer step; no test-based checkpoint or hyperparameter selection",
+  "evaluation": {
+    "generation": "greedy",
+    "geometry_dev_questions": 13602,
+    "geometry_max_new_tokens": 256,
+    "geometry_test_questions": 14946,
+    "original_six_task_questions": 30145,
+    "performance_results_available": false,
+    "six_task_oracle_assisted_metadata": true
+  },
+  "experiment_id": "bb4b46d916bbd403a6d9a9e776b4d4dffbd1d753299a0aff5408bd939b476f46",
+  "failure_policy": "stop on nonfinite loss/gradient, source identity mismatch or GPU lock conflict; no automatic recipe changes",
+  "optimizer": {
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "eps": 1e-08,
+    "gradient_clip_norm": 1.0,
+    "lr_schedule": "constant",
+    "name": "AdamW",
+    "weight_decay": 0.01
+  },
+  "parameters": {
+    "SST_encoder": "offline and frozen",
+    "language_model": "frozen",
+    "projector": "trainable",
+    "temporal_geometry_adapter": "trainable in A2/A3"
+  },
+  "precision": {
+    "autocast": "float16",
+    "frozen_B3": "float16",
+    "grad_scaler_initial_scale": 1024,
+    "trainable_master_parameters": "float32"
+  },
+  "preparation_receipt": {
+    "path": "/root/autodl-tmp/mmb4dl-core-sft-20261023-r1/preparation-receipt.json",
+    "sha256": "2df14fdd04d78bea994bf78f537dbc4f81b9b9a55d858466e276532ca5406409"
+  },
+  "primary_run": {
+    "arm": "A3",
+    "launch_authorized_by_user": true,
+    "seed": 42
+  },
+  "purpose": "first_full_visibility_aware_geometry_SFT",
+  "recipe": {
+    "batch_size": 1,
+    "epochs": 1,
+    "grad_accum": 4,
+    "keep_last": 2,
+    "lora_rank": 0,
+    "lr": 0.0001,
+    "save_every": 250,
+    "steps": 13851,
+    "train_examples": 55404
+  },
+  "sampling": "one seeded NumPy permutation of all 55404 train questions; no repeated or skipped examples in one epoch",
+  "schema": "b4dl-core-experiment-v1",
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "six_task_protocol": {
+    "path": "/root/autodl-tmp/mmb4dl-core-sft-20261023-r1/protocol-v2/six-task-manifest-final.json",
+    "protocol_id": "d8d2885f0fa52456a6070b0ade710e4bc6a178707eaa042cb21decde9163edd1",
+    "sha256": "a8c3c21f8b3d81b1fabbe3f493d598100594ee354241db7d319211f24fa1b651"
+  },
+  "trainable_arms": [
+    "A1",
+    "A2",
+    "A3"
+  ],
+  "verified_implementation_sha256": "aa072e07d5696d40d131999eb3e8377511ee0b333c7c779c328e8ea9ca51216f"
+}
