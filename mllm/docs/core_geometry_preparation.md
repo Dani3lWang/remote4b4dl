@@ -1,8 +1,8 @@
 # B4DL 本体更新：独立模块、数据与评测准备
 
-更新日期：2026-10-23。状态：**独立准备已完成，真实模型接入与效果验证待进行**。
+更新日期：2026-10-23。状态：**独立准备已完成，用户已选定原始 B3；真实模型接入与效果验证待进行**。
 
-这份实现独立于现有分割路线。无需等待基底选择即可检查模块接口、生成几何监督和冻结评测协议。真实训练与效果对比仍需确定基底、SST 编码器和输入协议。
+这份实现独立于现有分割路线。模块接口、几何监督和评测准备已经完成；当前基底固定为原始历史三轮 B3。真实训练与效果对比仍需核验 SST 编码器和输入协议，并完成真实模型接入。
 
 ## 1. 交付位置
 
@@ -22,7 +22,8 @@
 | `evaluation.py` | 完整分母、分任务/谓词指标、场景 bootstrap、相反答案配对、选项轮换、修复/退化统计、train-only 多数先验 |
 | `audit.py` | 独立逆齐次变换复算数值、同一实例与起点最近性核验 |
 | `__main__.py` | `prepare/preflight/audit/smoke/controls/prior/evaluate/compare` 命令 |
-| `mllm/configs/core_geometry_preparation.json` | 基底为 null 的准备配置和 A0–A3 消融约定；是实验约定，尚非训练启动配置 |
+| `mllm/configs/core_geometry_preparation.json` | 已选定原始 B3 的准备配置和 A0–A3 消融约定；是实验约定，尚非训练启动配置 |
+| `mllm/configs/core_geometry_baseline_original_b3.json` | 语言底座、Stage 1 projector 与历史三轮 B3 的路径、逐文件/整体指纹及核验来源 |
 | `mllm/tests/test_core_geometry.py` | 25 项单元测试，含真实格式的合成原始表端到端检查 |
 
 ## 2. 模型接口与边界
@@ -143,12 +144,24 @@ smoke 使用两条真实场景特征和随机初始化适配器，在 CPU 上做
 
 另执行空预测 fixture 的 CLI 负向检查：`empty-fixture-report.json` 保留全部 2,044 个请求、准确率为 0；`fixture-compare-report.json` 检查对比命令。fixture 的输出不构成模型实验。
 
-## 7. 基底确定后继续的事项
+## 7. 已选基底与后续事项
 
-1. 用户选定基底；核验 base LLM、projector、LoRA/non-LoRA、SST 编码器与预处理的完整身份。当前 `baseline_checkpoint=null`、`encoder_checkpoint_verified=false`。
+2026-10-23 用户明确选用原始 B3，本项目将其固定为此前完整 mini FP16 采集使用的 `_protected_b3_3ep_final_20260910`。服务器 `autodl3` 上的三个模型组件已只读复算哈希，与历史采集身份全部一致：
+
+| 组件 | 服务器路径 | artifact SHA256 |
+|---|---|---|
+| Vicuna 语言底座 | `/root/autodl-tmp/mmb4dl/mllm/base_model/vicuna-v1-5-7b` | `df6f77dc7d40970217e5da0de42576a112ffa2b87b9591889eb2a067dff11830` |
+| Stage 1 projector | `/root/autodl-tmp/mmb4dl/mllm/checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin` | `646a52aab39764f68341de5fb72e3f1dff2e06e2c8fb9457e97c1b1efe0ee267` |
+| 原始 B3 Stage 2 | `/root/autodl-tmp/mmb4dl/mllm/checkpoints/_protected_b3_3ep_final_20260910` | `2704d1e1e7aebe4e2f2ff43fefe6adb8acc0594726a6af42bd4d47198c179814` |
+
+目录 artifact 指纹使用既有 `answerseg.runtime.artifact_identity` 规则，清单记录全部逐文件 SHA256 与序列化规则；单文件 projector 则直接计算文件 SHA256。核验回执为运行产物目录的 `baseline-live-verification-20261023.jsonl`。新两轮训练权重不作为本轮基底；初始真实评测沿用 FP16、不量化，未来训练精度另行固定。
+
+历史 `mini-v2/manifest.json` 和此前工程回执中的 `baseline_checkpoint=null` 保留，表示生成时尚未选基底；当前实验选择由配置和独立模型清单表达，不重写历史数据 ID。A0–A3 均应从这组相同模型资产开始，SST 编码器来源仍为未核验。
+
+1. 已完成用户基底选择及 base LLM/projector/LoRA/non-LoRA 当前文件指纹核验；仍需确认 SST 编码器和预处理身份。
 2. 在真实 VTimeLLM 首次多模态展开处接入时间/位姿/mask，验证关闭适配器时原模型 token 等价、开启时变长组批和 cache 正确。
 3. 准备完整 trainval，检查每个任务/谓词/类别、严格配对和供体覆盖；本轮仅真实 mini 跑通，全量内存/吞吐尚未测量。
 4. 冻结种子、算力、SFT 数据和原六任务回归输入。A0 原基线；A1 仅新监督；A2 加时间模块；A3 再加自车几何；本轮尚无任何消融效果结果。
 5. 后续 RL 在 `rf-grpo` 开展，从同一 SFT 终点比较答案奖励与联合奖励；固定时序模块以保持参考模型一致。本轮只有离线 scorer，没有 GRPO trainer。
 
-新两轮 B3 的训练完成事实沿用已落盘的项目记录；本轮未替用户选择该 checkpoint，也未重新评估其模型效果。
+本次基底锁定只读检查模型文件，没有加载 GPU 模型、启动训练或产生新的模型效果结果；基底配置本身尚不是实际推理接入。

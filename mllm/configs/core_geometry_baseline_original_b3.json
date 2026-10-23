@@ -1,0 +1,63 @@
+{
+  "baseline_id": "original-b3-protected-3ep-20260910",
+  "components": {
+    "model_base": {
+      "artifact_sha256": "df6f77dc7d40970217e5da0de42576a112ffa2b87b9591889eb2a067dff11830",
+      "files_sha256": {
+        "config.json": "e122b598d0734b489590e99e3b3562a11ce67ea13bce390a7868b4f73ae6e615",
+        "generation_config.json": "a2cdc36be638608d8490769e607cdabd3d5db842425ad570401d94ce9584691e",
+        "pytorch_model-00001-of-00002.bin": "4133d2fcc5f31286881ea50806d95b721d016b533036a99dedce3f8fe88520e6",
+        "pytorch_model-00002-of-00002.bin": "d261d3c35e92d3070d1e61ed821ebfca812a847d2a880757d82728acf005c5ac",
+        "pytorch_model.bin.index.json": "aca3c1facc89d12311a667c32e85ac86e625990992ea8a189e3b036ba371b931",
+        "special_tokens_map.json": "719833ff26ac897a3ec8ed946028a135de2a351470af59b4008744ab1f0ee9b7",
+        "tokenizer.model": "9e556afd44213b6bd1be2b850ebbbd98f5481437a8021afaf58ee7fb1818d347",
+        "tokenizer_config.json": "1cbc84c8a5b41e0ec24e0da66677773569fb0ccfa753d5d184e343e2ec3815a0"
+      },
+      "path": "/root/autodl-tmp/mmb4dl/mllm/base_model/vicuna-v1-5-7b"
+    },
+    "pretrain_mm_mlp_adapter": {
+      "artifact_sha256": "646a52aab39764f68341de5fb72e3f1dff2e06e2c8fb9457e97c1b1efe0ee267",
+      "files_sha256": {
+        "mm_projector.bin": "646a52aab39764f68341de5fb72e3f1dff2e06e2c8fb9457e97c1b1efe0ee267"
+      },
+      "path": "/root/autodl-tmp/mmb4dl/mllm/checkpoints/vtimellm-vicuna-v1-5-7b-stage1/mm_projector.bin"
+    },
+    "stage2": {
+      "artifact_sha256": "2704d1e1e7aebe4e2f2ff43fefe6adb8acc0594726a6af42bd4d47198c179814",
+      "files_sha256": {
+        "adapter_config.json": "a253a253609fa1581d3caa394b2c56c3e28268bcb650356e4c13368c0fef8c87",
+        "adapter_model.safetensors": "6c4c168fce9127702f170b9f96d8b2ce7da10349b180704159b6095eec372f8c",
+        "config.json": "c87f16bb88287edd9ebd63e8db18d6d7339bcfb5fac4fe0b1b2fa60b8a07234d",
+        "non_lora_trainables.bin": "d6302eb7cce5561149d6cdc2e26f18cac784cebea0b6052409b464e06f56f78e",
+        "trainer_state.json": "0cf40e82328f690fec19270d4d57e0f3c19a7caa9c7b8a918533f81f82bc0009"
+      },
+      "path": "/root/autodl-tmp/mmb4dl/mllm/checkpoints/_protected_b3_3ep_final_20260910"
+    }
+  },
+  "core_geometry_integration_verified": false,
+  "host": "autodl3",
+  "identity_scheme": "answerseg.runtime.artifact_identity: direct file SHA256; directory SHA256 of sorted relative-path to file-SHA256 JSON using json.dumps(sort_keys=True, ensure_ascii=False, allow_nan=False) with default separators; suffix whitelist .json/.bin/.safetensors/.model/.txt; exclude optimizer*, scheduler*, training_args*",
+  "initial_evaluation_precision": {
+    "compute_dtype": "float16",
+    "quantization": "none"
+  },
+  "label_zh": "原始 B3：历史三轮受保护最终权重",
+  "loader": "vtimellm.model.builder.load_pretrained_model",
+  "reference": {
+    "collection": "datageneration/data/b3-mini-answers/20261021-001",
+    "generation_config_sha256": "bbc3febf41fdae756115e90511c822489499013fa52332fe5ddf0da51e963610",
+    "runtime_sha256": "df941973c0e41231e9cbb01d39d269dc6d790156e1bc7bf9366b85e82b1bec80"
+  },
+  "schema": "b4dl-core-baseline-v1",
+  "selected_by": "user",
+  "selected_on": "2026-10-23",
+  "sst_encoder_checkpoint_verified": false,
+  "stage3": null,
+  "verification": {
+    "all_three_components_match_reference": true,
+    "date": "2026-10-23",
+    "method": "live_remote_file_hash",
+    "new_model_loading_or_inference_performed": false,
+    "receipt_sha256": "9d0e363b5655679cca02e9f186df3c27f60d8d5461df3bc47959f4a032313157"
+  }
+}

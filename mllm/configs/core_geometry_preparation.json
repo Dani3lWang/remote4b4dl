@@ -1,41 +1,75 @@
 {
-  "schema": "b4dl-core-preparation-v1",
-  "status": "independent_preparation_only",
-  "baseline_checkpoint": null,
+  "ablation_arms": [
+    {
+      "description": "original_projector_and_baseline",
+      "geometry": false,
+      "name": "A0",
+      "new_supervision": false,
+      "temporal": false
+    },
+    {
+      "description": "matched_geometry_supervision_only",
+      "geometry": false,
+      "name": "A1",
+      "new_supervision": true,
+      "temporal": false
+    },
+    {
+      "description": "time_only_adapter",
+      "geometry": false,
+      "name": "A2",
+      "new_supervision": true,
+      "temporal": true
+    },
+    {
+      "description": "time_and_ego_geometry_adapter",
+      "geometry": true,
+      "name": "A3",
+      "new_supervision": true,
+      "temporal": true
+    }
+  ],
+  "baseline_checkpoint": "/root/autodl-tmp/mmb4dl/mllm/checkpoints/_protected_b3_3ep_final_20260910",
+  "baseline_manifest": "mllm/configs/core_geometry_baseline_original_b3.json",
+  "completed_gates": [
+    "user_selected_baseline_identity",
+    "base_projector_b3_live_hash_verification"
+  ],
   "encoder_checkpoint_sha256": null,
   "frame_adapter": {
-    "width": 768,
+    "distance_scale_m": 10.0,
+    "ff_width": 1536,
     "heads": 8,
     "layers": 2,
-    "ff_width": 1536,
+    "time_scale_s": 4.0,
     "use_geometry": true,
-    "distance_scale_m": 10.0,
-    "time_scale_s": 4.0
-  },
-  "ablation_arms": [
-    {"name": "A0", "description": "original_projector_and_baseline", "temporal": false, "geometry": false, "new_supervision": false},
-    {"name": "A1", "description": "matched_geometry_supervision_only", "temporal": false, "geometry": false, "new_supervision": true},
-    {"name": "A2", "description": "time_only_adapter", "temporal": true, "geometry": false, "new_supervision": true},
-    {"name": "A3", "description": "time_and_ego_geometry_adapter", "temporal": true, "geometry": true, "new_supervision": true}
-  ],
-  "offline_rewards": {
-    "answer_only": {"answer_weight": 1.0, "evidence_weight": 0.0},
-    "answer_and_evidence": {"answer_weight": 0.7, "evidence_weight": 0.3},
-    "numeric_tolerance_m": 1.0
+    "width": 768
   },
   "future_rl": {
-    "implemented": false,
     "branch": "rf-grpo",
-    "require_identical_sft_endpoint_for_reward_arms": true,
-    "freeze_frame_adapter": true
+    "freeze_frame_adapter": true,
+    "implemented": false,
+    "require_identical_sft_endpoint_for_reward_arms": true
   },
   "gates_before_real_training": [
-    "user_selected_baseline_identity",
     "matching_sst_encoder_and_preprocessing_provenance",
     "full_trainval_scene_splits_and_coverage_audit",
     "real_weight_disabled_adapter_equivalence",
     "multimodal_expansion_and_generation_cache_integration",
     "fixed_compute_and_seed_plan",
     "six_task_regression_inputs_and_protocol_frozen"
-  ]
+  ],
+  "offline_rewards": {
+    "answer_and_evidence": {
+      "answer_weight": 0.7,
+      "evidence_weight": 0.3
+    },
+    "answer_only": {
+      "answer_weight": 1.0,
+      "evidence_weight": 0.0
+    },
+    "numeric_tolerance_m": 1.0
+  },
+  "schema": "b4dl-core-preparation-v1",
+  "status": "baseline_selected_integration_pending"
 }
