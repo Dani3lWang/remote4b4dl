@@ -1,0 +1,41 @@
+{
+  "schema": "b4dl-core-preparation-v1",
+  "status": "independent_preparation_only",
+  "baseline_checkpoint": null,
+  "encoder_checkpoint_sha256": null,
+  "frame_adapter": {
+    "width": 768,
+    "heads": 8,
+    "layers": 2,
+    "ff_width": 1536,
+    "use_geometry": true,
+    "distance_scale_m": 10.0,
+    "time_scale_s": 4.0
+  },
+  "ablation_arms": [
+    {"name": "A0", "description": "original_projector_and_baseline", "temporal": false, "geometry": false, "new_supervision": false},
+    {"name": "A1", "description": "matched_geometry_supervision_only", "temporal": false, "geometry": false, "new_supervision": true},
+    {"name": "A2", "description": "time_only_adapter", "temporal": true, "geometry": false, "new_supervision": true},
+    {"name": "A3", "description": "time_and_ego_geometry_adapter", "temporal": true, "geometry": true, "new_supervision": true}
+  ],
+  "offline_rewards": {
+    "answer_only": {"answer_weight": 1.0, "evidence_weight": 0.0},
+    "answer_and_evidence": {"answer_weight": 0.7, "evidence_weight": 0.3},
+    "numeric_tolerance_m": 1.0
+  },
+  "future_rl": {
+    "implemented": false,
+    "branch": "rf-grpo",
+    "require_identical_sft_endpoint_for_reward_arms": true,
+    "freeze_frame_adapter": true
+  },
+  "gates_before_real_training": [
+    "user_selected_baseline_identity",
+    "matching_sst_encoder_and_preprocessing_provenance",
+    "full_trainval_scene_splits_and_coverage_audit",
+    "real_weight_disabled_adapter_equivalence",
+    "multimodal_expansion_and_generation_cache_integration",
+    "fixed_compute_and_seed_plan",
+    "six_task_regression_inputs_and_protocol_frozen"
+  ]
+}
