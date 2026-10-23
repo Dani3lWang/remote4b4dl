@@ -63,3 +63,14 @@ PLAN=mllm/configs/core_geometry_experiment_sft_v1.json
 从中断恢复时，使用相同源码、数据、基底、计划、seed、lr、batch及累积配置，运行 `b4dl_core.b3 train ... --resume 原checkpoint --output 新目录`，总steps仍为13,851；不把恢复当成追加一轮。扩展checkpoint保存optimizer/scaler/RNG及实验SHA256，身份变化会拒绝。
 
 训练完成后还需运行固定终点的geometry dev/test和六任务A0/扩展比较。geometry推理传同一 `--experiment`，预算256；六任务用 `six_task infer`、`six_task metrics` 并传最终协议及同一实验文件。此时才能报告泛化、退化或相对改进。右后视野的方位缺口、train59条缺同长度供体、internal_dev可能被历史基底见过等数据限制继续有效。
+
+
+## 正式启动回执（2026-10-23）
+
+北京时间 2026-10-23 14:12:41 启动作业，训练PID344870、watcher PID344869。实际运行源码为 `source-1d23109`，代码提交 `1d231095a5d3f0530eb74277a7bfbaa0b1e05b3e`；61文件逐一核验。部署保留已验收的运行字节，并同时核对Git规范化内容，记录39个Windows换行转换，避免改变配置或实现SHA256。
+
+截至迁回的启动回执，已完成297/13,851次真实更新，呈现1,188条样例，epoch=0.0214425，`engineering_only=false`。可训练参数13,210,832，冻结参数6,738,432,000；第二步内部attention梯度绝对值和13.1761，观察到的loss/梯度norm均有限。近期100步均耗时0.6211秒，按该窗口估计剩余2.34小时，仅为运行时估计。
+
+首步 `step-1.pt` 共158,581,579 bytes，SHA256 `852ee92ffb434ed0d9eff688a1f975c86eeeae1e2b186d47d0755409fef1e215`；38个FP32参数张量、38份optimizer state均有限，Adam step均为1，实验/数据/基底/实现身份与运行一致。启动快照的latest已到step 250。显存使用14,155MiB。检查只在CPU读取权重，没有打断训练。
+
+本地证据为 `training_logs/core_geometry_20261022/sft-startup-evidence`，运行产物持续保存在远端 `training/A3-seed42` 与 `jobs/A3-seed42`。代码和准备配置仍是不可变的启动快照；实时状态查看PID、loss、latest、job exit与最终completion。当前训练进行中，未完成固定预算及泛化/六任务验收；首步与loss下降均不是性能提升证据。
