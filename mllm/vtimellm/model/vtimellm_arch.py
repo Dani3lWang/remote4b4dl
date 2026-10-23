@@ -34,6 +34,9 @@ class VTimeLLMMetaForCausalLM(ABC):
         past_key_values,
         labels,
         images,
+        frame_times=None,
+        frame_geometry=None,
+        frame_valid_mask=None,
     ):
         # print(position_ids, attention_mask)
         # if past_key_values:
@@ -55,7 +58,11 @@ class VTimeLLMMetaForCausalLM(ABC):
                 position_ids = torch.sum(attention_mask, dim=1).unsqueeze(-1) - 1
             return input_ids, position_ids, attention_mask, past_key_values, None, labels
 
-        if type(images) is list:
+        core_frames = any(x is not None for x in (frame_times, frame_geometry, frame_valid_mask)) or getattr(self.get_model(), 'frame_adapter', None) is not None
+        if core_frames:
+            from b4dl_core.integration import project_frames
+            image_features = project_frames(self, images, frame_times, frame_geometry, frame_valid_mask)
+        elif type(images) is list:
             concat_images = torch.cat([image for image in images], dim=0)
             image_features = self.get_model().mm_projector(concat_images)
             split_sizes = [image.shape[0] for image in images]

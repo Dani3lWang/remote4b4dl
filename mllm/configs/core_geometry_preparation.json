@@ -33,7 +33,12 @@
   "baseline_manifest": "mllm/configs/core_geometry_baseline_original_b3.json",
   "completed_gates": [
     "user_selected_baseline_identity",
-    "base_projector_b3_live_hash_verification"
+    "base_projector_b3_live_hash_verification",
+    "native_train_infer_interfaces",
+    "cpu_transformers_peft_regression",
+    "real_weight_disabled_adapter_equivalence",
+    "multimodal_expansion_and_generation_cache_integration",
+    "real_b3_two_step_gradient_and_reload_verification"
   ],
   "encoder_checkpoint_sha256": null,
   "frame_adapter": {
@@ -54,11 +59,10 @@
   "gates_before_real_training": [
     "matching_sst_encoder_and_preprocessing_provenance",
     "full_trainval_scene_splits_and_coverage_audit",
-    "real_weight_disabled_adapter_equivalence",
-    "multimodal_expansion_and_generation_cache_integration",
     "fixed_compute_and_seed_plan",
     "six_task_regression_inputs_and_protocol_frozen"
   ],
+  "integration_entrypoint": "python -m b4dl_core.b3",
   "offline_rewards": {
     "answer_and_evidence": {
       "answer_weight": 0.7,
@@ -71,5 +75,12 @@
     "numeric_tolerance_m": 1.0
   },
   "schema": "b4dl-core-preparation-v1",
-  "status": "baseline_selected_integration_pending"
+  "status": "real_b3_integration_verified_formal_training_pending",
+  "integration_verification": {
+    "date": "2026-10-23",
+    "remote_output": "/root/autodl-tmp/mmb4dl-core-integration-20261023-r1/verification-r3",
+    "implementation_sha256": "21b2904177bf04439797a2f9a640281e093b2390ba6d4e739434b97c97903e3e",
+    "engineering_only": true,
+    "task_performance_measured": false
+  }
 }

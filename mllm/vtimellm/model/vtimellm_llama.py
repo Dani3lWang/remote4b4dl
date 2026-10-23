@@ -44,6 +44,9 @@ class VTimeLLMLlamaForCausalLM(LlamaForCausalLM, VTimeLLMMetaForCausalLM):
         images: Optional[torch.FloatTensor] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        frame_times: Optional[torch.Tensor] = None,
+        frame_geometry: Optional[torch.Tensor] = None,
+        frame_valid_mask: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         if inputs_embeds is None:
@@ -60,7 +63,10 @@ class VTimeLLMLlamaForCausalLM(LlamaForCausalLM, VTimeLLMMetaForCausalLM):
                 attention_mask,
                 past_key_values,
                 labels,
-                images
+                images,
+                frame_times=frame_times,
+                frame_geometry=frame_geometry,
+                frame_valid_mask=frame_valid_mask,
             )
 
         return super().forward(
@@ -79,12 +85,23 @@ class VTimeLLMLlamaForCausalLM(LlamaForCausalLM, VTimeLLMMetaForCausalLM):
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, inputs_embeds=None, **kwargs):
         images = kwargs.pop("images", None)
+        frames = {key: kwargs.pop(key, None) for key in ("frame_times", "frame_geometry", "frame_valid_mask")}
         _inputs = super().prepare_inputs_for_generation(
             input_ids, past_key_values=past_key_values, inputs_embeds=inputs_embeds, **kwargs
         )
         if images is not None:
             _inputs['images'] = images
+        _inputs.update({key: value for key, value in frames.items() if value is not None})
         return _inputs
+
+    @torch.no_grad()
+    def generate(self, inputs=None, **kwargs):
+        images = kwargs.get("images")
+        core_frames = any(kwargs.get(k) is not None for k in ("frame_times", "frame_geometry", "frame_valid_mask")) or getattr(self.get_model(), 'frame_adapter', None) is not None
+        if images is not None and core_frames:
+            from b4dl_core.integration import expand_generation
+            inputs, kwargs = expand_generation(self, inputs, kwargs)
+        return super().generate(inputs=inputs, **kwargs)
 
 AutoConfig.register("VTimeLLM", VTimeLLMConfig)
 AutoModelForCausalLM.register(VTimeLLMConfig, VTimeLLMLlamaForCausalLM)

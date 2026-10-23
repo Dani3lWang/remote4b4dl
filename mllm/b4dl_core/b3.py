@@ -1,0 +1,349 @@
+"""Explicit B3 integration entry: verify, bounded engineering train, and infer."""
+import argparse
+from contextlib import contextmanager
+from dataclasses import replace
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+from types import SimpleNamespace
+
+import numpy as np
+import torch
+
+from .inputs import GeometryDataset, control_plan
+from .integration import (attach, batch_inputs, language_model, load_checkpoint, padding_side,
+                          save_checkpoint, trainable_state)
+from .io import digest, read_json, sha256, write_json, write_jsonl
+from .temporal import TemporalConfig
+
+
+def verify_baseline(lock):
+    for key, component in lock["components"].items():
+        root = Path(component["path"])
+        actual = {}
+        if root.is_file():
+            actual[root.name] = sha256(root)
+            artifact = actual[root.name]
+        else:
+            if not root.is_dir():
+                raise FileNotFoundError(root)
+            files = sorted(p for p in root.rglob("*") if p.is_file() and
+                p.suffix in (".json", ".bin", ".safetensors", ".model", ".txt") and
+                not p.name.startswith(("optimizer", "scheduler", "training_args")))
+            actual = {p.relative_to(root).as_posix(): sha256(p) for p in files}
+            artifact = hashlib.sha256(json.dumps(actual, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+        if actual != component["files_sha256"] or artifact != component["artifact_sha256"]:
+            raise ValueError("baseline files changed: " + key)
+        print("verified baseline component:", key, flush=True)
+
+
+@contextmanager
+def device_lease(device, lock_path, minimum_free_mib=20000):
+    if torch.device(device).type != "cuda":
+        yield
+        return
+    import fcntl
+    if device not in ("cuda", "cuda:0"):
+        raise ValueError("current GPU lease supports only cuda:0")
+    with Path(lock_path).open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            values = subprocess.check_output(["nvidia-smi", "--id=0", "--query-gpu=memory.free,utilization.gpu",
+                "--format=csv,noheader,nounits"], text=True).strip().split(",")
+            if int(values[0]) < minimum_free_mib or int(values[1]) > 20:
+                raise RuntimeError("GPU not sufficiently idle for B3 integration")
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def load_original(lock, device):
+    from vtimellm.model.builder import load_pretrained_model
+    verify_baseline(lock)
+    components = lock["components"]
+    args = SimpleNamespace(model_base=components["model_base"]["path"],
+        pretrain_mm_mlp_adapter=components["pretrain_mm_mlp_adapter"]["path"])
+    tokenizer, model, _ = load_pretrained_model(args, components["stage2"]["path"], None)
+    dtype = torch.float16 if torch.device(device).type == "cuda" else torch.float32
+    model.to(device=device, dtype=dtype).eval()
+    return tokenizer, model
+
+
+def implementation_id():
+    package = Path(__file__).parent
+    files = list(package.glob("*.py")) + [package.parent/"vtimellm/model"/name for name in
+        ("vtimellm_arch.py", "vtimellm_llama.py", "builder.py")]
+    return digest({p.relative_to(package.parent).as_posix(): sha256(p) for p in files})
+
+
+def identity_for(args, dataset):
+    return {"baseline_manifest_sha256": sha256(args.baseline), "dataset_id": dataset.manifest["dataset_id"],
+            "implementation_sha256": implementation_id()}
+
+
+def chosen_config(preparation, arm):
+    return replace(TemporalConfig(**preparation["frame_adapter"]), use_geometry=arm == "A3")
+
+
+def teacher_loss(model, batch):
+    device = language_model(model).get_input_embeddings().weight.device
+    with padding_side(model, "right"), torch.autocast(device_type=device.type, dtype=torch.float16, enabled=device.type == "cuda"):
+        return model(**batch, use_cache=False).loss
+
+
+def optimizer_for(model, lr):
+    if not 0 < lr < 1:
+        raise ValueError("invalid learning rate")
+    parameters = [p for p in model.parameters() if p.requires_grad]
+    if not parameters or any(p.dtype != torch.float32 for p in parameters):
+        raise ValueError("optimizer requires nonempty FP32 trainable parameters")
+    return torch.optim.AdamW(parameters, lr=lr, weight_decay=.01)
+
+
+def train_step(model, batches, optimizer, scaler):
+    model.train()
+    optimizer.zero_grad(set_to_none=True)
+    losses = []
+    for batch in batches:
+        loss = teacher_loss(model, batch)
+        if not torch.isfinite(loss):
+            raise ValueError("nonfinite training loss")
+        losses.append(float(loss.detach()))
+        scaler.scale(loss/len(batches)).backward()
+    scaler.unscale_(optimizer)
+    gradients = [p.grad for p in model.parameters() if p.requires_grad and p.grad is not None]
+    if not gradients or not all(torch.isfinite(g).all() for g in gradients):
+        raise ValueError("missing or nonfinite gradient; no optimizer update applied")
+    norm = torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.)
+    scaler.step(optimizer)
+    scaler.update()
+    return {"loss": sum(losses)/len(losses), "gradient_norm": float(norm), "grad_accum": len(batches)}
+
+
+def legacy_generate(model, batch, budget):
+    base = language_model(model)
+    legacy_images = [batch["images"][i, mask].to(base.get_model().mm_projector.weight.dtype)
+                     for i, mask in enumerate(batch["frame_valid_mask"])]
+    with torch.no_grad(), padding_side(base, "left"):
+        _, _, attention, _, embeds, _ = base.prepare_inputs_labels_for_multimodal(
+            batch["input_ids"], None, batch["attention_mask"], None, None, legacy_images)
+        return base.generate(inputs_embeds=embeds, attention_mask=attention, max_new_tokens=budget,
+            do_sample=False, use_cache=True, pad_token_id=base.config.eos_token_id)
+
+
+def verify_integration(args, preparation, lock, dataset):
+    tokenizer, model = load_original(lock, args.device)
+    requests, lengths = [], set()
+    for r in dataset.requests:
+        if r["feature_length"] not in lengths:
+            requests.append(r); lengths.add(r["feature_length"])
+        if len(requests) == 2: break
+    if len(requests) < 2:
+        raise ValueError("verification requires two actual scenes with different frame counts")
+    items = [dataset.model_input(r) for r in requests]
+    inference = batch_inputs(model, tokenizer, items)
+    with torch.no_grad():
+        expected = legacy_generate(model, inference, args.max_new_tokens)
+        legacy = {k: v for k, v in inference.items() if not k.startswith("frame_")}
+        legacy["images"] = [inference["images"][i, mask].to(model.get_model().mm_projector.weight.dtype)
+                            for i, mask in enumerate(inference["frame_valid_mask"])]
+        expected_logits = model(**legacy, use_cache=False).logits.cpu()
+        disabled = model(**inference, use_cache=False).logits.cpu()
+        torch.testing.assert_close(expected_logits, disabled, rtol=0, atol=0)
+    model, options = attach(model, arm="A3", temporal=chosen_config(preparation, "A3"), lora_rank=0)
+    with torch.no_grad():
+        initialized = model(**inference, use_cache=False).logits.cpu()
+        torch.testing.assert_close(expected_logits, initialized, rtol=0, atol=0)
+    calls = []
+    hook = model.get_model().frame_adapter.register_forward_hook(lambda *unused: calls.append(1))
+    actual = model.generate(**inference, max_new_tokens=args.max_new_tokens, do_sample=False, use_cache=True,
+                            pad_token_id=model.config.eos_token_id)
+    hook.remove()
+    if len(calls) != 1 or not torch.equal(actual, expected):
+        raise ValueError(f"generation mismatch: adapter_calls={len(calls)}, expected={expected.tolist()}, actual={actual.tolist()}")
+    for i, item in enumerate(items):
+        single = model.generate(**batch_inputs(model, tokenizer, [item]), max_new_tokens=args.max_new_tokens,
+                                do_sample=False, use_cache=True, pad_token_id=model.config.eos_token_id)
+        if not torch.equal(actual[i, :single.shape[1]], single[0]):
+            raise ValueError("batched/individual generation differs")
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    # Real training QA is limited to two engineering optimizer steps.
+    training = batch_inputs(model, tokenizer, items[:1], [dataset.targets[requests[0]["request_id"]]])
+    optimizer = optimizer_for(model, 1e-4)
+    scaler = torch.amp.GradScaler("cuda", enabled=torch.device(args.device).type == "cuda", init_scale=1024)
+    steps = [train_step(model, [training], optimizer, scaler) for _ in range(2)]
+    grad = float(model.get_model().frame_adapter.blocks[0].attention.in_proj_weight.grad.abs().sum())
+    if grad <= 0:
+        raise ValueError("adapter attention received no gradient after residual warmup")
+    identity = identity_for(args, dataset)
+    checkpoint = Path(args.output)/"engineering-extension.pt"
+    save_checkpoint(checkpoint, model, options, identity, {"step": 2, "engineering_only": True}, optimizer, scaler)
+    model.eval()
+    with torch.no_grad(): before = model(**inference, use_cache=False).logits.cpu()
+    with torch.no_grad(): model.get_model().frame_adapter.output.bias.add_(1.)
+    load_checkpoint(checkpoint, model, options, identity, optimizer, scaler)
+    with torch.no_grad(): after = model(**inference, use_cache=False).logits.cpu()
+    torch.testing.assert_close(before, after, rtol=0, atol=0)
+    report = {"status": "real_b3_integration_verified", "identity": identity, "arm": "A3", "lora_rank": 0,
+        "requests": [r["request_id"] for r in requests], "frame_lengths": [r["feature_length"] for r in requests],
+        "disabled_logits_exact": True, "zero_init_logits_exact": True, "legacy_generation_tokens_exact": True,
+        "variable_frame_batch_tokens_exact": True, "adapter_calls_per_generation": len(calls),
+        "optimizer_steps": steps, "attention_gradient_after_warmup": grad, "reload_logits_exact": True,
+        "checkpoint_sha256": sha256(checkpoint), "training_split": "train", "engineering_only": True,
+        "task_performance_measured": False, "peak_cuda_allocated_mib": torch.cuda.max_memory_allocated()/2**20 if torch.cuda.is_available() else None}
+    write_json(Path(args.output)/"verification.json", report)
+    return report
+
+
+def batch_indices(total, step, micro, batch_size, accum, seed):
+    result = []
+    for position in range((step*accum+micro)*batch_size, (step*accum+micro+1)*batch_size):
+        epoch, index = divmod(position, total)
+        result.append(int(np.random.default_rng(seed+epoch).permutation(total)[index]))
+    return result
+
+
+def train(args, preparation, lock, dataset):
+    tokenizer, original = load_original(lock, args.device)
+    model, options = attach(original, args.arm, chosen_config(preparation, args.arm), args.lora_rank)
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    optimizer = optimizer_for(model, args.lr)
+    scaler = torch.amp.GradScaler("cuda", enabled=torch.device(args.device).type == "cuda", init_scale=1024)
+    identity = identity_for(args, dataset)
+    recipe = {"lr": args.lr, "batch_size": args.batch_size, "grad_accum": args.grad_accum, "seed": args.seed,
+              "engineering_only": args.engineering, "split": "train"}
+    start = 0
+    if args.resume:
+        status = load_checkpoint(args.resume, model, options, identity, optimizer, scaler)
+        if status["recipe"] != recipe:
+            raise ValueError("resume recipe mismatch")
+        start = status["step"]
+        if start >= args.steps:
+            raise ValueError("resume steps must exceed completed optimizer steps")
+    logs = []
+    for step in range(start, args.steps):
+        batches = []
+        for micro in range(args.grad_accum):
+            requests = [dataset.requests[i] for i in batch_indices(len(dataset.requests), step, micro, args.batch_size, args.grad_accum, args.seed)]
+            batches.append(batch_inputs(model, tokenizer, [dataset.model_input(r) for r in requests],
+                                        [dataset.targets[r["request_id"]] for r in requests]))
+        row = {"step": step+1, **train_step(model, batches, optimizer, scaler)}
+        logs.append(row)
+        print(json.dumps(row), flush=True)
+        write_jsonl(Path(args.output)/"loss.jsonl", logs)
+        if (step+1) % args.save_every == 0 or step+1 == args.steps:
+            save_checkpoint(Path(args.output)/f"step-{step+1}.pt", model, options, identity,
+                            {"step": step+1, "recipe": recipe}, optimizer, scaler)
+    report = {"status": "engineering_training_complete" if args.engineering else "training_complete",
+              "identity": identity, "options": options, "recipe": recipe, "optimizer_steps": args.steps,
+              "resumed_from_step": start, "quality_evaluation_completed": False}
+    write_json(Path(args.output)/"completion.json", report)
+    return report
+
+
+def infer(args, preparation, lock, dataset):
+    tokenizer, original = load_original(lock, args.device)
+    model, options = attach(original, args.arm, chosen_config(preparation, args.arm), args.lora_rank)
+    identity = identity_for(args, dataset)
+    if args.checkpoint:
+        load_checkpoint(args.checkpoint, model, options, identity)
+    model.eval()
+    controls = control_plan(dataset, args.condition)
+    predictions, receipts = [], []
+    for start in range(0, len(dataset.requests), args.batch_size):
+        requests = dataset.requests[start:start+args.batch_size]
+        batch_controls = controls[start:start+args.batch_size]
+        ready = [(r, c) for r, c in zip(requests, batch_controls) if c["status"] == "ready"]
+        if ready:
+            items = [dataset.model_input(r, c) for r, c in ready]
+            batch = batch_inputs(model, tokenizer, items)
+            output = model.generate(**batch, max_new_tokens=args.max_new_tokens, do_sample=False, use_cache=True,
+                                    pad_token_id=tokenizer.eos_token_id)
+            for (r, c), item, tokens in zip(ready, items, output.tolist()):
+                finished = tokenizer.eos_token_id in tokens
+                if finished: tokens = tokens[:tokens.index(tokenizer.eos_token_id)]
+                predictions.append({"request_id": r["request_id"], "input_fingerprint": r["input_fingerprint"],
+                    "status": "ok" if finished else "truncated", "text": tokenizer.decode(tokens, skip_special_tokens=False).strip()})
+                receipts.append({**c, "feature_array_sha256": hashlib.sha256(item["features"].tobytes()).hexdigest(),
+                                 "feature_shape": list(item["features"].shape), "feature_dtype": str(item["features"].dtype)})
+        for r, c in zip(requests, batch_controls):
+            if c["status"] != "ready":
+                predictions.append({"request_id": r["request_id"], "input_fingerprint": r["input_fingerprint"], "status": "unavailable", "text": ""})
+                receipts.append(c)
+        write_jsonl(Path(args.output)/"predictions.jsonl", predictions)
+        write_jsonl(Path(args.output)/"input-receipts.jsonl", receipts)
+    run = {"dataset_id": identity["dataset_id"], "split": args.split, "condition": args.condition,
+           "model_id": lock["baseline_id"]+"/"+args.arm, "prediction_kind": "model",
+           "checkpoint_sha256": sha256(args.checkpoint) if args.checkpoint else sha256(args.baseline)}
+    write_json(Path(args.output)/"run.json", run)
+    write_json(Path(args.output)/"completion.json", {"status": "inference_complete", "run": run,
+               "identity": identity, "options": options, "predictions": len(predictions)})
+    return run
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("verify", "train", "infer"))
+    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--baseline", required=True)
+    parser.add_argument("--preparation", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--gpu-lock", default="/root/autodl-tmp/.b4dl_gpu0_eval.lock")
+    parser.add_argument("--arm", choices=("A0", "A1", "A2", "A3"), default="A3")
+    parser.add_argument("--lora-rank", type=int, default=0)
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--grad-accum", type=int, default=1)
+    parser.add_argument("--steps", type=int)
+    parser.add_argument("--save-every", type=int, default=10)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--engineering", action="store_true")
+    parser.add_argument("--resume")
+    parser.add_argument("--checkpoint")
+    parser.add_argument("--split", choices=("train", "internal_dev", "test"), default="test")
+    parser.add_argument("--condition", choices=("identity", "zero", "repeat_first", "shuffle_features", "cross_scene"), default="identity")
+    parser.add_argument("--max-new-tokens", type=int)
+    args = parser.parse_args()
+    if args.max_new_tokens is None:
+        args.max_new_tokens = 8 if args.command == "verify" else 256
+    if min(args.batch_size, args.grad_accum, args.save_every, args.max_new_tokens) < 1 or args.lora_rank < 0:
+        parser.error("invalid numerical settings")
+    if args.command == "verify" and (args.arm != "A3" or args.lora_rank):
+        parser.error("verify checks A3 with no new LoRA; separate tests cover optional LoRA")
+    if args.command == "train" and (args.arm == "A0" or args.steps is None or args.steps < 1):
+        parser.error("training requires A1/A2/A3 and explicit positive steps")
+    if args.command == "infer" and (args.arm == "A0" and args.checkpoint or args.arm != "A0" and not args.checkpoint):
+        parser.error("A0 uses original baseline; A1/A2/A3 inference requires an extension checkpoint")
+    if args.command != "infer" and args.checkpoint or args.command != "train" and args.resume:
+        parser.error("checkpoint belongs to infer; resume belongs to train")
+    output = Path(args.output)
+    if output.exists(): parser.error("output already exists; choose a new directory")
+    preparation, lock = read_json(args.preparation), read_json(args.baseline)
+    if lock["schema"] != "b4dl-core-baseline-v1" or preparation["baseline_checkpoint"] != lock["components"]["stage2"]["path"]:
+        parser.error("preparation/baseline identity mismatch")
+    split = args.split if args.command == "infer" else "train"
+    dataset = GeometryDataset(args.dataset, split)
+    if not dataset.requests: parser.error("empty requested split")
+    if args.command == "train":
+        if args.engineering:
+            if args.steps > 20: parser.error("engineering run limited to 20 total optimizer steps")
+        elif (preparation["gates_before_real_training"] or dataset.manifest["usage"] == "mini_engineering_validation"
+              or not dataset.manifest["encoder_checkpoint_verified"] or not lock["sst_encoder_checkpoint_verified"]):
+            parser.error("formal training requires completed readiness gates, full data and verified SST provenance; use --engineering only for bounded checks")
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    output.mkdir(parents=True)
+    write_json(output/"invocation.json", vars(args))
+    try:
+        with device_lease(args.device, args.gpu_lock):
+            report = {"verify": verify_integration, "train": train, "infer": infer}[args.command](args, preparation, lock, dataset)
+        print(json.dumps(report, ensure_ascii=False), flush=True)
+    except Exception as error:
+        write_json(output/"error.json", {"type": type(error).__name__, "message": str(error)})
+        raise
+
+
+if __name__ == "__main__":
+    main()
