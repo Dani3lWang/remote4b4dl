@@ -2,6 +2,8 @@
 
 日期：2026-10-23。用户要求完成所有准备并开始训练。本轮正式训练前的来源、数据、预算、种子、六任务输入、指标资源和 GPU 接口检查已完成。训练完成与模型效果验收分别记录，不能由启动回执代替。
 
+**实时更新：训练已失败，未完成一轮。** 北京时间2026-10-23 15:10:34，完成4953/13851次更新后因`nonfinite training loss`退出，正式completion不存在。最近保存点step4750的参数、优化器、身份和哈希通过核验。17:13:22已启动该中途保存点与原B3的几何dev/test和六任务完整评测，尚无全量结论。下文启动回执为历史快照；详见[首轮训练与评测记录](../../docs/research/B4DL本体更新_首轮训练与评测记录_20261023.md)。
+
 ## 固定配方
 
 | 项目 | 本轮约定 |
@@ -73,4 +75,4 @@ PLAN=mllm/configs/core_geometry_experiment_sft_v1.json
 
 首步 `step-1.pt` 共158,581,579 bytes，SHA256 `852ee92ffb434ed0d9eff688a1f975c86eeeae1e2b186d47d0755409fef1e215`；38个FP32参数张量、38份optimizer state均有限，Adam step均为1，实验/数据/基底/实现身份与运行一致。启动快照的latest已到step 250。显存使用14,155MiB。检查只在CPU读取权重，没有打断训练。
 
-本地证据为 `training_logs/core_geometry_20261022/sft-startup-evidence`，运行产物持续保存在远端 `training/A3-seed42` 与 `jobs/A3-seed42`。代码和准备配置仍是不可变的启动快照；实时状态查看PID、loss、latest、job exit与最终completion。当前训练进行中，未完成固定预算及泛化/六任务验收；首步与loss下降均不是性能提升证据。
+本地证据为 `training_logs/core_geometry_20261022/sft-startup-evidence`，运行产物持续保存在远端 `training/A3-seed42` 与 `jobs/A3-seed42`。代码和准备配置仍是不可变的启动快照；实时状态查看PID、loss、latest、job exit与最终completion。此启动快照采集时训练进行中；后续已因非有限loss失败，见文首实时更新。首步与loss下降均不是性能提升证据。
