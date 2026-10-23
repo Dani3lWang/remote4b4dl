@@ -79,7 +79,7 @@ PREP=mllm/configs/core_geometry_preparation.json
 - 两步 loss 为 1.50855136、1.00260293，第二步内部 attention 梯度绝对值和为 14.31890297；峰值 PyTorch allocated 为 13,172.31 MiB。两步使用同一 train 样例，仅证明优化链路可运行，不能作为质量提升证据。
 - 首轮在旧路径 FP32 特征与 FP16 projector 不匹配处退出；随后修正参考输入精度及 PEFT 合并残留配置判断。第二轮在验证路径补齐 token 不一致处退出；统一 EOS 后第三轮全部通过。两次失败均在优化前，未发生训练更新，失败日志保留。
 - 本地回执：`training_logs/core_geometry_20261022/integration-tests-r3.txt`、`shared-b3-regression-tests.txt`。最终代码校验以补充的 `integration-tests-final.txt` 为准。
-- 尚待：SST 来源、完整 trainval 覆盖、正式训练预算与六任务回归协议。mini 工程验收不解除正式训练门控，当前不能宣称接入提升了性能。
+- 后续 SST 来源及完整 trainval 已核验，见[全量说明](core_sst_trainval.md)。尚待正式训练预算/种子与六任务回归协议；mini 工程验收不能作为性能提升证据。
 
 ## 真实验收身份与复核
 
@@ -88,3 +88,6 @@ PREP=mllm/configs/core_geometry_preparation.json
 - 紧凑回执归档 SHA256：`8a0668266ceed3f49f00ec04a067a1a9bdf94646965bd74518a64e252f128763`。本地解包后逐项复核；原始 B3 三组件加载前实时核验通过，未覆盖原权重。
 - 基底清单保留锁定时的历史字段；当前接入状态由准备配置及本轮回执表示。验收部署使用验收前的准备配置快照；本地准备配置仅更新已完成门控，不改变模型、数据或实现身份。
 - 此验收使用 A3、无新增 LoRA、8-token 生成预算。真实 7B 的可选新 LoRA、长输出、全量任务性能和跨进程续训仍需对应实验；CPU 已验证新 LoRA 与下一步恢复等价。
+
+
+2026-10-23 数据准备跟进：正式候选数据改为实际右后裁剪范围的完整 trainval，新来源绑定清单为 `core_geometry_baseline_original_b3_trainval.json`。正式训练额外核对数据与清单的 SST provenance_id/回执 SHA256，并要求输入范围声明；不匹配或回执被改动时在加载模型前拒绝。原清单及工程 checkpoint 的身份约定继续保留。

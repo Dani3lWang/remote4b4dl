@@ -82,6 +82,17 @@ def identity_for(args, dataset):
             "implementation_sha256": implementation_id()}
 
 
+def verify_sst_binding(lock, dataset):
+    expected = lock.get("sst_provenance")
+    actual = dataset.manifest.get("encoder_provenance")
+    if not expected or not actual or not dataset.manifest.get("input_scope"):
+        raise ValueError("formal training requires a verified SST binding and input-scoped supervision")
+    if any(expected.get(key) != actual.get(key) for key in ("sha256", "provenance_id")):
+        raise ValueError("baseline and data use different SST provenance")
+    if sha256(actual["path"]) != actual["sha256"]:
+        raise ValueError("SST provenance receipt changed")
+
+
 def chosen_config(preparation, arm):
     return replace(TemporalConfig(**preparation["frame_adapter"]), use_geometry=arm == "A3")
 
@@ -332,6 +343,11 @@ def main():
         elif (preparation["gates_before_real_training"] or dataset.manifest["usage"] == "mini_engineering_validation"
               or not dataset.manifest["encoder_checkpoint_verified"] or not lock["sst_encoder_checkpoint_verified"]):
             parser.error("formal training requires completed readiness gates, full data and verified SST provenance; use --engineering only for bounded checks")
+        else:
+            try:
+                verify_sst_binding(lock, dataset)
+            except ValueError as error:
+                parser.error(str(error))
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     output.mkdir(parents=True)

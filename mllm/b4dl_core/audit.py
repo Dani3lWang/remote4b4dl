@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from .geometry import CATEGORY_MAP
-from .io import iter_array, sha256, unique_index
+from .io import iter_array, read_jsonl, sha256, unique_index
 
 
 def raw_pose(row):
@@ -34,6 +34,9 @@ def audit_supervision(dataset, tables):
     instance_ids = {r["instance_token"] for r in annotations.values()}
     instances = unique_index(r for r in iter_array(tables/"instance.json") if r["token"] in instance_ids)
     categories = unique_index(iter_array(tables/"category.json"))
+    support = None
+    if "input_scope" in dataset.manifest:
+        support = unique_index(read_jsonl(dataset.manifest["input_scope"]["support_records"]), "sample_token")
     calibrations = unique_index(iter_array(tables/"calibrated_sensor.json"))
     by_sample = defaultdict(list)
     for row in annotations.values():
@@ -54,6 +57,8 @@ def audit_supervision(dataset, tables):
             for ann in by_sample[sd["sample_token"]]:
                 category = CATEGORY_MAP.get(categories[instances[ann["instance_token"]]["category_token"]]["name"])
                 if not category or ann["num_lidar_pts"] <= 0:
+                    continue
+                if support is not None and support[sd["sample_token"]]["annotation_counts"][ann["token"]] <= 0:
                     continue
                 xyz = (inverse @ np.r_[ann["translation"], 1])[:3]
                 objects.append({"category": category, "instance": ann["instance_token"], "annotation": ann["token"],

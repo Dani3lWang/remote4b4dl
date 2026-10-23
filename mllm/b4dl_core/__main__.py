@@ -88,6 +88,8 @@ def main():
     prepare.add_argument("--seed", type=int, default=42)
     prepare.add_argument("--max-per-label", type=int, default=256)
     prepare.add_argument("--scene-ids", nargs="+")
+    prepare.add_argument("--input-support", help="Raw-point support records in the actual historical SST crop")
+    prepare.add_argument("--encoder-provenance", help="Verified SST provenance receipt")
     for name in ("preflight", "smoke", "controls", "evaluate", "prior", "audit"):
         sub = commands.add_parser(name)
         sub.add_argument("--dataset", required=True)
@@ -112,7 +114,8 @@ def main():
         parser.error("output already exists; choose a new path")
     if args.command == "prepare":
         report = build_dataset(args.tables, args.scene_metadata, args.features, args.splits, output,
-                               seed=args.seed, max_per_label=args.max_per_label, scene_ids=args.scene_ids)
+                               seed=args.seed, max_per_label=args.max_per_label, scene_ids=args.scene_ids,
+                               input_support=args.input_support, encoder_provenance=args.encoder_provenance)
         print(report["dataset_id"], report["counts"])
         return
     if args.command == "compare":

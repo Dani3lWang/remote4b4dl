@@ -41,7 +41,8 @@ def assign_splits(scene_rows, official, seed=42):
     return {s["token"]: "test" if s["name"] in test else "internal_dev" if s["name"] in dev else "train" for s in scene_rows}
 
 
-def load_aligned_scenes(table_root, scene_metadata, feature_root, official, scene_ids=None, seed=42):
+def load_aligned_scenes(table_root, scene_metadata, feature_root, official, scene_ids=None, seed=42,
+                        input_support=None):
     table_root, feature_root = Path(table_root), Path(feature_root)
     raw_scenes = unique_index(iter_array(table_root / "scene.json"))
     metas = [r for r in iter_array(scene_metadata) if r["scene_token"] in raw_scenes
@@ -80,6 +81,19 @@ def load_aligned_scenes(table_root, scene_metadata, feature_root, official, scen
     instances = unique_index(r for r in iter_array(table_root / "instance.json") if r["token"] in instance_ids)
     categories = unique_index(iter_array(table_root / "category.json"))
     splits = assign_splits([raw_scenes[t] for t in sorted(selected)], official, seed)
+    support = None
+    if input_support is not None:
+        from .sst_source import SCOPE, SUPPORT_METHOD
+        from .io import read_jsonl
+        receipt = read_json(Path(input_support).with_suffix(".receipt.json"))
+        if receipt["method"] != SUPPORT_METHOD or receipt["records_sha256"] != sha256(input_support):
+            raise ValueError("input support identity mismatch")
+        if receipt["metadata_sha256"] != sha256(scene_metadata):
+            raise ValueError("input support metadata changed")
+        for name, expected_hash in receipt["source_tables_sha256"].items():
+            if sha256(table_root / (name+".json")) != expected_hash:
+                raise ValueError("input support source table changed")
+        support = unique_index(read_jsonl(input_support), "sample_token")
     result = []
     for meta in sorted(metas, key=lambda x: x["scene_id"]):
         ident, token = meta["scene_id"], meta["scene_token"]
@@ -108,6 +122,11 @@ def load_aligned_scenes(table_root, scene_metadata, feature_root, official, scen
             ego = poses[sd["ego_pose_token"]]
             if type(sd["timestamp"]) is not int or ego["timestamp"] != sd["timestamp"]:
                 raise ValueError("LiDAR/ego pose timestamp mismatch")
+            visibility = support[sample["token"]] if support is not None else None
+            if visibility is not None and (visibility["scene_id"] != ident or visibility["frame_index"] != i
+                    or visibility["lidar_sample_data_token"] != sd["token"]
+                    or set(visibility["annotation_counts"]) != {a["token"] for a in annotations[sample["token"]]}):
+                raise ValueError("input support frame/annotation coverage mismatch")
             objects, unsupported, seen_instances = [], set(), set()
             for ann in annotations[sample["token"]]:
                 ins = instances[ann["instance_token"]]
@@ -123,6 +142,12 @@ def load_aligned_scenes(table_root, scene_metadata, feature_root, official, scen
                 if count == 0:
                     unsupported.add(category)
                     continue
+                if visibility is not None:
+                    count = visibility["annotation_counts"][ann["token"]]
+                    if type(count) is not int or count < 0:
+                        raise ValueError("invalid retained-input point support")
+                    if count == 0:
+                        continue
                 xyz = global_to_ego(ann["translation"], ego)
                 objects.append({"class": category, "instance_token": ann["instance_token"],
                                 "annotation_token": ann["token"], "xyz": xyz.tolist(),
@@ -139,6 +164,8 @@ def load_aligned_scenes(table_root, scene_metadata, feature_root, official, scen
         result.append({"scene_id": ident, "scene_token": token, "scene_name": raw_scenes[token]["name"],
                        "split": splits[token], "feature_sha256": sha256(path),
                        "features": features, "frames": frames})
+        if support is not None:
+            result[-1]["input_scope"] = SCOPE
     return result
 
 
@@ -161,6 +188,8 @@ def response_instruction(keys):
 
 
 def make_question(scene, task, question, answer, evidence, frames, *, predicate="", options=None, provenance=None, quality=None, variant=0):
+    if scene.get("input_scope"):
+        question = scene["input_scope"] + "\n" + question
     base = {"scene_id": scene["scene_id"], "task": task, "question": question,
             "frames": frames, "predicate": predicate, "options": options or {}}
     request = {"schema": SCHEMA, "request_id": digest([base, variant])[:24],
@@ -277,12 +306,24 @@ def balance_questions(rows, seed=42, max_per_label=256):
     return selected, shortages
 
 
-def build_dataset(table_root, scene_metadata, feature_root, split_source, output, *, seed=42, max_per_label=256, scene_ids=None):
+def build_dataset(table_root, scene_metadata, feature_root, split_source, output, *, seed=42, max_per_label=256,
+                  scene_ids=None, input_support=None, encoder_provenance=None):
     output = Path(output)
     if output.exists():
         raise FileExistsError("use a new output directory")
     official = read_json(split_source)
-    scenes = load_aligned_scenes(table_root, scene_metadata, feature_root, official, scene_ids, seed)
+    scenes = load_aligned_scenes(table_root, scene_metadata, feature_root, official, scene_ids, seed, input_support)
+    encoder = read_json(encoder_provenance) if encoder_provenance is not None else None
+    if encoder is not None:
+        if (encoder["schema"] != "b4dl-sst-provenance-v1" or not encoder["verified"]
+                or encoder["provenance_id"] != digest({k: v for k, v in encoder.items() if k != "provenance_id"})
+                or encoder["metadata_sha256"] != sha256(scene_metadata)):
+            raise ValueError("encoder provenance is not verified or metadata changed")
+        if sha256(encoder["checkpoint"]["path"]) != encoder["checkpoint"]["sha256"]:
+            raise ValueError("encoder checkpoint changed")
+        for scene in scenes:
+            if encoder["features"][scene["scene_id"]]["sha256"] != scene["feature_sha256"]:
+                raise ValueError("features differ from encoder provenance")
     rows = [pair for scene in scenes for pair in generate_scene_questions(scene, seed)]
     selected, shortages = balance_questions(rows, seed, max_per_label)
     if not selected:
@@ -316,6 +357,19 @@ def build_dataset(table_root, scene_metadata, feature_root, split_source, output
         "generator_sha256": {name: sha256(Path(__file__).parent / name) for name in ("__init__.py", "data.py", "geometry.py", "io.py")},
         "sources": {str(Path(table_root)/ (name+".json")): sha256(Path(table_root)/(name+".json")) for name in TABLES}}
     manifest["sources"].update({str(scene_metadata): sha256(scene_metadata), str(split_source): sha256(split_source)})
+    if input_support is not None:
+        from .sst_source import SCOPE, SUPPORT_METHOD
+        manifest["input_scope"] = {"description": SCOPE, "support_method": SUPPORT_METHOD,
+            "support_records": str(input_support), "support_sha256": sha256(input_support)}
+        manifest["sources"][str(input_support)] = sha256(input_support)
+        receipt = Path(input_support).with_suffix(".receipt.json")
+        manifest["sources"][str(receipt)] = sha256(receipt)
+        manifest["generator_sha256"]["sst_source.py"] = sha256(Path(__file__).parent/"sst_source.py")
+    if encoder is not None:
+        manifest["encoder_checkpoint_verified"] = True
+        manifest["encoder_provenance"] = {"path": str(encoder_provenance), "sha256": sha256(encoder_provenance),
+                                          "provenance_id": encoder["provenance_id"]}
+        manifest["sources"][str(encoder_provenance)] = sha256(encoder_provenance)
     manifest["files"] = {p.name: sha256(p) for p in output.glob("*.jsonl")}
     manifest["dataset_id"] = digest(manifest)
     write_json(output / "manifest.json", manifest)

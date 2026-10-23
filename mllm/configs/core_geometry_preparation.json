@@ -30,7 +30,7 @@
     }
   ],
   "baseline_checkpoint": "/root/autodl-tmp/mmb4dl/mllm/checkpoints/_protected_b3_3ep_final_20260910",
-  "baseline_manifest": "mllm/configs/core_geometry_baseline_original_b3.json",
+  "baseline_manifest": "mllm/configs/core_geometry_baseline_original_b3_trainval.json",
   "completed_gates": [
     "user_selected_baseline_identity",
     "base_projector_b3_live_hash_verification",
@@ -38,9 +38,11 @@
     "cpu_transformers_peft_regression",
     "real_weight_disabled_adapter_equivalence",
     "multimodal_expansion_and_generation_cache_integration",
-    "real_b3_two_step_gradient_and_reload_verification"
+    "real_b3_two_step_gradient_and_reload_verification",
+    "matching_sst_encoder_and_preprocessing_provenance",
+    "full_trainval_scene_splits_and_coverage_audit"
   ],
-  "encoder_checkpoint_sha256": null,
+  "encoder_checkpoint_sha256": "9707de49b2a6bda21ddf72f4c9a51dc26080c7ee6d67b73180fc0e53e9e63eda",
   "frame_adapter": {
     "distance_scale_m": 10.0,
     "ff_width": 1536,
@@ -57,8 +59,6 @@
     "require_identical_sft_endpoint_for_reward_arms": true
   },
   "gates_before_real_training": [
-    "matching_sst_encoder_and_preprocessing_provenance",
-    "full_trainval_scene_splits_and_coverage_audit",
     "fixed_compute_and_seed_plan",
     "six_task_regression_inputs_and_protocol_frozen"
   ],
@@ -75,12 +75,31 @@
     "numeric_tolerance_m": 1.0
   },
   "schema": "b4dl-core-preparation-v1",
-  "status": "real_b3_integration_verified_formal_training_pending",
+  "status": "sst_and_full_trainval_verified_experiment_protocol_pending",
   "integration_verification": {
     "date": "2026-10-23",
     "remote_output": "/root/autodl-tmp/mmb4dl-core-integration-20261023-r1/verification-r3",
     "implementation_sha256": "21b2904177bf04439797a2f9a640281e093b2390ba6d4e739434b97c97903e3e",
     "engineering_only": true,
     "task_performance_measured": false
+  },
+  "prepared_dataset": {
+    "path": "/root/autodl-tmp/mmb4dl-core-trainval-20261023-r1/trainval-v1",
+    "local_copy": "D:/Github/mmb4dl/training_logs/core_geometry_20261022/trainval-data/trainval-v1",
+    "dataset_id": "3c8f568806797d265119592eea219bdbe3b7180634ad05a3345fe9a9af8b4e03",
+    "scenes": {
+      "internal_dev": 140,
+      "test": 150,
+      "train": 560
+    },
+    "frames": 34149,
+    "questions": 83952,
+    "input_scope": "historical_CAM_BACK_RIGHT_crop_with_geometric_box_point_support",
+    "coverage_receipt": "/root/autodl-tmp/mmb4dl-core-trainval-20261023-r1/coverage.json"
+  },
+  "sst_provenance": {
+    "path": "/root/autodl-tmp/mmb4dl-core-trainval-20261023-r1/sst-provenance.json",
+    "provenance_id": "dd1b870dbc10203056c666ee8a2fe60c9573562f4aac76582b03bdb25b4dbee1",
+    "sha256": "c43898048e83f8a5b99cfa81de79b776e6d56e74f8120b4dc1db2686a4bb1846"
   }
 }
