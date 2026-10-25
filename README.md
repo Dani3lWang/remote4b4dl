@@ -2,6 +2,8 @@
 Official PyTorch implementation of the paper "B4DL: A Benchmark for 4D LiDAR LLM in Spatio-Temporal
 Understanding".
 
+本仓库各模块采用的方法、当前落实状态及代码变更台账见[项目方法与落实情况](docs/项目方法与落实情况.md)。功能代码更新时需同步维护该台账。
+
 [![Hugging Face](https://img.shields.io/badge/Hugging%20Face-🤗-yellow)](https://huggingface.co/datasets/ccho4702/nuScenes-B4DL)
 [![arXiv](https://img.shields.io/badge/arXiv-2508.05269-b31b1b.svg)](https://www.arxiv.org/abs/2508.05269)
 [![Paper](https://img.shields.io/badge/Paper-arXiv-blue.svg)](https://arxiv.org/pdf/2508.05269)

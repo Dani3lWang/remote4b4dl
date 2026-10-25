@@ -102,6 +102,10 @@ python datageneration/tools/build_stage3_seg_candidates.py --input datageneratio
 这是同类标注在该帧存在的证据；它不能确认回答中的方向、运动、时间、对象指代或实例选择正确。
 点 mask 的生成方式、框内点伪标签误差、点顺序、实例 ID 与可见性、查询指代一致性，都需要后续流程验证。
 
+独立的框内点几何伪标签步骤见 [LiDAR 框内点伪掩码工具](lidar_box_pseudo_masks.md)。
+它消费本工具的 `candidates.jsonl`，额外要求原始点来源与坐标/点序证明清单；
+输出仍保持三项未验证标记为 false，不能当作真实分割监督。
+
 主要拒绝原因包括：
 
 | 原因 | 含义 |
