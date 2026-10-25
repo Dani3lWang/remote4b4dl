@@ -36,3 +36,4 @@ python3 generate_dataset.py \
     --dataroot ./data \
     --task existence
 ```
+\n## Stage 3 segmentation candidates\n\nThe auditable Stage 3 candidate and box-geometry pseudo-mask builders, their provenance requirements, and validation boundaries are documented in [stage3_seg_candidates.md](docs/stage3_seg_candidates.md).\n
