@@ -100,10 +100,30 @@ def chosen_config(preparation, arm):
     return replace(TemporalConfig(**preparation["frame_adapter"]), use_geometry=arm == "A3")
 
 
+class NonfiniteTrainingError(ValueError):
+    """A stopped update with JSON-safe numerical evidence, never a skipped sample."""
+    def __init__(self, message, details):
+        super().__init__(message)
+        self.details = details
+
+
+def tensor_summary(value):
+    value = value.detach()
+    finite = torch.isfinite(value)
+    return {"shape": list(value.shape), "dtype": str(value.dtype),
+            "nonfinite_count": int((~finite).sum()),
+            "finite_abs_max": float(value[finite].double().abs().max()) if finite.any() else None}
+
+
 def teacher_loss(model, batch):
     device = language_model(model).get_input_embeddings().weight.device
     with padding_side(model, "right"), torch.autocast(device_type=device.type, dtype=torch.float16, enabled=device.type == "cuda"):
-        return model(**batch, use_cache=False).loss
+        result = model(**batch, use_cache=False)
+    if not torch.isfinite(result.loss):
+        raise NonfiniteTrainingError("nonfinite training loss", {
+            "stage": "forward_loss", "loss": tensor_summary(result.loss),
+            "logits": tensor_summary(result.logits)})
+    return result.loss
 
 
 def optimizer_for(model, lr):
@@ -119,17 +139,34 @@ def train_step(model, batches, optimizer, scaler):
     model.train()
     optimizer.zero_grad(set_to_none=True)
     losses = []
-    for batch in batches:
-        loss = teacher_loss(model, batch)
-        if not torch.isfinite(loss):
-            raise ValueError("nonfinite training loss")
-        losses.append(float(loss.detach()))
-        scaler.scale(loss/len(batches)).backward()
+    for micro, batch in enumerate(batches):
+        try:
+            loss = teacher_loss(model, batch)
+            if not torch.isfinite(loss):
+                raise NonfiniteTrainingError("nonfinite training loss", {
+                    "stage": "forward_loss", "loss": tensor_summary(loss)})
+            losses.append(float(loss.detach()))
+            scaler.scale(loss/len(batches)).backward()
+        except NonfiniteTrainingError as error:
+            error.details.update(micro=micro, finite_micro_losses=losses,
+                batch={name: tensor_summary(value) for name, value in batch.items()},
+                supervised_tokens=int(batch["labels"].ne(-100).sum()) if "labels" in batch else None)
+            optimizer.zero_grad(set_to_none=True)
+            raise
     scaler.unscale_(optimizer)
-    gradients = [p.grad for p in model.parameters() if p.requires_grad and p.grad is not None]
-    if not gradients or not all(torch.isfinite(g).all() for g in gradients):
-        raise ValueError("missing or nonfinite gradient; no optimizer update applied")
-    norm = torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.)
+    gradients = {name: p.grad for name, p in model.named_parameters() if p.requires_grad and p.grad is not None}
+    bad = {name: tensor_summary(g) for name, g in gradients.items() if not torch.isfinite(g).all()}
+    if not gradients or bad:
+        optimizer.zero_grad(set_to_none=True)
+        raise NonfiniteTrainingError("missing or nonfinite gradient; no optimizer update applied", {
+            "stage": "unscaled_gradient", "nonfinite_gradients": bad, "gradient_tensors": len(gradients),
+            "finite_micro_losses": losses})
+    try:
+        norm = torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1., error_if_nonfinite=True)
+    except RuntimeError as error:
+        optimizer.zero_grad(set_to_none=True)
+        raise NonfiniteTrainingError("nonfinite gradient norm; no optimizer update applied", {
+            "stage": "gradient_norm", "finite_micro_losses": losses}) from error
     scaler.step(optimizer)
     scaler.update()
     result = {"loss": sum(losses)/len(losses), "gradient_norm": float(norm), "grad_accum": len(batches)}
@@ -249,12 +286,30 @@ def train(args, preparation, lock, dataset):
         "gpu": torch.cuda.get_device_name() if torch.device(args.device).type == "cuda" else None})
     for step in range(start, args.steps):
         started = time.perf_counter()
-        batches = []
+        batches, request_context = [], []
         for micro in range(args.grad_accum):
-            requests = [dataset.requests[i] for i in batch_indices(len(dataset.requests), step, micro, args.batch_size, args.grad_accum, args.seed)]
+            indices = batch_indices(len(dataset.requests), step, micro, args.batch_size, args.grad_accum, args.seed)
+            requests = [dataset.requests[i] for i in indices]
+            request_context.append([{"index": i, **{key: r[key] for key in
+                ("request_id", "scene_id", "input_fingerprint", "task", "predicate")}} for i, r in zip(indices, requests)])
             batches.append(batch_inputs(model, tokenizer, [dataset.model_input(r) for r in requests],
                                         [dataset.targets[r["request_id"]] for r in requests]))
-        row = {"step": step+1, **train_step(model, batches, optimizer, scaler)}
+        try:
+            row = {"step": step+1, **train_step(model, batches, optimizer, scaler)}
+        except NonfiniteTrainingError as error:
+            failure = {"status": "training_failed",
+                "attempted_step": step+1, "completed_updates": step, "identity": identity,
+                "recipe": recipe, "requests_by_micro": request_context, "diagnostics": error.details,
+                "optimizer_update_applied": False}
+            write_json(Path(args.output)/"failure.json", failure)
+            # Preserve the actual failed model, rather than only the older
+            # periodic checkpoint. This artifact is never a resume endpoint.
+            snapshot = Path(args.output)/"failure-state.pt"
+            save_checkpoint(snapshot, model, options, identity,
+                {"diagnostic_only": True, "step": step, "recipe": recipe}, optimizer, scaler)
+            failure.update(diagnostic_checkpoint=snapshot.name, diagnostic_checkpoint_sha256=sha256(snapshot))
+            write_json(Path(args.output)/"failure.json", failure)
+            raise
         row.update(examples_seen=(step+1)*args.batch_size*args.grad_accum,
                    epoch=(step+1)*args.batch_size*args.grad_accum/len(dataset.requests),
                    seconds=time.perf_counter()-started)

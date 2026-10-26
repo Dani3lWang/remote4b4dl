@@ -17,6 +17,9 @@ def validate_experiment(args, preparation, lock, dataset):
     plan = read_json(path)
     if plan["schema"] != "b4dl-core-experiment-v1" or plan["experiment_id"] != digest({k: v for k, v in plan.items() if k != "experiment_id"}):
         raise ValueError("experiment identity mismatch")
+    from .b3 import implementation_id
+    if plan.get("verified_implementation_sha256") != implementation_id():
+        raise ValueError("formal training implementation differs from frozen experiment")
     if plan["dataset_id"] != dataset.manifest["dataset_id"] or plan["baseline_manifest_sha256"] != sha256(args.baseline):
         raise ValueError("experiment data/baseline mismatch")
     recipe = plan["recipe"]

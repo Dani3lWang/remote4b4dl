@@ -26,6 +26,7 @@ class ExperimentTests(unittest.TestCase):
             recipe = {'lr': .0001, 'batch_size': 1, 'grad_accum': 4, 'steps': 3, 'lora_rank': 0,
                       'save_every': 1, 'keep_last': 2, 'train_examples': 12, 'epochs': 1}
             plan = {'schema': 'b4dl-core-experiment-v1', 'dataset_id': 'fixture',
+                'verified_implementation_sha256': b3.implementation_id(),
                 'baseline_manifest_sha256': sha256(root/'baseline.json'), 'recipe': recipe,
                 'trainable_arms': ['A1', 'A2', 'A3'], 'seeds': [42, 43, 44],
                 'six_task_protocol': {'path': str(root/'protocol.json'), 'sha256': sha256(root/'protocol.json'), 'protocol_id': 'fixture'}}
@@ -36,6 +37,9 @@ class ExperimentTests(unittest.TestCase):
             preparation = {'experiment_sha256': sha256(root/'experiment.json')}
             dataset = SimpleNamespace(manifest={'dataset_id': 'fixture'}, requests=[{}]*12)
             validate_experiment(args, preparation, {}, dataset)
+            with patch.object(b3, 'implementation_id', return_value='unverified-source'):
+                with self.assertRaisesRegex(ValueError, 'implementation differs'):
+                    validate_experiment(args, preparation, {}, dataset)
             args.lr = .0002
             with self.assertRaises(ValueError): validate_experiment(args, preparation, {}, dataset)
             args.lr = .0001

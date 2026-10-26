@@ -207,6 +207,8 @@ def load_checkpoint(path, model, options, identity, optimizer=None, scaler=None)
     payload = torch.load(path, map_location="cpu", weights_only=True)
     if payload["schema"] != "b4dl-core-b3-extension-v1" or payload["options"] != options or payload["identity"] != identity:
         raise ValueError("checkpoint schema, configuration or baseline/data identity mismatch")
+    if payload["training"].get("diagnostic_only"):
+        raise ValueError("failure diagnostic checkpoint cannot be used for resume or inference")
     restore_trainable(model, payload["parameters"])
     if optimizer is not None:
         if payload["optimizer"] is None:
