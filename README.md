@@ -2,6 +2,18 @@
 Official PyTorch implementation of the paper "B4DL: A Benchmark for 4D LiDAR LLM in Spatio-Temporal
 Understanding".
 
+## upcore：B4DL 主模型更新
+
+当前开发分支为 `upcore`，目标是更新 B4DL 的数据、模型接入、训练、推理与六任务评测，提高回答质量、LiDAR 证据利用和实验可复现性。
+
+主线实现位于 `mllm/b4dl_core/` 与 `mllm/vtimellm/`。时序几何适配器是已有更新方案；后续结构选择以完整回归结果为依据。实例分割、回答掩码和跨帧跟踪保留为历史研究及可选扩展。
+
+- [开发方向与验收顺序](docs/upcore/README.md)
+- [当前代码审查与待修复项](docs/research/upcore代码审查_20261027.md)
+- [项目方法与落实台账](docs/项目方法与落实情况.md)
+
+以下保留原项目的数据生成与基础训练说明；upcore 的入口和当前限制以开发方向文档为准。
+
 [![Hugging Face](https://img.shields.io/badge/Hugging%20Face-🤗-yellow)](https://huggingface.co/datasets/ccho4702/nuScenes-B4DL)
 [![arXiv](https://img.shields.io/badge/arXiv-2508.05269-b31b1b.svg)](https://www.arxiv.org/abs/2508.05269)
 [![Paper](https://img.shields.io/badge/Paper-arXiv-blue.svg)](https://arxiv.org/pdf/2508.05269)

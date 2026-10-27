@@ -1,6 +1,13 @@
 # CLAUDE.md
 
-本文件记录当前仓库的有效开发约定。`main` 只维护官方基础模块与最新 B3 基线；强化学习实现位于 `rf-grpo` 分支。
+本文件记录当前仓库的有效开发约定。当前主线分支是 `upcore`，用于更新 B4DL 主模型及其完整实验链路；`main` 的基础实现、`4D_seg` 的分割研究和 `rf-grpo` 的强化学习保留各自历史定位。
+
+## upcore 当前方向
+
+- 优先更新 B4DL 的输入与数据质量、模型接入、训练稳定性、推理恢复和六任务评测，验收以回答质量、LiDAR 证据利用及复现结果为依据。
+- 当前核心是 `mllm/b4dl_core/` 与 `mllm/vtimellm/`。已有时序几何适配器作为待完整验收的方案，时空理解和时间定位仍属于 B4DL 的任务范围。
+- MaskPLS、Grounded4D、AnswerSeg 与伪掩码作为历史研究及可选扩展维护，不将增强时空分割能力作为当前主线目标。
+- 开发顺序、模块职责与验收条件见 [upcore 开发方向](docs/upcore/README.md)；本轮审查见 [2026-10-27 代码审查](docs/research/upcore代码审查_20261027.md)。历史实验配置及 schema 不随分支名称变化。
 
 ## 项目概述
 
@@ -13,17 +20,18 @@ B4DL（Benchmark for 4D LiDAR LLM）是 ACM Multimedia 2025 论文的官方 PyTo
 ## 环境
 
 - Conda 环境：`wqlc`，Python 3.10；所有 Python 命令必须在该环境执行。
-- 权威依赖文件：`mllm/requirements.txt`。
+- `mllm/requirements.txt` 保留旧版依赖声明，与当前已验证栈尚未对齐；不能将它作为 upcore 已验收的安装清单。依赖修订列入当前审查的优先事项。
 - 当前实测栈：PyTorch 2.8.0+cu128、transformers 4.47.0、deepspeed 0.16.4、peft 0.13.2、accelerate 1.3.0。
 - flash-attn 未安装，训练和推理使用 transformers 原生 SDPA。
 
 ```bash
-conda create -n wqlc python=3.10 -y
 conda activate wqlc
-pip install -r mllm/requirements.txt
+python -c "import torch, transformers, peft; print(torch.__version__, transformers.__version__, peft.__version__)"
 ```
 
-## 最新 B3 基线
+以上用于核对已有环境；新建环境需要按实际 CPU/CUDA 用途锁定并验证依赖。
+
+## 保留的 B3 两轮复现配方
 
 B3 是 `main` 上唯一维护的实验版本：
 
@@ -47,7 +55,7 @@ bash scripts/run_b3.sh
 
 ## 官方通用入口
 
-保留 `stage1.sh`、`stage2.sh`、`stage3.sh` 及 ChatGLM 对应入口，用于官方三阶段能力和自定义实验。新的基线复现优先使用 B3 流水线，不再新增 B0/B1/B2/B4a 或 frame-position 变体入口。
+保留 `stage1.sh`、`stage2.sh`、`stage3.sh` 及 ChatGLM 对应入口，用于官方三阶段能力和自定义实验。原 B3 复现沿用既有 B3 流水线；upcore 的模型更新从 `b4dl_core` 入口和独立实验配置开展。不再新增 B0/B1/B2/B4a 或 frame-position 变体入口。
 
 ## 数据与特征
 
@@ -81,7 +89,7 @@ conda run -n wqlc python extract_pc_features.py \
 
 checkpoint 是 PyTorch Lightning 格式，加载时使用 `weights_only=False` 和 `strict=False`。不同编码器生成的特征不可混用。
 
-## B3 评测口径
+## B3 历史对照评测口径
 
 B3 使用 `--whole_scene --per_sequence --answer_frames`。其中 `--answer_frames` 依据答案恢复序列归属，属于 oracle 输入选择，报告结果时必须声明。
 
@@ -94,6 +102,9 @@ METEOR 默认使用双后端；与论文对比采用 NLTK-2005 主口径。
 
 ## 关键实现
 
+- `mllm/b4dl_core/b3.py`、`integration.py`、`temporal.py`：主模型接入、时序适配、数值保护及扩展 checkpoint。
+- `mllm/b4dl_core/inputs.py`、`evaluation.py`、`six_task.py`：输入干预、完整分母几何诊断和原六任务回归。
+- `mllm/scripts/inspect_core_progress.py`：只读核验训练、评测进度及完成凭证。
 - `mllm/vtimellm/model/vtimellm_arch.py`：将 `<video>` token 替换为投影后的 LiDAR 特征。
 - `mllm/vtimellm/train/dataset.py`：加载 QA 和场景特征，处理 whole-scene/per-sequence 输入。
 - `mllm/vtimellm/train/train.py`：训练参数、LoRA、DeepSpeed 和 checkpoint 恢复。
@@ -106,10 +117,11 @@ METEOR 默认使用双后端；与论文对比采用 NLTK-2005 主口径。
 - Stage 2/3 以 `scene_id` 查找 `{feat_folder}/{scene_id}.npy`。
 - 训练前必须运行 `scripts/preflight_b3.py` 检查环境、数据与特征。
 - 训练日志、预测结果、checkpoint 和临时分析图均为运行产物，不提交到 Git。
+- 功能代码或开发方向变更必须同步维护 [项目方法与落实情况](docs/项目方法与落实情况.md)。
 
 ## Git 规范
 
 - 每次代码修改后自动提交。
-- 提交信息使用中文。
+- 提交标题使用 `type(scope): 中文目的`，标准英文类别加中文说明；正文用中文列出具体改动和目的。
 - `git add` 必须列出具体文件，不使用 `git add -A`。
 - 不在 `main` 新增 RL 代码；RL 变更提交到 `rf-grpo`。
