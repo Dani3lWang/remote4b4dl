@@ -66,7 +66,7 @@ PREP=mllm/configs/core_geometry_preparation.json
 "$PY" -m b4dl_core evaluate --dataset "$DATA" --split test --predictions shuffled-predictions/predictions.jsonl --run shuffled-predictions/run.json --output shuffled-report.json
 ```
 
-所有输出目录必须新建。GPU 操作共用 `/root/autodl-tmp/.b4dl_gpu0_eval.lock` 非阻塞独占锁，并要求 GPU 0 至少 20,000 MiB 空闲、利用率不超过 20%；不会自动停止别人的进程。每次加载前重新核对原始模型文件，源码/数据身份写入结果。`infer` 除评测兼容输出外，写出逐请求控制条件和实际特征数组 SHA256；缺少跨场景供体记 unavailable，保留完整分母。
+首次运行的输出目录必须新建。2026-10-27 起，几何推理可在同一命令后加 `--resume-inference` 恢复当前实现创建的输出；训练 `--resume CHECKPOINT` 的语义不变。共同提交日志、身份与尾行恢复规则见 [环境与恢复说明](upcore_runtime.md)。GPU 操作共用 `/root/autodl-tmp/.b4dl_gpu0_eval.lock` 非阻塞独占锁，并要求 GPU 0 至少 20,000 MiB 空闲、利用率不超过 20%；不会自动停止别人的进程。每次加载前重新核对原始模型文件，源码/数据身份写入结果。`infer` 除评测兼容输出外，写出逐请求控制条件和实际特征数组 SHA256；缺少跨场景供体记 unavailable，保留完整分母。
 
 `verify` 默认只生成 8 token，并只对 train 中一个样例做 2 个优化步以验证梯度；保存的工程 checkpoint 不代表正式训练完成。`train` 不带 `--engineering` 时，若准备门控未完成、数据为 mini 或 SST 来源未核验，会在加载模型前拒绝。
 

@@ -200,6 +200,19 @@ def inspect_evaluation(directory, dataset, protocol, check_processes=False):
                 and done.get(count_key) == len(rows) and done.get("run") == run
                 and identity_matches and progress["complete_coverage"]
             )
+            # New runs seal exports and the joint geometry journal. Keep old
+            # receipts readable, but never ignore a supplied completion hash.
+            sealed = (stage / "resume.json").exists() or bool(run and run.get("schema") == "b4dl-core-six-task-inference-v2")
+            if done:
+                for key, filename in (("predictions_sha256", "predictions.jsonl"),
+                                      ("input_receipts_sha256", "input-receipts.jsonl"),
+                                      ("journal_sha256", "inference-journal.jsonl")):
+                    required = sealed and (split != "six-task" or key == "predictions_sha256")
+                    if key in done or required:
+                        path = stage / filename
+                        if not path.is_file() or done.get(key) != file_sha256(path):
+                            progress["completion_verified"] = False
+                            progress["issues"].append("completion_file_hash_mismatch:" + filename)
             if done and not progress["completion_verified"]:
                 progress["issues"].append("completion_evidence_disagrees")
             stages[name] = progress

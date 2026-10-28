@@ -1,0 +1,8 @@
+# Optional original six-task metric backends; model/data/NLTK/Java assets separate.
+-r requirements.txt
+bert_score==0.3.13
+nltk>=3.9.1,<4
+rouge-score==0.1.2
+pycocoevalcap==1.2
+moverscore==1.0.3
+openai>=1,<3

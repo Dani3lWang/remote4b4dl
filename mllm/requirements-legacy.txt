@@ -1,0 +1,12 @@
+# Optional original trainers / ChatGLM / video code; not the upcore CPU test stack.
+# DeepSpeed and cpm_kernels require a separately validated Linux/CUDA environment.
+-r requirements.txt
+deepspeed==0.16.4
+cpm_kernels==1.0.11
+clip==0.2.0
+decord==0.6.0
+easydict==1.13
+einops==0.8.1
+Pillow>=10,<13
+torchvision==0.23.0
+Requests>=2.32,<3

@@ -18,5 +18,5 @@
 ## 环境与验证
 
 - 使用已验证的 `wqlc` 环境。当前本体 CPU 检查栈为 Python 3.10、PyTorch 2.8.0、Transformers 4.47.0、PEFT 0.13.2；CUDA 环境另行按实际硬件验证。
-- `mllm/requirements.txt` 的旧依赖声明尚未与当前栈对齐，不能将该文件安装成功等同于 upcore 环境验收。
+- `mllm/requirements.txt` 已对齐本体 CPU 检查栈；CPU/CUDA 与可选扩展分层安装，先运行 `python -m b4dl_core.runtime`。具体步骤及未验收边界见 [环境与恢复说明](mllm/docs/upcore_runtime.md)，安装成功不等同于 CUDA 或模型效果验收。
 - 根据实际改动运行相关检查；CPU 通过、依赖跳过、GPU 验证和完整性能评测分别报告。审查结论见 [2026-10-27 代码审查](docs/research/upcore代码审查_20261027.md)。

@@ -15,7 +15,10 @@ import torch
 from .inputs import GeometryDataset, control_plan
 from .integration import (attach, batch_inputs, language_model, load_checkpoint, padding_side,
                           save_checkpoint, trainable_state)
-from .io import digest, read_json, sha256, write_json, write_jsonl
+from .io import digest, read_json, read_jsonl, sha256, write_json, write_jsonl
+from .resume import (append_jsonl, bind_run, output_lease, recover_jsonl,
+                     validate_predictions, verify_completion)
+from .runtime import runtime_identity
 from .temporal import TemporalConfig
 
 
@@ -60,6 +63,8 @@ def device_lease(device, lock_path, minimum_free_mib=20000):
 
 
 def load_original(lock, device):
+    from .runtime import check_runtime
+    check_runtime(require_cuda=torch.device(device).type == "cuda")
     from vtimellm.model.builder import load_pretrained_model
     verify_baseline(lock)
     components = lock["components"]
@@ -75,6 +80,7 @@ def implementation_id():
     package = Path(__file__).parent
     files = list(package.glob("*.py")) + [package.parent/"vtimellm/model"/name for name in
         ("vtimellm_arch.py", "vtimellm_llama.py", "builder.py")]
+    files += [package.parent/"vtimellm"/name for name in ("mm_utils.py", "conversation.py", "constants.py")]
     return digest({p.relative_to(package.parent).as_posix(): sha256(p) for p in files})
 
 
@@ -335,6 +341,11 @@ def train(args, preparation, lock, dataset):
 
 
 def infer(args, preparation, lock, dataset):
+    with output_lease(args.output):
+        return _infer(args, preparation, lock, dataset)
+
+
+def _infer(args, preparation, lock, dataset):
     tokenizer, original = load_original(lock, args.device)
     model, options = attach(original, args.arm, chosen_config(preparation, args.arm), args.lora_rank)
     identity = identity_for(args, dataset)
@@ -342,35 +353,105 @@ def infer(args, preparation, lock, dataset):
         load_checkpoint(args.checkpoint, model, options, identity)
     model.eval()
     controls = control_plan(dataset, args.condition)
-    predictions, receipts = [], []
-    for start in range(0, len(dataset.requests), args.batch_size):
+    run = {"dataset_id": identity["dataset_id"], "split": args.split, "condition": args.condition,
+           "model_id": lock["baseline_id"]+"/"+args.arm, "prediction_kind": "model",
+           "checkpoint_sha256": sha256(args.checkpoint) if args.checkpoint else sha256(args.baseline)}
+    generation = {"max_new_tokens": args.max_new_tokens, "do_sample": False, "use_cache": True,
+                  "pad_token_id": tokenizer.eos_token_id}
+    manifest = {"schema": "b4dl-core-inference-resume-v1", "run": run, "identity": identity,
+        "options": options, "preparation_sha256": digest(preparation), "generation": generation,
+        "batch_size": args.batch_size, "seed": getattr(args, "seed", 42),
+        "device": str(args.device), "dtype": str(language_model(model).get_input_embeddings().weight.dtype),
+        "runtime": runtime_identity(language_model(model)),
+        "requests_sha256": digest(dataset.requests), "controls_sha256": digest(controls)}
+    manifest["run_id"] = digest(manifest)
+    directory = Path(args.output)
+    prediction_path, receipt_path = directory/"predictions.jsonl", directory/"input-receipts.jsonl"
+    journal_path = directory/"inference-journal.jsonl"
+    bind_run(directory/"resume.json", manifest, getattr(args, "resume_inference", False),
+             [prediction_path, receipt_path, journal_path, directory/"run.json", directory/"completion.json"])
+    if (directory/"run.json").exists():
+        if read_json(directory/"run.json") != run:
+            raise ValueError("evaluation run identity mismatch")
+    else:
+        write_json(directory/"run.json", run)
+    if not journal_path.exists() and any(p.exists() and p.stat().st_size for p in (prediction_path, receipt_path)):
+        raise ValueError("missing inference journal for existing exports")
+
+    def validate_journal(batches):
+        offset = 0
+        for transaction in batches:
+            if not isinstance(transaction, dict) or transaction.get("sha256") != digest({k: v for k, v in transaction.items() if k != "sha256"}):
+                raise ValueError("inference journal checksum mismatch")
+            entries = transaction["entries"]
+            if (transaction["run_id"] != manifest["run_id"] or transaction["start"] != offset
+                    or not entries or len(entries) != min(args.batch_size, len(dataset.requests)-offset)):
+                raise ValueError("inference journal batch/order mismatch")
+            requests = dataset.requests[offset:offset+len(entries)]
+            validate_predictions(requests, [e["prediction"] for e in entries], complete=True)
+            for entry, control in zip(entries, controls[offset:offset+len(entries)]):
+                receipt = entry["receipt"]
+                if any(receipt.get(k) != v for k, v in control.items()):
+                    raise ValueError("inference receipt/control mismatch")
+                if control["status"] == "ready":
+                    if entry["prediction"]["status"] not in ("ok", "truncated") or len(receipt.get("feature_array_sha256", "")) != 64:
+                        raise ValueError("missing generated prediction or feature receipt")
+                elif entry["prediction"]["status"] != "unavailable" or receipt != control:
+                    raise ValueError("invalid unavailable prediction/receipt")
+            offset += len(entries)
+
+    completion = {"status": "inference_complete", "run": run, "identity": identity,
+                  "options": options, "predictions": len(dataset.requests), "run_id": manifest["run_id"]}
+    files = {"predictions_sha256": prediction_path, "input_receipts_sha256": receipt_path,
+             "journal_sha256": journal_path}
+    if verify_completion(directory, completion, files):
+        validate_journal(read_jsonl(journal_path))
+        validate_predictions(dataset.requests, read_jsonl(prediction_path), complete=True)
+        return run
+    transactions = recover_jsonl(journal_path, validate_journal)
+    predictions = [e["prediction"] for t in transactions for e in t["entries"]]
+    receipts = [e["receipt"] for t in transactions for e in t["entries"]]
+    # These are compatibility views. The joint journal is the recovery authority.
+    write_jsonl(prediction_path, predictions)
+    write_jsonl(receipt_path, receipts)
+    for start in range(len(predictions), len(dataset.requests), args.batch_size):
         requests = dataset.requests[start:start+args.batch_size]
         batch_controls = controls[start:start+args.batch_size]
+        entries = {}
         ready = [(r, c) for r, c in zip(requests, batch_controls) if c["status"] == "ready"]
         if ready:
             items = [dataset.model_input(r, c) for r, c in ready]
             batch = batch_inputs(model, tokenizer, items)
-            output = model.generate(**batch, max_new_tokens=args.max_new_tokens, do_sample=False, use_cache=True,
-                                    pad_token_id=tokenizer.eos_token_id)
+            output = model.generate(**batch, **generation)
+            if len(output) != len(ready):
+                raise ValueError("generation batch size mismatch")
             for (r, c), item, tokens in zip(ready, items, output.tolist()):
                 finished = tokenizer.eos_token_id in tokens
                 if finished: tokens = tokens[:tokens.index(tokenizer.eos_token_id)]
-                predictions.append({"request_id": r["request_id"], "input_fingerprint": r["input_fingerprint"],
-                    "status": "ok" if finished else "truncated", "text": tokenizer.decode(tokens, skip_special_tokens=False).strip()})
-                receipts.append({**c, "feature_array_sha256": hashlib.sha256(item["features"].tobytes()).hexdigest(),
-                                 "feature_shape": list(item["features"].shape), "feature_dtype": str(item["features"].dtype)})
+                entries[r["request_id"]] = {
+                    "prediction": {"request_id": r["request_id"], "input_fingerprint": r["input_fingerprint"],
+                        "status": "ok" if finished else "truncated", "text": tokenizer.decode(tokens, skip_special_tokens=False).strip()},
+                    "receipt": {**c, "feature_array_sha256": hashlib.sha256(item["features"].tobytes()).hexdigest(),
+                        "feature_shape": list(item["features"].shape), "feature_dtype": str(item["features"].dtype)}}
         for r, c in zip(requests, batch_controls):
             if c["status"] != "ready":
-                predictions.append({"request_id": r["request_id"], "input_fingerprint": r["input_fingerprint"], "status": "unavailable", "text": ""})
-                receipts.append(c)
-        write_jsonl(Path(args.output)/"predictions.jsonl", predictions)
-        write_jsonl(Path(args.output)/"input-receipts.jsonl", receipts)
-    run = {"dataset_id": identity["dataset_id"], "split": args.split, "condition": args.condition,
-           "model_id": lock["baseline_id"]+"/"+args.arm, "prediction_kind": "model",
-           "checkpoint_sha256": sha256(args.checkpoint) if args.checkpoint else sha256(args.baseline)}
-    write_json(Path(args.output)/"run.json", run)
-    write_json(Path(args.output)/"completion.json", {"status": "inference_complete", "run": run,
-               "identity": identity, "options": options, "predictions": len(predictions)})
+                entries[r["request_id"]] = {"prediction": {"request_id": r["request_id"],
+                    "input_fingerprint": r["input_fingerprint"], "status": "unavailable", "text": ""}, "receipt": c}
+        ordered = [entries[r["request_id"]] for r in requests]
+        transaction = {"run_id": manifest["run_id"], "start": start, "entries": ordered}
+        transaction["sha256"] = digest(transaction)
+        append_jsonl(journal_path, [transaction])
+        append_jsonl(prediction_path, [e["prediction"] for e in ordered])
+        append_jsonl(receipt_path, [e["receipt"] for e in ordered])
+    transactions = read_jsonl(journal_path)
+    validate_journal(transactions)
+    predictions = [e["prediction"] for t in transactions for e in t["entries"]]
+    receipts = [e["receipt"] for t in transactions for e in t["entries"]]
+    validate_predictions(dataset.requests, predictions, complete=True)
+    if read_jsonl(prediction_path) != predictions or read_jsonl(receipt_path) != receipts:
+        raise ValueError("inference exports differ from committed journal")
+    completion.update({key: sha256(path) for key, path in files.items()})
+    write_json(directory/"completion.json", completion)
     return run
 
 
@@ -395,6 +476,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--engineering", action="store_true")
     parser.add_argument("--resume")
+    parser.add_argument("--resume-inference", action="store_true", help="Resume the same inference directory and identity")
     parser.add_argument("--checkpoint")
     parser.add_argument("--split", choices=("train", "internal_dev", "test"), default="test")
     parser.add_argument("--condition", choices=("identity", "zero", "repeat_first", "shuffle_features", "cross_scene"), default="identity")
@@ -413,8 +495,13 @@ def main():
         parser.error("A0 uses original baseline; A1/A2/A3 inference requires an extension checkpoint")
     if args.command != "infer" and args.checkpoint or args.command != "train" and args.resume:
         parser.error("checkpoint belongs to infer; resume belongs to train")
+    if args.resume_inference and args.command != "infer":
+        parser.error("resume-inference belongs to infer")
     output = Path(args.output)
-    if output.exists(): parser.error("output already exists; choose a new directory")
+    if output.exists() and not args.resume_inference:
+        parser.error("output already exists; infer may use --resume-inference")
+    if args.resume_inference and not (output/"resume.json").is_file():
+        parser.error("resume-inference requires an existing inference identity")
     preparation, lock = read_json(args.preparation), read_json(args.baseline)
     if lock["schema"] != "b4dl-core-baseline-v1" or preparation["baseline_checkpoint"] != lock["components"]["stage2"]["path"]:
         parser.error("preparation/baseline identity mismatch")
@@ -436,8 +523,9 @@ def main():
                 parser.error(str(error))
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    output.mkdir(parents=True)
-    write_json(output/"invocation.json", vars(args))
+    output.mkdir(parents=True, exist_ok=args.resume_inference)
+    if not args.resume_inference:
+        write_json(output/"invocation.json", vars(args))
     try:
         with device_lease(args.device, args.gpu_lock):
             report = {"verify": verify_integration, "train": train, "infer": infer}[args.command](args, preparation, lock, dataset)

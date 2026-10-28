@@ -5,6 +5,7 @@
 - 本体接入与检查：`python -m b4dl_core.b3`，说明见 [接入文档](docs/core_b3_integration.md)。
 - 原六任务回归：`python -m b4dl_core.six_task`；几何诊断入口：`python -m b4dl_core`。
 - 历史训练配置与已知中断：见 [训练记录](docs/core_geometry_training.md)。新实现不能直接绕过身份校验恢复旧实验。
+- 分层依赖、版本/API 预检、几何推理 `--resume-inference` 与六任务尾行恢复：见 [环境与恢复说明](docs/upcore_runtime.md)。
 
 运行以上命令时使当前 `mllm/` 位于 `PYTHONPATH`，并使用已验证的 `wqlc` 环境。入口存在不代表当前冻结配置、真实数据和权重已满足运行条件。
 

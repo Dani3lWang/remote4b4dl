@@ -81,6 +81,10 @@ def main() -> int:
     dataset_dir = mllm / "b4dl_dataset"
     feature_root = root / "encoders" / "lidarclip" / "b4dl"
 
+    sys.path.insert(0, str(mllm))
+    from b4dl_core.runtime import check_runtime
+    print("[OK] upcore runtime:", check_runtime(require_cuda=args.require_cuda))
+
     stage1 = load_json(dataset_dir / "stage1_train.json")
     if len(stage1) != EXPECTED["stage1_train"]:
         raise RuntimeError(

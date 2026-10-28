@@ -1,14 +1,13 @@
-from PIL import Image
 from io import BytesIO
 import base64
 import numpy as np
 import torch
-import decord
 from transformers import StoppingCriteria
 from vtimellm.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
 
 
 def load_image_from_base64(image):
+    from PIL import Image
     return Image.open(BytesIO(base64.b64decode(image)))
 
 
@@ -96,6 +95,7 @@ class VideoExtractor():
         self.N = N
 
     def extract(self, data):
+        import decord
         video_path = data['video']
         id = data['id']
         

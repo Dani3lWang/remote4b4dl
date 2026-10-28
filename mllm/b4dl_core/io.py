@@ -1,7 +1,10 @@
 """Small deterministic artifact helpers; no model or dataset dependency."""
 import hashlib
 import json
+import os
 from pathlib import Path
+import tempfile
+from contextlib import contextmanager
 
 
 def digest(value):
@@ -21,9 +24,27 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
+@contextmanager
+def atomic_output(path, mode="w"):
+    """Publish only a flushed, complete file, on the same filesystem."""
+    path = Path(path)
+    fd, temporary = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".tmp", dir=path.parent)
+    try:
+        options = {} if "b" in mode else {"encoding": "utf-8", "newline": "\n"}
+        with os.fdopen(fd, mode, **options) as stream:
+            yield stream
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def write_json(path, value):
-    Path(path).write_text(json.dumps(value, ensure_ascii=False, sort_keys=True,
-                                   allow_nan=False, indent=2) + "\n", encoding="utf-8")
+    with atomic_output(path) as stream:
+        stream.write(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                allow_nan=False, indent=2) + "\n")
 
 
 def read_jsonl(path):
@@ -32,7 +53,7 @@ def read_jsonl(path):
 
 
 def write_jsonl(path, values):
-    with Path(path).open("w", encoding="utf-8", newline="\n") as stream:
+    with atomic_output(path) as stream:
         for value in values:
             stream.write(json.dumps(value, ensure_ascii=False, allow_nan=False) + "\n")
 

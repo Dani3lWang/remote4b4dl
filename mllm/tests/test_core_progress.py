@@ -129,6 +129,35 @@ class CoreProgressTests(unittest.TestCase):
             self.assertIn("request_identity_mismatch:1", result["issues"])
             self.assertIn("malformed_record:2", result["issues"])
 
+    def test_sealed_completion_requires_prediction_receipt_and_journal_hashes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset, protocol, evaluation, rows = fixture(root)
+            stage = evaluation / "A3-internal_dev"
+            jsonl(stage / "predictions.jsonl", [dict(r, status="ok", text="Yes") for r in rows])
+            run = {"dataset_id": "fixture", "split": "internal_dev"}
+            write(stage / "run.json", run)
+            write(stage / "resume.json", {"schema": "b4dl-core-inference-resume-v1"})
+            jsonl(stage / "input-receipts.jsonl", rows)
+            jsonl(stage / "inference-journal.jsonl", rows)
+            done = {"status": "inference_complete", "predictions": 2, "run": run}
+            files = {"predictions_sha256": "predictions.jsonl", "input_receipts_sha256": "input-receipts.jsonl",
+                     "journal_sha256": "inference-journal.jsonl"}
+            for key, name in files.items(): done[key] = progress.file_sha256(stage / name)
+            write(stage / "completion.json", done)
+            def verified():
+                return progress.inspect_run(root, dataset, protocol)["evaluation"]["stages"]["A3-internal_dev"]["completion_verified"]
+            self.assertTrue(verified())
+            for key, name in files.items():
+                with self.subTest(file=name):
+                    original = (stage / name).read_bytes()
+                    (stage / name).write_bytes(original + b" ")
+                    self.assertFalse(verified())
+                    (stage / name).write_bytes(original)
+                    write(stage / "completion.json", {k: v for k, v in done.items() if k != key})
+                    self.assertFalse(verified())
+                    write(stage / "completion.json", done)
+
     def test_frozen_request_and_protocol_tampering_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

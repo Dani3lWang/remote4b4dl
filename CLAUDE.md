@@ -20,8 +20,8 @@ B4DL（Benchmark for 4D LiDAR LLM）是 ACM Multimedia 2025 论文的官方 PyTo
 ## 环境
 
 - Conda 环境：`wqlc`，Python 3.10；所有 Python 命令必须在该环境执行。
-- `mllm/requirements.txt` 保留旧版依赖声明，与当前已验证栈尚未对齐；不能将它作为 upcore 已验收的安装清单。依赖修订列入当前审查的优先事项。
-- 当前实测栈：PyTorch 2.8.0+cu128、transformers 4.47.0、deepspeed 0.16.4、peft 0.13.2、accelerate 1.3.0。
+- `mllm/requirements.txt` 已对齐本体 CPU 检查栈，CPU/CUDA wheel 与演示、指标、旧训练器依赖分层；运行 `python -m b4dl_core.runtime` 做版本/API 预检。安装步骤和验证边界见 [环境与恢复说明](mllm/docs/upcore_runtime.md)。
+- 当前本地检查栈：PyTorch 2.8.0+cpu、transformers 4.47.0、peft 0.13.2、accelerate 1.15.0、numpy 1.26.4、sentencepiece 0.2.2。历史 CUDA 环境为 PyTorch 2.8.0+cu128、deepspeed 0.16.4、accelerate 1.3.0 等；本次未重验或升级该环境。
 - flash-attn 未安装，训练和推理使用 transformers 原生 SDPA。
 
 ```bash
