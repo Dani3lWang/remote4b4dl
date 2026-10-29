@@ -21,6 +21,8 @@
 | 实验运行 | `b4dl_core/job.py`、`mllm/scripts/inspect_core_progress.py` | 运行身份、退出、预算、检查点及结果完整性 |
 | 历史扩展 | `maskpls_b4dl/`、`grounded4d/`、`answerseg/` 及分割数据工具 | 保留成果与接口，按具体需求维护兼容性 |
 
+结构化几何 CoT 与过程奖励 GRPO 的独立实验入口位于 `mllm/b4dl_core/reasoning/`；数据协议、运行命令和尚未完成的 GPU/效果验收见 [实验说明](../../mllm/docs/upcore_reasoning_grpo.md)。该方案目前是候选训练链路，未替代现有几何实验或证明六任务收益。
+
 表中 `b4dl_core/` 等包均位于 `mllm/` 下。包名、`core_geometry_*` 文件名、schema 和历史实验目录继续使用原名称；分支改名不改变冻结实验身份。
 
 ## 当前证据与限制

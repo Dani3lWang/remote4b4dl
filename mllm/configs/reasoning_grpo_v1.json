@@ -1,0 +1,17 @@
+{
+  "schema": "b4dl-reasoning-recipe-v1",
+  "seed": 42,
+  "lora_rank": 16,
+  "sft_lr": 0.00002,
+  "grpo_lr": 0.000001,
+  "group_size": 4,
+  "grad_accum": 4,
+  "max_new_tokens": 512,
+  "clip": 0.2,
+  "beta": 0.04,
+  "process_weight": 0.5,
+  "mode": "process",
+  "save_every": 250,
+  "engineering": false,
+  "max_updates": null
+}
