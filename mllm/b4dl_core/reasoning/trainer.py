@@ -74,6 +74,14 @@ def _precision(model):
     return nullcontext()
 
 
+def gpu_memory(device):
+    device = torch.device(device)
+    if device.type != "cuda":
+        return None
+    return {"peak_allocated_mib": torch.cuda.max_memory_allocated(device)/1048576,
+            "peak_reserved_mib": torch.cuda.max_memory_reserved(device)/1048576}
+
+
 def sample_one(model, tokenizer, item, max_new_tokens, do_sample=True, record_scores=False):
     batch = sequence_batch(model, tokenizer, [item])
     model.eval()
@@ -270,6 +278,8 @@ def train(dataset, baseline_path, preparation_path, output, stage, recipe, *, de
         raise ValueError("formal training requires verified full-scale features")
     random.seed(recipe["seed"]); np.random.seed(recipe["seed"]); torch.manual_seed(recipe["seed"])
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(recipe["seed"])
+    if torch.device(device).type == "cuda" and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats(torch.device(device))
     tokenizer, model, options = prepare_model(dataset, baseline_path, preparation_path, device, recipe["lora_rank"])
     context = preflight_context(model, tokenizer, dataset, recipe)
     common = {"baseline_sha256": sha256(baseline_path), "preparation_sha256": sha256(preparation_path),
@@ -304,6 +314,7 @@ def train(dataset, baseline_path, preparation_path, output, stage, recipe, *, de
     output.mkdir(parents=True, exist_ok=False)
     write_json(output/"run.json", {"identity": identity, "context": context, "total_updates": total,
         "requested_updates": stop, "runtime": runtime_identity(language_model(model)), "device": device,
+        "gpu_name": torch.cuda.get_device_name(torch.device(device)) if torch.device(device).type == "cuda" else None,
         "trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)})
     order = np.random.default_rng(recipe["seed"]).permutation(len(dataset.requests)).tolist()
     step = start
@@ -318,6 +329,7 @@ def train(dataset, baseline_path, preparation_path, output, stage, recipe, *, de
                 batch = [(dataset.model_input(r), r, dataset.targets[r["request_id"]]) for r in requests]
                 result = grpo_update(model, tokenizer, batch, optimizer, recipe)
             result.update(step=step+1, requests=[r["request_id"] for r in requests], seconds=time.perf_counter()-started)
+            result["gpu_memory"] = gpu_memory(device)
             append_jsonl(output/"training.jsonl", [result])
             if step == start or (step+1) % recipe["save_every"] == 0 or step+1 == stop:
                 path = output/("step-"+str(step+1)+".pt")
@@ -330,6 +342,7 @@ def train(dataset, baseline_path, preparation_path, output, stage, recipe, *, de
         raise
     completion = {"status": "engineering_budget_complete" if recipe["engineering"] else "training_complete",
                   "updates": stop, "full_budget": stop == total, "quality_evaluation_completed": False,
+                  "gpu_memory": gpu_memory(device),
                   "checkpoint_sha256": sha256(output/("step-"+str(stop)+".pt")), "identity": identity}
     write_json(output/"completion.json", completion)
     return completion

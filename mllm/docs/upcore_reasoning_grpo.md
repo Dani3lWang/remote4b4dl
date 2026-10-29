@@ -36,7 +36,7 @@ RUN=/path/to/new-reasoning-run
 "$PY" -m b4dl_core.reasoning grpo --dataset "$RUN/data" --geometry-dataset "$DATA" --baseline "$BASE" --preparation "$PREP" --recipe "$RECIPE" --engineering --max-updates 50 --sft-checkpoint "$RUN/sft-smoke/step-50.pt" --output "$RUN/grpo-smoke"
 ```
 
-工程 SFT 和 GRPO 的 `latest.json` 记录检查点及哈希，`training.jsonl` 记录损失、梯度、奖励、合法率、生成长度、旧策略概率误差及组内奖励零方差比例；`completion.json` 标注工程预算，不代表有效的全量模型。异常会写入 `failure.json`。记录身份不符、非有限数值、采样与重算概率不符或显存不足时停止，不自动更改批量或配方。
+工程 SFT 和 GRPO 的 `latest.json` 记录检查点及哈希，`training.jsonl` 记录损失、梯度、奖励、合法率、生成长度、旧策略概率误差、组内奖励零方差比例及 CUDA 峰值显存；`completion.json` 标注工程预算及累计峰值，不代表有效的全量模型。异常会写入 `failure.json`。记录身份不符、非有限数值、采样与重算概率不符或显存不足时停止，不自动更改批量或配方。
 
 短跑确认后，正式 SFT 使用同一条命令去掉 `--engineering --max-updates 50`，以训练集单轮、固定末步为终点。正式 GRPO 必须加载有完整预算完成回执的 SFT 最终检查点；选择 `--mode outcome`、`--mode scalar` 或 `--mode process`，各组使用相同数据、配置、种子及 SFT 终点。工程 GRPO 只接受有工程完成回执的工程 SFT 终点或已完成的正式 SFT。训练续跑使用相同数据、源码、配方和原总预算，指定 `--resume 旧检查点 --output 新目录`；只能从已保存更新恢复，不能把诊断或不同身份的检查点当作续跑输入。
 
