@@ -1,10 +1,11 @@
 #!/bin/bash
-# B2 混合训练（整场景输入，对齐官方 B4DL）：与 B1（run_stage2_full_seqv3_mixed_b1.sh）唯一差异
-# 是 --whole_scene True——视觉输入不再按 QA 序列切片，而是喂整场景 (39/40/41, 768) 特征，
+# B2 混合训练（整场景输入，对齐官方 B4DL）：参考 B1（run_stage2_full_seqv3_mixed_b1.sh），
+# 启用 --whole_scene True，并将训练轮数设为 2（B1 为 3）。
+# 视觉输入不再按 QA 序列切片，而是喂整场景 (39/40/41, 768) 特征，
 # 与官方实现（ccho4702/B4DL，dataset.py 对 np.load 结果直接用）一致。
 # 动机：seqv3 的序列切片使 time_grounding 学会"序列局部帧编号"，评测按场景全局编号解析，
 # mIoU 被系统性压低（B1 0.2653 vs 论文 0.311）；整场景输入下模型学到全局编号。
-# 其余（数据 148k、162K projector、3ep、lr 1e-4、LoRA r64/α128、ZeRO-3）与 B1 完全一致。
+# 本脚本使用 148k meta2 数据、162K projector、lr 1e-4、LoRA r64/α128 和 ZeRO-3。
 # 断点续训：mllm train.py 已按步数数值排序取最新（e8639e2），此处 sort -V 与其对齐。
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${B4DL_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
@@ -50,7 +51,7 @@ deepspeed --include localhost:0 --master_port 29583 vtimellm/train/train_mem.py 
     --output_dir ./checkpoints/$OUT \
     --whole_scene True \
     --bf16 True \
-    --num_train_epochs 3 \
+    --num_train_epochs 2 \
     --per_device_train_batch_size 8 \
     --gradient_accumulation_steps 16 \
     --evaluation_strategy no \
