@@ -80,6 +80,41 @@ def _precision(model):
     return nullcontext()
 
 
+class FP32OutputHead(torch.nn.Module):
+    """Frozen output projection in FP32 while the transformer remains BF16."""
+    def __init__(self, head):
+        super().__init__()
+        if (not isinstance(head, torch.nn.Linear) or head.weight.requires_grad
+                or head.bias is not None and head.bias.requires_grad):
+            raise ValueError("expected a frozen linear language output head")
+        self.in_features, self.out_features = head.in_features, head.out_features
+        self.weight = torch.nn.Parameter(head.weight.detach().float(), requires_grad=False)
+        self.bias = (torch.nn.Parameter(head.bias.detach().float(), requires_grad=False)
+                     if head.bias is not None else None)
+
+    def forward(self, values):
+        with torch.autocast(device_type=values.device.type, enabled=False):
+            return torch.nn.functional.linear(values.float(), self.weight, self.bias)
+
+
+def configure_precision(device):
+    if torch.device(device).type == "cuda":
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+
+
+def use_fp32_output_head(model):
+    base = language_model(model)
+    base.set_output_embeddings(FP32OutputHead(base.get_output_embeddings()))
+
+
+def numerics_identity(model):
+    base = language_model(model)
+    device = base.get_input_embeddings().weight.device
+    return {"output_head_dtype": str(base.get_output_embeddings().weight.dtype),
+            "bf16_reduced_precision_reduction":
+                torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction if device.type == "cuda" else None}
+
+
 def gpu_memory(device):
     device = torch.device(device)
     if device.type != "cuda":
@@ -264,11 +299,14 @@ def prepare_model(dataset, baseline_path, preparation_path, device, rank=16):
     if device.startswith("cuda"):
         if not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
             raise RuntimeError("CUDA BF16 is required by this recipe")
+    configure_precision(device)
     verify_sst_binding(lock, dataset.geometry)
     tokenizer, original = load_original(lock, device)
     if device.startswith("cuda"):
         original.to(dtype=torch.bfloat16)
     model, options = attach(original, "A3", chosen_config(preparation, "A3"), rank)
+    use_fp32_output_head(model)
+    options["numeric_policy"] = "bf16-strict-reduction-fp32-head-v1"
     if any(isinstance(module, torch.nn.Dropout) and module.p for module in model.modules()):
         raise ValueError("reasoning training requires dropout-free sampling and scoring")
     if float(getattr(language_model(model).config, "attention_dropout", 0.)):
@@ -336,6 +374,7 @@ def train(dataset, baseline_path, preparation_path, output, stage, recipe, *, de
     stop = min(total, max_updates) if max_updates else total
     execution = {"runtime": runtime_identity(language_model(model)), "device": device,
                  "dtype": str(language_model(model).get_input_embeddings().weight.dtype),
+                 "numerics": numerics_identity(model),
                  "gpu_name": torch.cuda.get_device_name(torch.device(device)) if torch.device(device).type == "cuda" else None}
     identity = {"common": common, "stage": stage, "recipe": recipe, "complete_budget": stop == total,
                 "execution": execution,

@@ -80,16 +80,19 @@ def load_original_model(dataset, baseline, preparation, device):
     import torch
     from ..b3 import load_original, verify_sst_binding
     from ..integration import attach
+    from .trainer import configure_precision, use_fp32_output_head
     lock, prep = read_json(baseline), read_json(preparation)
     if lock["schema"] != "b4dl-core-baseline-v1" or prep["baseline_checkpoint"] != lock["components"]["stage2"]["path"]:
         raise ValueError("preparation/baseline mismatch")
     verify_sst_binding(lock, dataset.geometry)
     if device.startswith("cuda") and (not torch.cuda.is_available() or not torch.cuda.is_bf16_supported()):
         raise RuntimeError("CUDA BF16 is required for matched six-task comparison")
+    configure_precision(device)
     tokenizer, original = load_original(lock, device)
     if device.startswith("cuda"):
         original.to(dtype=torch.bfloat16)
     model, _ = attach(original, "A0", lora_rank=0)
+    use_fp32_output_head(model)
     model.eval()
     return tokenizer, model
 
@@ -116,9 +119,11 @@ def infer(dataset, model, tokenizer, checkpoint, output, condition="identity", s
            "decoding": "greedy", "reward_version": REWARD_VERSION}
     from ..integration import language_model
     from ..runtime import runtime_identity
+    from .trainer import numerics_identity
     run["runtime"] = runtime_identity(language_model(model))
     run["device"] = str(language_model(model).get_input_embeddings().weight.device)
     run["dtype"] = str(language_model(model).get_input_embeddings().weight.dtype)
+    run["numerics"] = numerics_identity(model)
     run["gpu_name"] = torch.cuda.get_device_name(torch.device(run["device"])) if torch.device(run["device"]).type == "cuda" else None
     path = output/"predictions.jsonl"
     completion = {"status": "reasoning_inference_complete", "requests": len(dataset.requests), "run": run}
@@ -232,7 +237,7 @@ def evaluate(dataset, predictions, run, repetitions=2000):
 def compare_reports(base, candidate, repetitions=2000, mode="models"):
     if mode not in ("models", "intervention"):
         raise ValueError("unknown comparison mode")
-    keys = ("dataset_id", "split", "seed", "max_new_tokens", "decoding", "reward_version", "runtime", "device", "dtype", "gpu_name", "lineage")
+    keys = ("dataset_id", "split", "seed", "max_new_tokens", "decoding", "reward_version", "runtime", "device", "dtype", "numerics", "gpu_name", "lineage")
     required = set(keys) | {"schema", "condition", "checkpoint_sha256", "training"}
     for run in (base["run"], candidate["run"]):
         if (not required <= set(run) or run["schema"] != "b4dl-reasoning-inference-v1"
@@ -352,7 +357,7 @@ def infer_six_task(dataset, model, tokenizer, model_artifact, protocol_path, out
     from ..six_task import infer_predictions
     from ..integration import language_model
     from ..runtime import runtime_identity
-    from .trainer import implementation_identity
+    from .trainer import implementation_identity, numerics_identity
     protocol, rows = load_free_six_task(protocol_path, dataset.geometry)
     output = Path(output)
     if output.exists() and not resume or not output.exists() and resume:
@@ -377,7 +382,8 @@ def infer_six_task(dataset, model, tokenizer, model_artifact, protocol_path, out
            "implementation": implementation_identity(), "generation": protocol["generation"],
            "runtime": runtime_identity(language_model(model)),
            "device": str(language_model(model).get_input_embeddings().weight.device),
-           "dtype": str(language_model(model).get_input_embeddings().weight.dtype), "oracle_assisted_metadata": False}
+           "dtype": str(language_model(model).get_input_embeddings().weight.dtype),
+           "numerics": numerics_identity(model), "oracle_assisted_metadata": False}
     run["gpu_name"] = torch.cuda.get_device_name(torch.device(run["device"])) if torch.device(run["device"]).type == "cuda" else None
     if lineage is not None and (lineage["common"]["baseline_sha256"] != run["baseline_sha256"]
             or lineage["common"]["preparation_sha256"] != run["preparation_sha256"]
@@ -390,7 +396,7 @@ def infer_six_task(dataset, model, tokenizer, model_artifact, protocol_path, out
 
 def six_task_comparison_identity(run):
     keys = ("protocol_id", "baseline_sha256", "preparation_sha256", "implementation",
-            "generation", "runtime", "device", "dtype", "gpu_name", "oracle_assisted_metadata")
+            "generation", "runtime", "device", "dtype", "numerics", "gpu_name", "oracle_assisted_metadata")
     if (run.get("schema") != "b4dl-reasoning-six-task-inference-v1"
             or any(key not in run for key in keys) or run["oracle_assisted_metadata"] is not False
             or any(not isinstance(run[key], str) or not run[key] for key in

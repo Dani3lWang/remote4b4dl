@@ -20,7 +20,8 @@ class ReasoningEvaluationTests(unittest.TestCase):
         return {"schema": "b4dl-reasoning-inference-v1", "dataset_id": "fixture", "split": "train",
                 "condition": "identity", "seed": 42, "max_new_tokens": 512, "decoding": "greedy",
                 "reward_version": "fixture", "runtime": {"torch": "fixture"}, "device": "cpu",
-                "dtype": "float32", "gpu_name": None, "checkpoint_sha256": "same",
+                "dtype": "float32", "numerics": {"output_head_dtype": "float32"},
+                "gpu_name": None, "checkpoint_sha256": "same",
                 "lineage": {"common": {"baseline": "same"}, "sft_origin_sha256": "same"},
                 "training": {"stage": "sft", "recipe": {}, "step": 1, "execution": {"device": "cpu"},
                              "planned_full_budget": True}}

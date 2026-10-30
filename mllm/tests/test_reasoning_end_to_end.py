@@ -15,7 +15,7 @@ from b4dl_core.reasoning.evaluation import (checkpoint_lineage, compare_six_task
 from b4dl_core.reasoning.policy import expanded_log_probs, reference_policy, sequence_batch, step_token_ends
 from b4dl_core.reasoning.protocol import encode_trace
 from b4dl_core.reasoning.rewards import score_trace
-from b4dl_core.reasoning.trainer import train
+from b4dl_core.reasoning.trainer import train, use_fp32_output_head
 from test_reasoning_data import raw_fixture
 from test_reasoning_training import CharacterTokenizer, model
 
@@ -36,7 +36,10 @@ class ReasoningEndToEndTests(unittest.TestCase):
                       "group_size": 2, "grad_accum": 1, "max_new_tokens": 512, "clip": .2,
                       "beta": .04, "process_weight": .5, "mode": "process", "save_every": 1,
                       "engineering": True, "max_updates": 2}
-            def prepare(*args): return CharacterTokenizer(), model(), {"arm": "A3", "fixture": True}
+            def prepare(*args):
+                net = model()
+                use_fp32_output_head(net)
+                return CharacterTokenizer(), net, {"arm": "A3", "fixture": True}
             def verified_group(net, tokenizer, model_input, request, target, group_size, max_new_tokens, clip):
                 wrong = copy.deepcopy(target["trace"])
                 field = next(iter(wrong["steps"][0]["value"]))
@@ -139,7 +142,8 @@ class ReasoningEndToEndTests(unittest.TestCase):
                                 "execution": {"device": "cpu"}, "planned_full_budget": True},
                    "baseline_sha256": "baseline", "preparation_sha256": "prep", "implementation": "code",
                    "generation": {"do_sample": False}, "runtime": {"torch": "same"},
-                   "device": "cpu", "dtype": "torch.float32", "gpu_name": None,
+                   "device": "cpu", "dtype": "torch.float32", "numerics": {"output_head_dtype": "torch.float32"},
+                   "gpu_name": None,
                    "oracle_assisted_metadata": False}
             for name, value in (("base", .5), ("candidate", .6)):
                 folder = root/name

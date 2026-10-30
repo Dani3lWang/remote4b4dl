@@ -13,8 +13,9 @@ from b4dl_core.reasoning.policy import (add_reference_adapter, decode_completion
     sequence_batch, step_token_ends, teacher_completions)
 from b4dl_core.reasoning.protocol import encode_trace, parse_trace
 from b4dl_core.reasoning.rewards import score_trace
-from b4dl_core.reasoning.trainer import (_optimizer, advantages, clipped_loss, grpo_update,
-                                          reset_gpu_memory, rollout_group, sampling_difference, sft_update)
+from b4dl_core.reasoning.trainer import (FP32OutputHead, _optimizer, advantages, clipped_loss, grpo_update,
+                                          reset_gpu_memory, rollout_group, sampling_difference, sft_update,
+                                          use_fp32_output_head)
 from b4dl_core.temporal import TemporalConfig
 from vtimellm.model.vtimellm_llama import VTimeLLMConfig, VTimeLLMLlamaForCausalLM
 from test_reasoning_protocol import example
@@ -67,6 +68,22 @@ class ReasoningTrainingTests(unittest.TestCase):
         with patch("torch.cuda.is_available", return_value=False):
             with self.assertRaisesRegex(RuntimeError, "CUDA requested"):
                 reset_gpu_memory("cuda:0")
+
+    def test_frozen_output_head_stays_fp32_under_autocast(self):
+        head = torch.nn.Linear(4, 3).requires_grad_(False)
+        stable = FP32OutputHead(head)
+        inputs = torch.randn(2, 4, requires_grad=True)
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            result = stable(inputs)
+        expected = torch.nn.functional.linear(inputs, head.weight, head.bias)
+        self.assertEqual(result.dtype, torch.float32)
+        torch.testing.assert_close(result, expected, rtol=0, atol=0)
+        result.sum().backward()
+        self.assertTrue(torch.isfinite(inputs.grad).all())
+        self.assertIsNone(stable.weight.grad)
+        net = model()
+        use_fp32_output_head(net)
+        self.assertIsInstance(language_model(net).get_output_embeddings(), FP32OutputHead)
 
     def test_group_advantage_and_scalar_control(self):
         inputs = ([1., 0.], [[1., 0.], [0., 1.]], [[2, 3], [3, 4]], [4, 5], [True, True])
