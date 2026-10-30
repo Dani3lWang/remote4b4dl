@@ -38,11 +38,13 @@ RUN=/path/to/new-reasoning-run
 "$PY" -m b4dl_core.reasoning grpo --dataset "$RUN/data" --geometry-dataset "$DATA" --baseline "$BASE" --preparation "$PREP" --recipe "$RECIPE" --engineering --max-updates 50 --sft-checkpoint "$RUN/sft-smoke/step-50.pt" --output "$RUN/grpo-smoke"
 ```
 
-工程 SFT 和 GRPO 的 `latest.json` 记录检查点及哈希，`training.jsonl` 记录损失、梯度、奖励、合法率、生成长度、旧策略概率误差、组内奖励零方差比例及 CUDA 峰值显存；`completion.json` 标注工程预算及累计峰值，不代表有效的全量模型。异常会写入 `failure.json`。记录身份不符、非有限数值、采样与重算概率不符或显存不足时停止，不自动更改批量或配方。
+工程 SFT 和 GRPO 的 `latest.json` 记录检查点及哈希，`training.jsonl` 记录损失、梯度、奖励、合法率、生成长度、旧策略概率误差、组内奖励零方差比例及 CUDA 峰值显存；`completion.json` 标注工程预算及累计峰值，不代表有效的全量模型。异常会写入 `failure.json`。记录身份不符、非有限数值、采样与重算概率偏差超出下述保护范围或显存不足时停止，不自动更改批量或配方。
 
 短跑确认后，正式 SFT 使用同一条命令去掉 `--engineering --max-updates 50`，以训练集单轮、固定末步为终点。正式 GRPO 必须加载有完整预算完成回执的 SFT 最终检查点；选择 `--mode outcome`、`--mode scalar` 或 `--mode process`，各组使用相同数据、配置、种子及 SFT 终点。工程 GRPO 只接受有工程完成回执的工程 SFT 终点或已完成的正式 SFT。训练续跑使用相同数据、源码、配方和原总预算，指定 `--resume 旧检查点 --output 新目录`；只能从已保存更新恢复，不能把诊断或不同身份的检查点当作续跑输入。
 
 默认配方见 `mllm/configs/reasoning_grpo_v1.json`：SFT 更新投影器、A3 时序适配器和 rank 16 的语言 LoRA；GRPO 冻结前两者，只更新策略 LoRA。参考 LoRA 是 SFT 终点的副本，与策略共享冻结基座。每题 4 条候选，逐条生成并反传，每 4 个问题更新一次。old-policy 概率取自采样时的策略，reference 概率来自固定的 SFT 参考策略。有效 token 的优势由同题答案标准化奖励及对应步骤的后续标准化奖励构成；`scalar` 对照把相同步骤项广播到整个回答，`outcome` 不使用步骤项。
+
+old-policy 保存生成器实际采样分布的 token log-prob，不用整段前向的重算值替代。BF16 缓存生成与整段前向可能产生非零数值偏差；在策略尚未更新时，逐 token 的重算概率除以采样概率必须严格落在配置的 `[1−clip, 1+clip]` 内，否则停止。CPU 对齐检查仍使用 `1e-4` 的更严容差；日志保留最大差异，不把该保护范围解释为两条路径完全相同。
 
 答案项仍在整个候选组内标准化；步骤项只在同组中通过结构解析、具备同模板步骤的候选之间标准化。解析失败的候选仅使用答案项的 −1 格式惩罚，不把虚拟零步骤放入其他候选的过程基线；有效候选少于两条或步骤方差小于阈值时，对应过程优势为零。此修订的奖励版本为 `geometry-process-valid-group-v2`。续训还要求运行时版本、设备、精度和 GPU 型号与保存检查点时一致。
 

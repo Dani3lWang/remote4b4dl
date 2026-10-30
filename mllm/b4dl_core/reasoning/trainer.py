@@ -129,19 +129,38 @@ def sample_one(model, tokenizer, item, max_new_tokens, do_sample=True, record_sc
             "sampled_log_probs": sampled, "generation_seconds": time.perf_counter()-started}
 
 
-def rollout_group(model, tokenizer, item, request, target, group_size=4, max_new_tokens=512):
+def sampling_difference(sampled, recomputed, clip, *, cuda):
+    """Validate the actual sampling distribution against the full forward pass.
+
+    BF16 cached decoding and full-sequence GEMMs can differ numerically. The
+    unchanged policy must nevertheless remain strictly inside both PPO clip
+    limits; CPU keeps the tighter alignment check used by the tiny-model tests.
+    """
+    if (sampled.shape != recomputed.shape or not sampled.numel() or not 0 < clip < 1
+            or not torch.isfinite(sampled).all() or not torch.isfinite(recomputed).all()):
+        raise ValueError("invalid sampled/recomputed log-probabilities")
+    delta = recomputed - sampled
+    difference = float(delta.abs().max())
+    if cuda:
+        if (delta <= math.log1p(-clip)).any() or (delta >= math.log1p(clip)).any():
+            raise ValueError("sampled and recomputed policy probabilities exceed PPO clip limits: " + str(difference))
+    elif difference > 1e-4:
+        raise ValueError("sampled and recomputed policy log-probs disagree: " + str(difference))
+    return difference
+
+
+def rollout_group(model, tokenizer, item, request, target, group_size=4, max_new_tokens=512, clip=.2):
     samples = []
     for _ in range(group_size):
         sample = sample_one(model, tokenizer, item, max_new_tokens, record_scores=True)
         batch = sequence_batch(model, tokenizer, [item], [sample["ids"]])
         with torch.no_grad(), _precision(model):
-            old = expanded_log_probs(model, batch)[0].detach().cpu()
+            recomputed = expanded_log_probs(model, batch)[0].detach().cpu()
             with reference_policy(model):
                 ref = expanded_log_probs(model, batch)[0].detach().cpu()
-        difference = (old-sample.pop("sampled_log_probs")).abs().max().item()
-        tolerance = .1 if language_model(model).get_input_embeddings().weight.device.type == "cuda" else 1e-4
-        if not math.isfinite(difference) or difference > tolerance:
-            raise ValueError("sampled and recomputed old-policy log-probs disagree: " + str(difference))
+        old = sample.pop("sampled_log_probs")
+        difference = sampling_difference(old, recomputed, clip,
+            cuda=language_model(model).get_input_embeddings().weight.device.type == "cuda")
         score = score_trace(request, target, sample["text"], sample["status"])
         ends = step_token_ends(tokenizer, sample["ids"], score["step_char_ends"]) if score["valid"] else []
         sample.update(score=score, ends=ends, old=old, ref=ref, logprob_max_difference=difference)
@@ -191,7 +210,7 @@ def grpo_update(model, tokenizer, rows, optimizer, recipe):
     optimizer.zero_grad(set_to_none=True)
     groups = []
     for item, request, target in rows:
-        group = rollout_group(model, tokenizer, item, request, target, recipe["group_size"], recipe["max_new_tokens"])
+        group = rollout_group(model, tokenizer, item, request, target, recipe["group_size"], recipe["max_new_tokens"], recipe["clip"])
         group_adv = advantages([x["score"]["answer_reward"] for x in group],
             [x["score"]["step_scores"] for x in group], [x["ends"] for x in group],
             [len(x["ids"]) for x in group], [x["score"]["valid"] for x in group],
@@ -212,10 +231,7 @@ def grpo_update(model, tokenizer, rows, optimizer, recipe):
             batch = sequence_batch(model, tokenizer, [item], [sample["ids"]])
             with _precision(model):
                 logp = expanded_log_probs(model, batch)[0]
-                drift = (logp.detach().cpu()-sample["old"]).abs().max().item()
-                tolerance = .1 if logp.device.type == "cuda" else 1e-4
-                if not math.isfinite(drift) or drift > tolerance:
-                    raise ValueError("training and sampling policies differ: " + str(drift))
+                sampling_difference(sample["old"], logp.detach().cpu(), recipe["clip"], cuda=logp.device.type == "cuda")
                 loss, metrics = clipped_loss(logp, sample["old"].to(logp.device), sample["ref"].to(logp.device),
                                              advantage.to(logp.device), recipe["clip"], recipe["beta"])
             (loss/count).backward()

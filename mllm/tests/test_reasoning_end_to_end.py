@@ -37,7 +37,7 @@ class ReasoningEndToEndTests(unittest.TestCase):
                       "beta": .04, "process_weight": .5, "mode": "process", "save_every": 1,
                       "engineering": True, "max_updates": 2}
             def prepare(*args): return CharacterTokenizer(), model(), {"arm": "A3", "fixture": True}
-            def verified_group(net, tokenizer, model_input, request, target, group_size, max_new_tokens):
+            def verified_group(net, tokenizer, model_input, request, target, group_size, max_new_tokens, clip):
                 wrong = copy.deepcopy(target["trace"])
                 field = next(iter(wrong["steps"][0]["value"]))
                 wrong["steps"][0]["value"][field] += 2

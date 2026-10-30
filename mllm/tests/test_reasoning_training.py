@@ -14,7 +14,7 @@ from b4dl_core.reasoning.policy import (add_reference_adapter, decode_completion
 from b4dl_core.reasoning.protocol import encode_trace, parse_trace
 from b4dl_core.reasoning.rewards import score_trace
 from b4dl_core.reasoning.trainer import (_optimizer, advantages, clipped_loss, grpo_update,
-                                          reset_gpu_memory, rollout_group, sft_update)
+                                          reset_gpu_memory, rollout_group, sampling_difference, sft_update)
 from b4dl_core.temporal import TemporalConfig
 from vtimellm.model.vtimellm_llama import VTimeLLMConfig, VTimeLLMLlamaForCausalLM
 from test_reasoning_protocol import example
@@ -107,6 +107,31 @@ class ReasoningTrainingTests(unittest.TestCase):
         loss, _ = clipped_loss(logp, zero, logp.detach(), -torch.ones(1), clip=.2, beta=0.)
         loss.backward()
         self.assertGreater(float(logp.grad), 0.)
+
+    def test_sampling_alignment_guard_uses_actual_clip_bounds(self):
+        old = torch.zeros(2)
+        within = torch.tensor([np.log(.81), np.log(1.19)])
+        self.assertGreater(sampling_difference(old, within, .2, cuda=True), .1)
+        for ratio in (.79, 1.21):
+            with self.assertRaises(ValueError):
+                sampling_difference(torch.zeros(1), torch.tensor([np.log(ratio)]), .2, cuda=True)
+        with self.assertRaises(ValueError):
+            sampling_difference(torch.zeros(1), torch.tensor([.001]), .2, cuda=False)
+
+    def test_rollout_preserves_log_probs_of_the_sampled_distribution(self):
+        net = model(); add_reference_adapter(net); net.eval()
+        request, target = example("existence")
+        text = encode_trace(target["trace"])
+        ids = self.tokenizer.encode(text) + [self.tokenizer.eos_token_id]
+        batch = sequence_batch(net, self.tokenizer, [item()], [ids])
+        with torch.no_grad():
+            recomputed = expanded_log_probs(net, batch)[0].cpu()
+        sampled = recomputed + 0.00003
+        response = {"ids": ids, "text": text, "status": "ok", "sampled_log_probs": sampled.clone()}
+        with patch("b4dl_core.reasoning.trainer.sample_one", return_value=response):
+            group = rollout_group(net, self.tokenizer, item(), request, target, group_size=1, max_new_tokens=512)
+        torch.testing.assert_close(group[0]["old"], sampled, rtol=0, atol=0)
+        self.assertGreater(group[0]["logprob_max_difference"], 0)
 
     def test_token_boundaries_use_actual_completion_ids(self):
         request, target = example("motion")
@@ -227,7 +252,7 @@ class ReasoningTrainingTests(unittest.TestCase):
         optimizer = _optimizer(net, .001)
         recipe = {"group_size": 2, "max_new_tokens": 512, "mode": "process",
                   "process_weight": .5, "clip": .2, "beta": .04}
-        def verified_samples(current, tokenizer, model_input, req, truth, group_size, max_new_tokens):
+        def verified_samples(current, tokenizer, model_input, req, truth, group_size, max_new_tokens, clip):
             wrong = copy.deepcopy(truth["trace"])
             wrong["steps"][0]["value"]["count"] = 0
             wrong["steps"][1]["value"] = False
