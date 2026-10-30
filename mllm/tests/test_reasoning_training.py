@@ -2,7 +2,7 @@ import copy
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import torch
@@ -14,7 +14,7 @@ from b4dl_core.reasoning.policy import (add_reference_adapter, decode_completion
 from b4dl_core.reasoning.protocol import encode_trace, parse_trace
 from b4dl_core.reasoning.rewards import score_trace
 from b4dl_core.reasoning.trainer import (_optimizer, advantages, clipped_loss, grpo_update,
-                                          rollout_group, sft_update)
+                                          reset_gpu_memory, rollout_group, sft_update)
 from b4dl_core.temporal import TemporalConfig
 from vtimellm.model.vtimellm_llama import VTimeLLMConfig, VTimeLLMLlamaForCausalLM
 from test_reasoning_protocol import example
@@ -55,6 +55,18 @@ class ReasoningTrainingTests(unittest.TestCase):
     def setUp(self):
         torch.set_num_threads(2)
         self.tokenizer = CharacterTokenizer()
+
+    def test_cuda_peak_reset_initializes_runtime_before_reset(self):
+        calls = Mock()
+        with patch("torch.cuda.is_available", return_value=True), \
+             patch("torch.cuda.init", calls.init), \
+             patch("torch.cuda.reset_peak_memory_stats", calls.reset):
+            reset_gpu_memory("cuda:0")
+        self.assertEqual([call[0] for call in calls.mock_calls], ["init", "reset"])
+        calls.reset.assert_called_once_with(torch.device("cuda:0"))
+        with patch("torch.cuda.is_available", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "CUDA requested"):
+                reset_gpu_memory("cuda:0")
 
     def test_group_advantage_and_scalar_control(self):
         inputs = ([1., 0.], [[1., 0.], [0., 1.]], [[2, 3], [3, 4]], [4, 5], [True, True])

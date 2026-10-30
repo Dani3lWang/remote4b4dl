@@ -88,6 +88,16 @@ def gpu_memory(device):
             "peak_reserved_mib": torch.cuda.max_memory_reserved(device)/1048576}
 
 
+def reset_gpu_memory(device):
+    """Initialize CUDA before resetting peaks, including model loading in the measurement."""
+    device = torch.device(device)
+    if device.type == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested but unavailable")
+        torch.cuda.init()
+        torch.cuda.reset_peak_memory_stats(device)
+
+
 def sample_one(model, tokenizer, item, max_new_tokens, do_sample=True, record_scores=False):
     batch = sequence_batch(model, tokenizer, [item])
     model.eval()
@@ -285,8 +295,7 @@ def train(dataset, baseline_path, preparation_path, output, stage, recipe, *, de
         raise ValueError("formal training requires verified full-scale features")
     random.seed(recipe["seed"]); np.random.seed(recipe["seed"]); torch.manual_seed(recipe["seed"])
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(recipe["seed"])
-    if torch.device(device).type == "cuda" and torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats(torch.device(device))
+    reset_gpu_memory(device)
     tokenizer, model, options = prepare_model(dataset, baseline_path, preparation_path, device, recipe["lora_rank"])
     context = preflight_context(model, tokenizer, dataset, recipe)
     common = {"baseline_sha256": sha256(baseline_path), "preparation_sha256": sha256(preparation_path),
