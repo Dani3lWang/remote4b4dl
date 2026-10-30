@@ -1,5 +1,6 @@
 """Full-denominator CoT evaluation, controls and free six-task regression."""
 from collections import Counter, defaultdict
+import math
 from pathlib import Path
 
 from ..evaluation import opposite_pairs, scene_interval
@@ -9,6 +10,47 @@ from ..resume import (append_jsonl, bind_run, output_lease, recover_jsonl,
                       validate_predictions, verify_completion)
 from . import REWARD_VERSION
 from .rewards import score_trace
+
+
+def checkpoint_lineage(meta, artifact_sha256, dataset_id):
+    """Bind comparisons to the verified B3/data and the same SFT endpoint."""
+    if (meta.get("schema") != "b4dl-reasoning-checkpoint-v1"
+            or meta.get("stage") not in ("sft", "grpo")):
+        raise ValueError("invalid reasoning checkpoint metadata")
+    identity = meta["identity"]
+    common = identity["common"]
+    if identity.get("stage") != meta["stage"] or common.get("reasoning_dataset_id") != dataset_id:
+        raise ValueError("checkpoint lineage/dataset mismatch")
+    origin = artifact_sha256 if meta["stage"] == "sft" else identity.get("sft_checkpoint_sha256")
+    if not isinstance(origin, str) or len(origin) != 64 or any(c not in "0123456789abcdef" for c in origin):
+        raise ValueError("missing SFT origin identity")
+    return {"common": common, "sft_origin_sha256": origin}
+
+
+def checkpoint_training(meta):
+    identity, recipe = meta["identity"], meta["recipe"]
+    if (identity.get("recipe") != recipe or not isinstance(identity.get("execution"), dict)
+            or not identity["execution"] or type(meta.get("step")) is not int or meta["step"] < 1
+            or type(identity.get("complete_budget")) is not bool):
+        raise ValueError("invalid checkpoint training identity")
+    return {"stage": meta["stage"], "recipe": recipe, "step": meta["step"],
+            "execution": identity["execution"], "planned_full_budget": identity["complete_budget"]}
+
+
+def compare_training(left, right):
+    """The process/scalar/outcome controls must differ only in advantage mode."""
+    if left is None or right is None:
+        return
+    if any(not isinstance(row, dict) or row.get("stage") not in ("sft", "grpo")
+           or not isinstance(row.get("recipe"), dict) or not row.get("execution")
+           or type(row.get("step")) is not int or row["step"] < 1 for row in (left, right)):
+        raise ValueError("invalid training comparison identity")
+    if left["stage"] == right["stage"] == "grpo":
+        recipes = [{k: v for k, v in row["recipe"].items() if k != "mode"} for row in (left, right)]
+        if (recipes[0] != recipes[1] or left["step"] != right["step"]
+                or left["execution"] != right["execution"]
+                or left.get("planned_full_budget") != right.get("planned_full_budget")):
+            raise ValueError("GRPO controls require matched training recipe, budget and environment")
 
 
 def load_model(dataset, baseline, preparation, checkpoint, device):
@@ -53,7 +95,8 @@ def load_original_model(dataset, baseline, preparation, device):
 
 
 def infer(dataset, model, tokenizer, checkpoint, output, condition="identity", seed=42,
-          max_new_tokens=512, resume=False):
+          max_new_tokens=512, resume=False, checkpoint_metadata=None):
+    import torch
     from .trainer import sample_one
     if not dataset.requests or len({r["split"] for r in dataset.requests}) != 1 or type(max_new_tokens) is not int or max_new_tokens < 1:
         raise ValueError("inference requires one nonempty split")
@@ -62,15 +105,21 @@ def infer(dataset, model, tokenizer, checkpoint, output, condition="identity", s
         raise ValueError("choose a new output or explicitly resume the same output")
     output.mkdir(parents=True, exist_ok=resume)
     controls = {r["request_id"]: r for r in control_plan(dataset.geometry, condition, seed)}
+    checkpoint_hash = sha256(checkpoint)
+    if checkpoint_metadata is None:
+        checkpoint_metadata = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    lineage = checkpoint_lineage(checkpoint_metadata, checkpoint_hash, dataset.manifest["dataset_id"])
     run = {"schema": "b4dl-reasoning-inference-v1", "dataset_id": dataset.manifest["dataset_id"],
            "split": dataset.requests[0]["split"], "condition": condition, "seed": seed,
-           "checkpoint_sha256": sha256(checkpoint), "max_new_tokens": max_new_tokens,
+           "checkpoint_sha256": checkpoint_hash, "lineage": lineage,
+           "training": checkpoint_training(checkpoint_metadata), "max_new_tokens": max_new_tokens,
            "decoding": "greedy", "reward_version": REWARD_VERSION}
     from ..integration import language_model
     from ..runtime import runtime_identity
     run["runtime"] = runtime_identity(language_model(model))
     run["device"] = str(language_model(model).get_input_embeddings().weight.device)
     run["dtype"] = str(language_model(model).get_input_embeddings().weight.dtype)
+    run["gpu_name"] = torch.cuda.get_device_name(torch.device(run["device"])) if torch.device(run["device"]).type == "cuda" else None
     path = output/"predictions.jsonl"
     completion = {"status": "reasoning_inference_complete", "requests": len(dataset.requests), "run": run}
     with output_lease(output):
@@ -98,7 +147,9 @@ def infer(dataset, model, tokenizer, checkpoint, output, condition="identity", s
 
 
 def _mean(values):
-    return sum(values)/len(values) if values else None
+    # Dividing before summing prevents finite but very large model estimates
+    # from overflowing the MAE accumulator and breaking report serialization.
+    return math.fsum(value/len(values) for value in values) if values else None
 
 
 def summarize(rows):
@@ -178,10 +229,28 @@ def evaluate(dataset, predictions, run, repetitions=2000):
     return report
 
 
-def compare_reports(base, candidate, repetitions=2000):
-    keys = ("dataset_id", "split", "condition", "seed", "max_new_tokens", "decoding", "reward_version", "runtime", "device", "dtype")
+def compare_reports(base, candidate, repetitions=2000, mode="models"):
+    if mode not in ("models", "intervention"):
+        raise ValueError("unknown comparison mode")
+    keys = ("dataset_id", "split", "seed", "max_new_tokens", "decoding", "reward_version", "runtime", "device", "dtype", "gpu_name", "lineage")
+    required = set(keys) | {"schema", "condition", "checkpoint_sha256", "training"}
+    for run in (base["run"], candidate["run"]):
+        if (not required <= set(run) or run["schema"] != "b4dl-reasoning-inference-v1"
+                or not run["lineage"] or not run["runtime"] or not run["checkpoint_sha256"]):
+            raise ValueError("paired comparisons require complete runtime and checkpoint lineage")
     if any(base["run"].get(key) != candidate["run"].get(key) for key in keys):
         raise ValueError("paired comparisons require identical inputs and conditions")
+    first_run, second_run = base["run"], candidate["run"]
+    if first_run["training"] is None or second_run["training"] is None:
+        raise ValueError("model comparisons require recorded training identity")
+    compare_training(first_run["training"], second_run["training"])
+    if mode == "models" and first_run.get("condition") != second_run.get("condition"):
+        raise ValueError("model comparisons require the same input condition")
+    if mode == "intervention" and (first_run.get("condition") != "identity"
+            or second_run.get("condition") not in ("zero", "repeat_first", "shuffle_features", "cross_scene")
+            or not first_run.get("checkpoint_sha256")
+            or first_run["checkpoint_sha256"] != second_run.get("checkpoint_sha256")):
+        raise ValueError("intervention comparisons require identity and a changed input on the same checkpoint")
     left, right = (unique_index(report["rows"], "request_id") for report in (base, candidate))
     if not left or set(left) != set(right):
         raise ValueError("paired comparison denominators differ")
@@ -191,13 +260,24 @@ def compare_reports(base, candidate, repetitions=2000):
         if (first["scene_id"], first["truth"], first["task"]) != (second["scene_id"], second["truth"], second["task"]):
             raise ValueError("paired truth differs")
         rows.append({"request_id": ident, "scene_id": first["scene_id"], "task": first["task"],
-                     "delta": int(second["correct"])-int(first["correct"])})
+                     "delta": int(second["correct"])-int(first["correct"]),
+                     "available": first["status"] not in ("unavailable", "missing")
+                                  and second["status"] not in ("unavailable", "missing")})
     grouped = defaultdict(list)
     for row in rows: grouped[row["task"]].append(row)
-    return {"n": len(rows), "accuracy_delta": _mean([r["delta"] for r in rows]),
+    available = [row for row in rows if row["available"]]
+    return {"comparison_mode": mode, "base_run": first_run, "candidate_run": second_run,
+            "n": len(rows), "accuracy_delta": _mean([r["delta"] for r in rows]),
             "scene_bootstrap_delta": scene_interval(rows, "delta", repetitions),
+            "available_pairs": {"n": len(available), "excluded_unavailable_or_missing": len(rows)-len(available),
+                "accuracy_delta": _mean([r["delta"] for r in available]),
+                "scene_bootstrap_delta": scene_interval(available, "delta", repetitions)},
             "by_task": {k: {"n": len(v), "delta": _mean([r["delta"] for r in v]),
-                              "scene_bootstrap_delta": scene_interval(v, "delta", repetitions)} for k, v in grouped.items()},
+                              "scene_bootstrap_delta": scene_interval(v, "delta", repetitions),
+                              "available_n": sum(r["available"] for r in v),
+                              "available_delta": _mean([r["delta"] for r in v if r["available"]]),
+                              "available_scene_bootstrap_delta": scene_interval([r for r in v if r["available"]], "delta", repetitions)}
+                        for k, v in grouped.items()},
             "rows": rows}
 
 
@@ -266,23 +346,61 @@ def load_free_six_task(path, geometry):
     return protocol, rows
 
 
-def infer_six_task(dataset, model, tokenizer, model_artifact, protocol_path, output, resume=False, model_kind="reasoning"):
+def infer_six_task(dataset, model, tokenizer, model_artifact, protocol_path, output, resume=False,
+                   model_kind="reasoning", *, baseline, preparation, checkpoint_metadata=None):
+    import torch
     from ..six_task import infer_predictions
     from ..integration import language_model
     from ..runtime import runtime_identity
+    from .trainer import implementation_identity
     protocol, rows = load_free_six_task(protocol_path, dataset.geometry)
     output = Path(output)
     if output.exists() and not resume or not output.exists() and resume:
         raise ValueError("choose a new output or explicitly resume it")
     output.mkdir(parents=True, exist_ok=resume)
+    artifact_hash = sha256(model_artifact)
+    if model_kind not in ("original_b3", "reasoning"):
+        raise ValueError("unknown six-task model kind")
+    if model_kind == "reasoning":
+        if checkpoint_metadata is None:
+            checkpoint_metadata = torch.load(model_artifact, map_location="cpu", weights_only=True)
+        lineage = checkpoint_lineage(checkpoint_metadata, artifact_hash, dataset.manifest["dataset_id"])
+        training = checkpoint_training(checkpoint_metadata)
+    else:
+        lineage = None
+        training = None
+        if artifact_hash != sha256(baseline):
+            raise ValueError("original B3 artifact must be the baseline lock")
     run = {"schema": "b4dl-reasoning-six-task-inference-v1", "protocol_id": protocol["protocol_id"],
-           "model_kind": model_kind, "model_artifact_sha256": sha256(model_artifact), "generation": protocol["generation"],
+           "model_kind": model_kind, "model_artifact_sha256": artifact_hash, "lineage": lineage, "training": training,
+           "baseline_sha256": sha256(baseline), "preparation_sha256": sha256(preparation),
+           "implementation": implementation_identity(), "generation": protocol["generation"],
            "runtime": runtime_identity(language_model(model)),
            "device": str(language_model(model).get_input_embeddings().weight.device),
            "dtype": str(language_model(model).get_input_embeddings().weight.dtype), "oracle_assisted_metadata": False}
+    run["gpu_name"] = torch.cuda.get_device_name(torch.device(run["device"])) if torch.device(run["device"]).type == "cuda" else None
+    if lineage is not None and (lineage["common"]["baseline_sha256"] != run["baseline_sha256"]
+            or lineage["common"]["preparation_sha256"] != run["preparation_sha256"]
+            or lineage["common"]["implementation"] != run["implementation"]):
+        raise ValueError("six-task model lineage does not match supplied assets")
     with output_lease(output):
         infer_predictions(output, run, rows, dataset.geometry, model, tokenizer, resume)
     return run
+
+
+def six_task_comparison_identity(run):
+    keys = ("protocol_id", "baseline_sha256", "preparation_sha256", "implementation",
+            "generation", "runtime", "device", "dtype", "gpu_name", "oracle_assisted_metadata")
+    if (run.get("schema") != "b4dl-reasoning-six-task-inference-v1"
+            or any(key not in run for key in keys) or run["oracle_assisted_metadata"] is not False
+            or any(not isinstance(run[key], str) or not run[key] for key in
+                   ("protocol_id", "baseline_sha256", "preparation_sha256", "implementation", "device", "dtype"))
+            or not isinstance(run["generation"], dict) or not isinstance(run["runtime"], dict) or not run["runtime"]
+            or run.get("model_kind") not in ("original_b3", "reasoning")
+            or not run.get("model_artifact_sha256")
+            or run["model_kind"] == "reasoning" and (not run.get("lineage") or not run.get("training"))):
+        raise ValueError("missing or invalid six-task inference identity")
+    return {key: run[key] for key in keys}
 
 
 def six_task_metrics(dataset, protocol_path, prediction_path, output):
@@ -316,11 +434,14 @@ def six_task_metrics(dataset, protocol_path, prediction_path, output):
         raise ValueError("six-task evaluator differs from frozen protocol")
     predictions = read_jsonl(prediction_path)
     completion = read_json(Path(prediction_path).parent/"completion.json")
+    run = completion.get("run", {})
     if (completion.get("status") != "six_task_inference_complete"
-            or completion.get("run", {}).get("protocol_id") != protocol["protocol_id"]
-            or completion.get("run") != read_json(Path(prediction_path).parent/"run.json")
+            or completion.get("requests") != len(rows)
+            or run.get("protocol_id") != protocol["protocol_id"] or run.get("generation") != protocol["generation"]
+            or run != read_json(Path(prediction_path).parent/"run.json")
             or completion.get("predictions_sha256") != sha256(prediction_path)):
         raise ValueError("six-task inference completion receipt mismatch")
+    six_task_comparison_identity(run)
     evaluator = B4DLEvaluator(use_gpt=False, bert_model_path=metrics_config["bert_model_path"], meteor_backend="dual")
     if metrics_config["bertscore_layer"] != 17:
         raise ValueError("six-task comparison requires the frozen RoBERTa layer")
@@ -340,6 +461,9 @@ def six_task_metrics(dataset, protocol_path, prediction_path, output):
     results = evaluator.evaluate_all(prediction_arrays(rows, predictions))
     if set(results) != set(evaluator.ALL_TASKS):
         raise ValueError("six-task results are incomplete")
+    for task, name in (("existence", "accuracy"), ("binary_qa", "accuracy"), ("time_grounding", "miou")):
+        if name not in results[task] or not math.isfinite(results[task][name]):
+            raise ValueError("required simple-task metric failed: " + task)
     for task in evaluator.COMPLEX_TASKS:
         names = ("bleu4", "meteor", "meteor_pycocoevalcap", "rouge_l", "bertscore")
         if any(name not in results[task] or not math.isfinite(results[task][name]) for name in names):
@@ -350,7 +474,7 @@ def six_task_metrics(dataset, protocol_path, prediction_path, output):
     receipt = {"status": "six_task_metrics_complete", "protocol_id": protocol["protocol_id"],
                "requests": len(rows), "prediction_statuses": dict(Counter(r["status"] for r in predictions)),
                "predictions_sha256": sha256(prediction_path), "metrics_sha256": sha256(output/"metrics.json"),
-               "oracle_assisted_metadata": False}
+               "inference_run": run, "oracle_assisted_metadata": False}
     write_json(output/"completion.json", receipt)
     return receipt
 
@@ -364,6 +488,14 @@ def compare_six_task_metrics(base_dir, candidate_dir):
             or left_receipt["metrics_sha256"] != sha256(base_dir/"metrics.json")
             or right_receipt["metrics_sha256"] != sha256(candidate_dir/"metrics.json")):
         raise ValueError("six-task metrics require complete matched protocol receipts")
+    left_run, right_run = left_receipt.get("inference_run", {}), right_receipt.get("inference_run", {})
+    if (six_task_comparison_identity(left_run) != six_task_comparison_identity(right_run)
+            or left_run["protocol_id"] != left_receipt["protocol_id"]
+            or right_run["protocol_id"] != right_receipt["protocol_id"]
+            or left_run["model_kind"] == right_run["model_kind"] == "reasoning"
+            and left_run["lineage"] != right_run["lineage"]):
+        raise ValueError("six-task comparison requires matched runtime, B3 assets and SFT origin")
+    compare_training(left_run.get("training"), right_run.get("training"))
     first, second = (read_json(path/"metrics.json") for path in (base_dir, candidate_dir))
     if first["metric_backend"] != second["metric_backend"] or set(first["per_task_metrics"]) != set(second["per_task_metrics"]):
         raise ValueError("six-task metric backends or tasks differ")
@@ -374,4 +506,10 @@ def compare_six_task_metrics(base_dir, candidate_dir):
         changes[task] = {key: {"base": a[key], "candidate": b[key],
                                "delta": b[key]-a[key] if a[key] is not None and b[key] is not None else None} for key in a}
     return {"protocol_id": left_receipt["protocol_id"], "requests": left_receipt["requests"],
+            "base_model": {"kind": left_run["model_kind"], "artifact_sha256": left_run["model_artifact_sha256"],
+                           "training": left_run.get("training"),
+                           "prediction_statuses": left_receipt.get("prediction_statuses")},
+            "candidate_model": {"kind": right_run["model_kind"], "artifact_sha256": right_run["model_artifact_sha256"],
+                                "training": right_run.get("training"),
+                                "prediction_statuses": right_receipt.get("prediction_statuses")},
             "per_task_metrics": changes, "metric_backend": first["metric_backend"]}

@@ -6,6 +6,8 @@
 
 `b4dl_core.reasoning build-data` 以既有几何数据集为父集，重新从 nuScenes 原始表、ego 位姿和输入裁剪支持记录核验每条监督；源表和支持文件允许换路径，但内容哈希必须与父数据清单一致。输出独立的 `requests.jsonl`、`supervision.jsonl`、`exclusions.jsonl` 和 `manifest.json`，模型输入不包含对象框、标注实例、几何真值及答案。场景划分沿用父集。对已知无法确认不存在的对象记录排除原因；来源、身份或标注真值不一致时停止构建。
 
+当前独立数据协议为 `b4dl-reasoning-v2`：公开提示明确规定观测键的坐标、距离、运动差值含义，以及二分类答案必须使用 `"Yes"` / `"No"`。此前的 `b4dl-reasoning-v1` 数据和检查点保留原状；由于提示、过程标准化和源码身份已经改变，不能用新代码直接混用或续训旧产物。使用原始几何父集与标注在新目录重新构建和审计 v2 数据，再从 B3 重新启动相应实验。
+
 每个回答严格以 `steps` 开头、`answer` 结尾。步骤分别使用 `observe`、`exists`、`sector`、`argmin`、`delta`、`predicate` 中该任务规定的操作，逐步引用前一项。存在性、方位、距离和相对运动分别使用固定模板；`motion` 估计两端距离和横向坐标，再计算差值。与原几何数据一样，运动量是两个时刻各自 ego 坐标中的相对变化，不是世界坐标速度。对象支持仅指历史 `CAM_BACK_RIGHT` 裁剪输入内的标注框点支持，不代表点级真值或完整全景。
 
 观测数值按 1 m 容差连续计分，数量精确匹配；推导步骤还需与前序生成数值一致，得分不超过其依赖步骤。答案正确为 1、错误为 0；非法结构、禁止的特殊 token、未产生 EOS 的截断为 −1，步骤项不计分。缺失或矛盾的私有真值是错误，不能转成模型的失败奖励。评测的步骤通过率定义为对应分数大于 0，即米制误差严格小于 1 m 且依赖链通过；另报告连续步骤分数和有效数值的绝对误差。
@@ -42,15 +44,21 @@ RUN=/path/to/new-reasoning-run
 
 默认配方见 `mllm/configs/reasoning_grpo_v1.json`：SFT 更新投影器、A3 时序适配器和 rank 16 的语言 LoRA；GRPO 冻结前两者，只更新策略 LoRA。参考 LoRA 是 SFT 终点的副本，与策略共享冻结基座。每题 4 条候选，逐条生成并反传，每 4 个问题更新一次。old-policy 概率取自采样时的策略，reference 概率来自固定的 SFT 参考策略。有效 token 的优势由同题答案标准化奖励及对应步骤的后续标准化奖励构成；`scalar` 对照把相同步骤项广播到整个回答，`outcome` 不使用步骤项。
 
+答案项仍在整个候选组内标准化；步骤项只在同组中通过结构解析、具备同模板步骤的候选之间标准化。解析失败的候选仅使用答案项的 −1 格式惩罚，不把虚拟零步骤放入其他候选的过程基线；有效候选少于两条或步骤方差小于阈值时，对应过程优势为零。此修订的奖励版本为 `geometry-process-valid-group-v2`。续训还要求运行时版本、设备、精度和 GPU 型号与保存检查点时一致。
+
 ## 几何评测与六任务
 
 完成训练后，对每个检查点分别运行 `infer`、`evaluate`；`--condition` 支持 `identity`、`zero`、`repeat_first`、`shuffle_features` 和 `cross_scene`，缺少合适供体的项目保留在分母。`infer --resume` 只恢复相同身份的同一输出目录，预测尾行先校验再修复。默认评测需要完整预测回执和哈希；`--allow-incomplete` 只用于明确标记的中间诊断。`compare` 对两份完整评测结果按同一数据、输入干预和生成设置作配对比较。
+
+模型对比还要求相同 B3、数据和 CoT SFT 终点；两个 GRPO 对照的训练配方、实际更新数和训练环境也必须匹配，允许改变优势分配模式。报告保留双方检查点及训练身份；配方中的完整预算标记只表示计划，不单独证明检查点已完成训练。使用 `compare --intervention` 时，基准必须是 `identity`，候选是其他干预且必须来自同一检查点；报告同时给出保留所有失败项的完整分母和排除无可用供体或缺失预测后的配对分母，以及各任务的对应结果。截断和生成错误仍留在可用配对中作为失败，不能把不可用干预造成的分数下降直接解释为模型依赖输入。
 
 ```bash
 CKPT=/path/to/completed/final-checkpoint.pt
 "$PY" -m b4dl_core.reasoning infer --dataset "$RUN/data" --geometry-dataset "$DATA" --baseline "$BASE" --preparation "$PREP" --checkpoint "$CKPT" --split test --condition identity --output "$RUN/test-identity"
 "$PY" -m b4dl_core.reasoning evaluate --dataset "$RUN/data" --geometry-dataset "$DATA" --split test --predictions "$RUN/test-identity/predictions.jsonl" --output "$RUN/test-identity-report.json"
 "$PY" -m b4dl_core.reasoning compare --base /path/to/sft-report.json --candidate /path/to/grpo-report.json --output "$RUN/comparison.json"
+# 对同一检查点先分别完成 identity 和 zero 的 infer/evaluate：
+"$PY" -m b4dl_core.reasoning compare --base "$RUN/test-identity-report.json" --candidate "$RUN/test-zero-report.json" --intervention --output "$RUN/zero-comparison.json"
 ```
 
 报告包含每类任务的准确率、步骤得分/通过率、整条链通过率、格式失败、有效数值误差、生成 token 和耗时、场景级 bootstrap，以及相反标签配对和选项轮换。缺失、截断与不可用预测不从分母中删除。几何任务改善只有结合完整对照和输入干预结果，才能判断是否使用了 LiDAR 证据。
@@ -68,3 +76,5 @@ HISTORICAL=/path/to/six-task-manifest-final.json
 ```
 
 指标命令需要 `requirements-eval.txt` 和历史协议锁定的 NLTK、Java/METEOR、RoBERTa 等资产；缺少后端或某项指标失败时拒绝生成完成回执，不以降级回退数字冒充完整结果。内部 dev 可能被历史基底见过，应在实验报告中披露。几何 SFT、规则奖励和 CPU 测试均不能单独证明六任务整体提升。
+
+六任务回执记录基底、准备配置、源码、生成设置、运行环境、精度和设备；对比只接受这些条件匹配的结果。两个推理模型之间还必须共享同一 SFT 起点；原始 B3 可作为独立基线。旧版缺少这些身份字段的六任务回执需要使用当前代码重新生成，不能视为已核验的配对结果。

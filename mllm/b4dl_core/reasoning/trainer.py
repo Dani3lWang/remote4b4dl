@@ -37,7 +37,13 @@ def advantages(outcomes, step_scores, ends, lengths, valid, mode="process", weig
     if rewards.ndim != 2 or rewards.shape[1] < 1 or not torch.isfinite(rewards).all():
         raise ValueError("invalid process rewards")
     terminal = standardize(outcomes)
-    steps = standardize(rewards, dim=0)
+    # A malformed completion has no template steps. Including its synthetic
+    # zeroes in the process baseline would also reward formatting in every
+    # valid completion, even when their process scores are identical.
+    steps = torch.zeros_like(rewards)
+    valid_indices = [i for i, is_valid in enumerate(valid) if is_valid]
+    if valid_indices:
+        steps[valid_indices] = standardize(rewards[valid_indices], dim=0)
     result = []
     for i, length in enumerate(lengths):
         vector = torch.full((length,), float(terminal[i]), dtype=torch.float32)
@@ -186,9 +192,10 @@ def grpo_update(model, tokenizer, rows, optimizer, recipe):
     zero_outcome, zero_process = 0, 0
     for _, group, _ in groups:
         outcome = torch.tensor([sample["score"]["answer_reward"] for sample in group])
-        steps = torch.tensor([sample["score"]["step_scores"] for sample in group])
+        valid_steps = [sample["score"]["step_scores"] for sample in group if sample["score"]["valid"]]
         zero_outcome += int(outcome.std(unbiased=False) < 1e-4)
-        zero_process += int((steps.std(dim=0, unbiased=False) < 1e-4).all())
+        zero_process += int(len(valid_steps) < 2 or
+            (torch.tensor(valid_steps).std(dim=0, unbiased=False) < 1e-4).all())
     model.train()
     for item, group, group_adv in groups:
         for sample, advantage in zip(group, group_adv):
@@ -302,7 +309,11 @@ def train(dataset, baseline_path, preparation_path, output, stage, recipe, *, de
     total = math.ceil(len(dataset.requests)/recipe["grad_accum"])
     max_updates = recipe.get("max_updates")
     stop = min(total, max_updates) if max_updates else total
+    execution = {"runtime": runtime_identity(language_model(model)), "device": device,
+                 "dtype": str(language_model(model).get_input_embeddings().weight.dtype),
+                 "gpu_name": torch.cuda.get_device_name(torch.device(device)) if torch.device(device).type == "cuda" else None}
     identity = {"common": common, "stage": stage, "recipe": recipe, "complete_budget": stop == total,
+                "execution": execution,
                 "sft_checkpoint_sha256": sha256(sft_checkpoint) if sft_checkpoint else None}
     start = 0
     if resume:
@@ -313,8 +324,7 @@ def train(dataset, baseline_path, preparation_path, output, stage, recipe, *, de
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
     write_json(output/"run.json", {"identity": identity, "context": context, "total_updates": total,
-        "requested_updates": stop, "runtime": runtime_identity(language_model(model)), "device": device,
-        "gpu_name": torch.cuda.get_device_name(torch.device(device)) if torch.device(device).type == "cuda" else None,
+        "requested_updates": stop, **execution,
         "trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)})
     order = np.random.default_rng(recipe["seed"]).permutation(len(dataset.requests)).tolist()
     step = start

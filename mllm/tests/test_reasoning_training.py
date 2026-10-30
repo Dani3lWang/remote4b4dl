@@ -67,6 +67,23 @@ class ReasoningTrainingTests(unittest.TestCase):
         invalid = advantages([-1., 1.], [[0., 0.], [1., 1.]], [[], [2, 3]], [4, 4], [False, True])
         self.assertTrue(invalid[0].eq(-1).all())
 
+    def test_malformed_rollouts_do_not_change_valid_process_baseline(self):
+        outcomes = [0., 0., -1.]
+        scores = [[1., .75], [1., .75], [0., 0.]]
+        ends = [[2, 3], [2, 3], []]
+        valid = [True, True, False]
+        outcome = advantages(outcomes, scores, ends, [4, 4, 4], valid, "outcome")
+        for mode in ("process", "scalar"):
+            actual = advantages(outcomes, scores, ends, [4, 4, 4], valid, mode)
+            for expected, vector in zip(outcome, actual):
+                torch.testing.assert_close(vector, expected)
+
+        scores[1] = [0., 0.]
+        process = advantages(outcomes, scores, ends, [4, 4, 4], valid, "process")
+        self.assertGreater(float(process[0][0]), float(outcome[0][0]))
+        self.assertLess(float(process[1][0]), float(outcome[1][0]))
+        torch.testing.assert_close(process[2], outcome[2])
+
     def test_clipping_and_kl_gradients(self):
         logp = torch.tensor([np.log(1.5)], dtype=torch.float32, requires_grad=True)
         zero = torch.zeros(1)

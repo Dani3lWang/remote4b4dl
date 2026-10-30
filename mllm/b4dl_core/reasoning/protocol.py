@@ -29,7 +29,14 @@ def instruction(request):
     specs = template(request)
     first = ', '.join(specs[0][1])
     operations = ', '.join(op for op, _ in specs)
-    extra = (" The delta value has numeric keys delta_d and delta_y." if request["task"] == "motion" else "")
+    meaning = {
+        "existence": "count is the number of LiDAR-supported objects of the requested class in the specified frame.",
+        "position": "x and y are the nearest requested object's box-centre coordinates in the frame's ego system; x points forward and y points left.",
+        "distance": "Each distance_CLASS is the ground-plane distance from ego to the nearest LiDAR-supported object of that option's class.",
+        "motion": "d0 and d1 are ground-plane distances, and y0 and y1 are lateral coordinates, at the first and second frames respectively; each uses that frame's ego system with y pointing left. The delta value has numeric keys delta_d=d1-d0 and delta_y=y1-y0.",
+    }[request["task"]]
+    answer = ("The answer must be the JSON string \"Yes\" or \"No\"." if request["kind"] == "binary"
+              else "The answer must be the JSON string containing one listed option letter.")
     return ("Return only a JSON object with keys in this order: steps, answer. "
             "The steps array must contain exactly these operations in order: " + operations + ". "
             "The first step is {\"op\":\"observe\",\"frames\":"
@@ -38,7 +45,7 @@ def instruction(request):
             "Each subsequent step is {\"op\":...,\"depends_on\":[previous step index],\"value\":...}; "
             "step indexes start at 0. Use metres, integer count, and JSON booleans for exists/predicate. "
             "Use one of front, front-left, left, back-left, back, back-right, right, front-right for sector; "
-            "use an option letter for argmin." + extra + " The answer must be a valid answer to the question.")
+            "use an option letter for argmin. " + meaning + " " + answer)
 
 
 def public_prompt(request):

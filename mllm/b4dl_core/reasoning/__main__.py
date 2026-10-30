@@ -84,6 +84,7 @@ def main(argv=None):
     compare = sub.add_parser("compare")
     for name in ("base", "candidate", "output"): compare.add_argument("--"+name, required=True)
     compare.add_argument("--allow-incomplete", action="store_true")
+    compare.add_argument("--intervention", action="store_true", help="compare identity with a control for the same checkpoint")
     six_prep = sub.add_parser("prepare-six-task")
     for name in ("project-root", "geometry-dataset", "historical-protocol", "output"):
         six_prep.add_argument("--"+name, required=True)
@@ -120,14 +121,17 @@ def main(argv=None):
         with device_lease(args.device, args.gpu_lock):
             if args.command == "six-task-infer" and args.original_b3:
                 tokenizer, model = load_original_model(dataset, args.baseline, args.preparation, args.device)
+                checkpoint_metadata = None
             else:
-                tokenizer, model, _ = load_model(dataset, args.baseline, args.preparation, args.checkpoint, args.device)
+                tokenizer, model, checkpoint_metadata = load_model(dataset, args.baseline, args.preparation, args.checkpoint, args.device)
             if args.command == "infer":
                 result = infer(dataset, model, tokenizer, args.checkpoint, args.output, args.condition, args.seed,
-                               args.max_new_tokens, args.resume)
+                               args.max_new_tokens, args.resume, checkpoint_metadata)
             else:
                 result = infer_six_task(dataset, model, tokenizer, args.baseline if args.original_b3 else args.checkpoint,
-                                        args.protocol, args.output, args.resume, "original_b3" if args.original_b3 else "reasoning")
+                                        args.protocol, args.output, args.resume, "original_b3" if args.original_b3 else "reasoning",
+                                        baseline=args.baseline, preparation=args.preparation,
+                                        checkpoint_metadata=checkpoint_metadata)
     elif args.command == "evaluate":
         from .evaluation import evaluate
         dataset = ReasoningDataset(args.dataset, args.geometry_dataset, args.split)
@@ -149,7 +153,7 @@ def main(argv=None):
         first, second = read_json(args.base), read_json(args.candidate)
         if not args.allow_incomplete and (not first.get("complete_prediction_set") or not second.get("complete_prediction_set")):
             raise ValueError("comparison requires completed prediction sets; use --allow-incomplete only for diagnostics")
-        result = compare_reports(first, second)
+        result = compare_reports(first, second, mode="intervention" if args.intervention else "models")
         result["complete_prediction_sets"] = bool(first.get("complete_prediction_set") and second.get("complete_prediction_set"))
         if Path(args.output).exists(): raise FileExistsError(args.output)
         write_json(args.output, result)

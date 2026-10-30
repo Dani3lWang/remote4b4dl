@@ -108,6 +108,20 @@ class ReasoningProtocolTests(unittest.TestCase):
         self.assertNotIn("a8", json.dumps(public))
         self.assertNotIn(str(target["evidence"]["d0"]), public["prompt"])
 
+    def test_public_instruction_defines_physical_values_and_exact_answers(self):
+        for task in ("existence", "position", "motion", "distance"):
+            request, _ = example(task)
+            prompt = public_request(request)["prompt"]
+            if task == "distance":
+                self.assertIn("ground-plane distance", prompt)
+                self.assertIn("listed option letter", prompt)
+            else:
+                self.assertIn('JSON string "Yes" or "No"', prompt)
+            if task == "position":
+                self.assertIn("x points forward and y points left", prompt)
+            if task == "motion":
+                self.assertIn("delta_d=d1-d0 and delta_y=y1-y0", prompt)
+
     def test_instance_selection_and_crop_support(self):
         request, target = example("motion")
         frames = {("s", 0): {"objects": [{"class": "car", "instance": "a", "annotation": "a0",
